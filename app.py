@@ -4,9 +4,19 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import time
 
-st.title("株式分析ツール")
+st.set_page_config(page_title="株式分析ツール", page_icon="📈", layout="wide")
 
-ticker = st.text_input("銘柄コードを入力", value="7203.T")
+st.markdown("""
+<style>
+body { background-color: #0d1117; }
+.stApp { background-color: #0d1117; color: #e6edf3; }
+h1 { font-size: 2rem !important; color: #00e5a0 !important; }
+.stTextInput input { background-color: #161b22 !important; color: #e6edf3 !important; border: 1px solid #30363d !important; }
+.stMetric { background-color: #161b22; padding: 12px; border-radius: 8px; border: 1px solid #30363d; }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("📈 株式分析ツール")
 
 def calc_rsi(series, period=14):
     delta = series.diff()
@@ -22,75 +32,151 @@ def calc_macd(series):
     signal = macd.ewm(span=9).mean()
     return macd, signal
 
-if ticker:
+def ai_signal(rsi, macd, macd_signal, ma25, ma75, close):
+    score = 0
+    reasons = []
+    if rsi < 30:
+        score += 2
+        reasons.append("RSIが売られすぎゾーン")
+    elif rsi > 70:
+        score -= 2
+        reasons.append("RSIが買われすぎゾーン")
+    if macd > macd_signal:
+        score += 1
+        reasons.append("MACDがシグナル線を上回っている")
+    else:
+        score -= 1
+        reasons.append("MACDがシグナル線を下回っている")
+    if close > ma25:
+        score += 1
+        reasons.append("株価がMA25を上回っている")
+    else:
+        score -= 1
+        reasons.append("株価がMA25を下回っている")
+    if ma25 > ma75:
+        score += 1
+        reasons.append("MA25がMA75を上回っている（上昇トレンド）")
+    else:
+        score -= 1
+        reasons.append("MA25がMA75を下回っている（下降トレンド）")
+    if score >= 2:
+        return "🟢 買いシグナル", score, reasons
+    elif score <= -2:
+        return "🔴 売りシグナル", score, reasons
+    else:
+        return "🟡 中立", score, reasons
+
+# 複数銘柄入力
+st.subheader("銘柄を入力（最大3つ）")
+col1, col2, col3 = st.columns(3)
+with col1:
+    t1 = st.text_input("銘柄1", value="7203.T")
+with col2:
+    t2 = st.text_input("銘柄2", value="6758.T")
+with col3:
+    t3 = st.text_input("銘柄3", value="")
+
+tickers = [t for t in [t1, t2, t3] if t.strip()]
+
+if tickers:
     try:
         with st.spinner("データ取得中..."):
             time.sleep(1)
-            stock = yf.Ticker(ticker)
-            df = stock.history(period="1y")
+            data = {}
+            for t in tickers:
+                stock = yf.Ticker(t)
+                df = stock.history(period="1y")
+                if not df.empty:
+                    df['MA25'] = df['Close'].rolling(25).mean()
+                    df['MA75'] = df['Close'].rolling(75).mean()
+                    df['RSI'] = calc_rsi(df['Close'])
+                    df['MACD'], df['Signal'] = calc_macd(df['Close'])
+                    data[t] = df
 
-        if df.empty:
+        if not data:
             st.error("データが取得できませんでした。")
         else:
-            df['MA25'] = df['Close'].rolling(25).mean()
-            df['MA75'] = df['Close'].rolling(75).mean()
-            df['RSI'] = calc_rsi(df['Close'])
-            df['MACD'], df['Signal'] = calc_macd(df['Close'])
+            # 比較チャート
+            if len(data) > 1:
+                st.subheader("📊 パフォーマンス比較")
+                fig_cmp, ax_cmp = plt.subplots(figsize=(14, 4))
+                plt.style.use('dark_background')
+                colors = ['#00e5a0', '#00b8ff', '#ffd166']
+                for (t, df), color in zip(data.items(), colors):
+                    norm = df['Close'] / df['Close'].iloc[0] * 100
+                    ax_cmp.plot(df.index, norm, color=color, lw=1.5, label=t)
+                ax_cmp.axhline(100, color='white', alpha=0.2, linestyle='--')
+                ax_cmp.set_ylabel('相対パフォーマンス（開始=100）')
+                ax_cmp.legend()
+                ax_cmp.grid(alpha=0.2)
+                st.pyplot(fig_cmp)
 
-            fig = plt.figure(figsize=(12, 10))
-            gs = gridspec.GridSpec(3, 1, height_ratios=[3, 1, 1], hspace=0.1)
+            # 各銘柄の詳細
+            for t, df in data.items():
+                st.markdown(f"---")
+                st.subheader(f"📈 {t}")
 
-            # 株価チャート
-            ax1 = fig.add_subplot(gs[0])
-            ax1.plot(df.index, df['Close'], color='#00e5a0', lw=1.5, label='Close')
-            ax1.plot(df.index, df['MA25'], color='#00b8ff', lw=1, label='MA25')
-            ax1.plot(df.index, df['MA75'], color='#ffd166', lw=1, label='MA75')
-            ax1.legend(loc='upper left', fontsize=8)
-            ax1.grid(alpha=0.2)
-            ax1.set_ylabel('Price')
-            ax1.set_xticklabels([])
+                latest = df['Close'].iloc[-1]
+                change = df['Close'].iloc[-1] - df['Close'].iloc[-2]
+                pct = change / df['Close'].iloc[-2] * 100
+                rsi_now = df['RSI'].iloc[-1]
+                macd_now = df['MACD'].iloc[-1]
+                sig_now = df['Signal'].iloc[-1]
+                ma25_now = df['MA25'].iloc[-1]
+                ma75_now = df['MA75'].iloc[-1]
 
-            # RSI
-            ax2 = fig.add_subplot(gs[1])
-            ax2.plot(df.index, df['RSI'], color='#ff4d6d', lw=1.2)
-            ax2.axhline(70, color='white', alpha=0.3, linestyle='--', lw=0.8)
-            ax2.axhline(30, color='white', alpha=0.3, linestyle='--', lw=0.8)
-            ax2.fill_between(df.index, df['RSI'], 70,
-                where=(df['RSI'] >= 70), alpha=0.2, color='#ff4d6d')
-            ax2.fill_between(df.index, df['RSI'], 30,
-                where=(df['RSI'] <= 30), alpha=0.2, color='#00e5a0')
-            ax2.set_ylabel('RSI')
-            ax2.set_ylim(0, 100)
-            ax2.grid(alpha=0.2)
-            ax2.set_xticklabels([])
+                signal, score, reasons = ai_signal(
+                    rsi_now, macd_now, sig_now, ma25_now, ma75_now, latest)
 
-            # MACD
-            ax3 = fig.add_subplot(gs[2])
-            ax3.plot(df.index, df['MACD'], color='#00b8ff', lw=1.2, label='MACD')
-            ax3.plot(df.index, df['Signal'], color='#ffd166', lw=1.2, label='Signal')
-            ax3.bar(df.index, df['MACD'] - df['Signal'],
-                color=['#00e5a0' if v >= 0 else '#ff4d6d'
-                       for v in (df['MACD'] - df['Signal'])],
-                alpha=0.5, width=1)
-            ax3.axhline(0, color='white', alpha=0.2)
-            ax3.set_ylabel('MACD')
-            ax3.legend(loc='upper left', fontsize=8)
-            ax3.grid(alpha=0.2)
+                # AIシグナル表示
+                st.markdown(f"### AIシグナル: {signal}（スコア: {score:+d}）")
+                for r in reasons:
+                    st.markdown(f"- {r}")
 
-            plt.style.use('dark_background')
-            st.pyplot(fig)
+                # メトリクス
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("現在値", f"{latest:.0f}")
+                c2.metric("前日比", f"{change:.0f}")
+                c3.metric("騰落率", f"{pct:.2f}%")
+                c4.metric("RSI", f"{rsi_now:.1f}")
 
-            latest = df['Close'].iloc[-1]
-            change = df['Close'].iloc[-1] - df['Close'].iloc[-2]
-            pct = change / df['Close'].iloc[-2] * 100
-            rsi_now = df['RSI'].iloc[-1]
+                # チャート
+                fig = plt.figure(figsize=(12, 8))
+                plt.style.use('dark_background')
+                gs = gridspec.GridSpec(3, 1, height_ratios=[3, 1, 1], hspace=0.1)
 
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("現在値", f"{latest:.0f}")
-            col2.metric("前日比", f"{change:.0f}")
-            col3.metric("騰落率", f"{pct:.2f}%")
-            col4.metric("RSI", f"{rsi_now:.1f}",
-                delta="過熱" if rsi_now > 70 else "売られすぎ" if rsi_now < 30 else "中立")
+                ax1 = fig.add_subplot(gs[0])
+                ax1.plot(df.index, df['Close'], color='#00e5a0', lw=1.5, label='Close')
+                ax1.plot(df.index, df['MA25'], color='#00b8ff', lw=1, label='MA25')
+                ax1.plot(df.index, df['MA75'], color='#ffd166', lw=1, label='MA75')
+                ax1.legend(loc='upper left', fontsize=8)
+                ax1.grid(alpha=0.2)
+                ax1.set_ylabel('Price')
+                ax1.set_xticklabels([])
+
+                ax2 = fig.add_subplot(gs[1])
+                ax2.plot(df.index, df['RSI'], color='#ff4d6d', lw=1.2)
+                ax2.axhline(70, color='white', alpha=0.3, linestyle='--', lw=0.8)
+                ax2.axhline(30, color='white', alpha=0.3, linestyle='--', lw=0.8)
+                ax2.fill_between(df.index, df['RSI'], 70, where=(df['RSI'] >= 70), alpha=0.2, color='#ff4d6d')
+                ax2.fill_between(df.index, df['RSI'], 30, where=(df['RSI'] <= 30), alpha=0.2, color='#00e5a0')
+                ax2.set_ylabel('RSI')
+                ax2.set_ylim(0, 100)
+                ax2.grid(alpha=0.2)
+                ax2.set_xticklabels([])
+
+                ax3 = fig.add_subplot(gs[2])
+                ax3.plot(df.index, df['MACD'], color='#00b8ff', lw=1.2, label='MACD')
+                ax3.plot(df.index, df['Signal'], color='#ffd166', lw=1.2, label='Signal')
+                ax3.bar(df.index, df['MACD'] - df['Signal'],
+                    color=['#00e5a0' if v >= 0 else '#ff4d6d' for v in (df['MACD'] - df['Signal'])],
+                    alpha=0.5, width=1)
+                ax3.axhline(0, color='white', alpha=0.2)
+                ax3.set_ylabel('MACD')
+                ax3.legend(loc='upper left', fontsize=8)
+                ax3.grid(alpha=0.2)
+
+                st.pyplot(fig)
 
     except Exception as e:
         st.error("データ取得に失敗しました。少し待ってから再試行してください。")
