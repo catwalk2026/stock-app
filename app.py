@@ -76,7 +76,7 @@ def show_fundamentals(ticker):
         mktcap = info.get('marketCap', None)
         c1.metric("PER", f"{per:.1f}x" if per else "N/A")
         c2.metric("PBR", f"{pbr:.2f}x" if pbr else "N/A")
-        c3.metric("配当利回り", f"{div*100:.2f}%" if div else "N/A")
+        c3.metric("配当利回り", f"{div:.2f}%" if div else "N/A")
         c4.metric("ROE", f"{roe*100:.1f}%" if roe else "N/A")
         if mktcap:
             st.caption(f"時価総額: ¥{mktcap:,.0f}")
