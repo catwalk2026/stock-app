@@ -93,23 +93,18 @@ def show_news(ticker):
         if not news:
             st.caption("ニュースが見つかりませんでした")
             return
-
         positive = 0
         negative = 0
         neutral = 0
-
         for item in news[:8]:
             title = item.get('content', {}).get('title', '')
             url = item.get('content', {}).get('canonicalUrl', {}).get('url', '#')
             source = item.get('content', {}).get('provider', {}).get('displayName', '')
             pub_date = item.get('content', {}).get('pubDate', '')[:10]
-
-            # シンプルなキーワードベースのセンチメント判定
             positive_words = ['上昇', '増益', '好調', '最高値', '買い', '上方修正',
                              'beat', 'growth', 'record', 'rise', 'gain', 'up', 'high']
             negative_words = ['下落', '減益', '不振', '最安値', '売り', '下方修正',
                              'miss', 'decline', 'fall', 'drop', 'down', 'loss', 'low']
-
             title_lower = title.lower()
             if any(w in title_lower for w in positive_words):
                 sentiment = "🟢 ポジティブ"
@@ -120,11 +115,8 @@ def show_news(ticker):
             else:
                 sentiment = "🟡 中立"
                 neutral += 1
-
             st.markdown(f"**{sentiment}** [{title}]({url})")
             st.caption(f"{source} · {pub_date}")
-
-        # センチメントサマリー
         total = positive + negative + neutral
         if total > 0:
             st.markdown("---")
@@ -133,7 +125,6 @@ def show_news(ticker):
             c1.metric("🟢 ポジティブ", f"{positive}/{total}")
             c2.metric("🟡 中立", f"{neutral}/{total}")
             c3.metric("🔴 ネガティブ", f"{negative}/{total}")
-
             bull_pct = positive / total
             bear_pct = negative / total
             neut_pct = neutral / total
@@ -145,8 +136,7 @@ def show_news(ticker):
             </div>
             """
             st.markdown(bar_html, unsafe_allow_html=True)
-
-    except Exception as e:
+    except:
         st.caption("ニュースを取得できませんでした")
 
 # 銘柄入力
@@ -159,6 +149,35 @@ with col2:
 with col3:
     t3 = st.text_input("銘柄3", value="")
 
+# 期間・足の選択
+st.subheader("📅 期間・足の設定")
+col_a, col_b = st.columns(2)
+with col_a:
+    period_label = st.selectbox("期間", [
+        "1週間", "1ヶ月", "3ヶ月", "6ヶ月", "1年", "2年", "5年"
+    ], index=4)
+with col_b:
+    interval_label = st.selectbox("足の種類", [
+        "日足", "週足", "月足"
+    ], index=0)
+
+period_map = {
+    "1週間": "5d",
+    "1ヶ月": "1mo",
+    "3ヶ月": "3mo",
+    "6ヶ月": "6mo",
+    "1年": "1y",
+    "2年": "2y",
+    "5年": "5y",
+}
+interval_map = {
+    "日足": "1d",
+    "週足": "1wk",
+    "月足": "1mo",
+}
+period = period_map[period_label]
+interval = interval_map[interval_label]
+
 tickers = [t for t in [t1, t2, t3] if t.strip()]
 
 if tickers:
@@ -168,7 +187,7 @@ if tickers:
             data = {}
             for t in tickers:
                 stock = yf.Ticker(t)
-                df = stock.history(period="1y")
+                df = stock.history(period=period, interval=interval)
                 if not df.empty:
                     df['MA25'] = df['Close'].rolling(25).mean()
                     df['MA75'] = df['Close'].rolling(75).mean()
@@ -195,7 +214,7 @@ if tickers:
 
             for t, df in data.items():
                 st.markdown("---")
-                st.subheader(f"📈 {t}")
+                st.subheader(f"📈 {t} ／ {period_label} ／ {interval_label}")
 
                 latest = df['Close'].iloc[-1]
                 change = df['Close'].iloc[-1] - df['Close'].iloc[-2]
@@ -215,7 +234,7 @@ if tickers:
 
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("現在値", f"{latest:.0f}")
-                c2.metric("前日比", f"{change:.0f}")
+                c2.metric(f"{interval_label}の変化", f"{change:.0f}")
                 c3.metric("騰落率", f"{pct:.2f}%")
                 c4.metric("RSI", f"{rsi_now:.1f}")
 
