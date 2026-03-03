@@ -8,11 +8,9 @@ st.set_page_config(page_title="株式分析ツール", page_icon="📈", layout=
 
 st.markdown("""
 <style>
-body { background-color: #0d1117; }
 .stApp { background-color: #0d1117; color: #e6edf3; }
 h1 { font-size: 2rem !important; color: #00e5a0 !important; }
 .stTextInput input { background-color: #161b22 !important; color: #e6edf3 !important; border: 1px solid #30363d !important; }
-.stMetric { background-color: #161b22; padding: 12px; border-radius: 8px; border: 1px solid #30363d; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -66,7 +64,26 @@ def ai_signal(rsi, macd, macd_signal, ma25, ma75, close):
     else:
         return "🟡 中立", score, reasons
 
-# 複数銘柄入力
+def show_fundamentals(ticker):
+    try:
+        info = yf.Ticker(ticker).info
+        st.markdown("#### 📊 ファンダメンタル情報")
+        c1, c2, c3, c4 = st.columns(4)
+        per = info.get('trailingPE', None)
+        pbr = info.get('priceToBook', None)
+        div = info.get('dividendYield', None)
+        roe = info.get('returnOnEquity', None)
+        mktcap = info.get('marketCap', None)
+        c1.metric("PER", f"{per:.1f}x" if per else "N/A")
+        c2.metric("PBR", f"{pbr:.2f}x" if pbr else "N/A")
+        c3.metric("配当利回り", f"{div*100:.2f}%" if div else "N/A")
+        c4.metric("ROE", f"{roe*100:.1f}%" if roe else "N/A")
+        if mktcap:
+            st.caption(f"時価総額: ¥{mktcap:,.0f}")
+    except:
+        st.caption("ファンダメンタル情報を取得できませんでした")
+
+# 銘柄入力
 st.subheader("銘柄を入力（最大3つ）")
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -96,7 +113,6 @@ if tickers:
         if not data:
             st.error("データが取得できませんでした。")
         else:
-            # 比較チャート
             if len(data) > 1:
                 st.subheader("📊 パフォーマンス比較")
                 fig_cmp, ax_cmp = plt.subplots(figsize=(14, 4))
@@ -111,9 +127,8 @@ if tickers:
                 ax_cmp.grid(alpha=0.2)
                 st.pyplot(fig_cmp)
 
-            # 各銘柄の詳細
             for t, df in data.items():
-                st.markdown(f"---")
+                st.markdown("---")
                 st.subheader(f"📈 {t}")
 
                 latest = df['Close'].iloc[-1]
@@ -128,19 +143,19 @@ if tickers:
                 signal, score, reasons = ai_signal(
                     rsi_now, macd_now, sig_now, ma25_now, ma75_now, latest)
 
-                # AIシグナル表示
                 st.markdown(f"### AIシグナル: {signal}（スコア: {score:+d}）")
                 for r in reasons:
                     st.markdown(f"- {r}")
 
-                # メトリクス
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("現在値", f"{latest:.0f}")
                 c2.metric("前日比", f"{change:.0f}")
                 c3.metric("騰落率", f"{pct:.2f}%")
                 c4.metric("RSI", f"{rsi_now:.1f}")
 
-                # チャート
+                # ファンダメンタル情報
+                show_fundamentals(t)
+
                 fig = plt.figure(figsize=(12, 8))
                 plt.style.use('dark_background')
                 gs = gridspec.GridSpec(3, 1, height_ratios=[3, 1, 1], hspace=0.1)
