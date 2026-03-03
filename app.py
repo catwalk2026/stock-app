@@ -74,14 +74,80 @@ def show_fundamentals(ticker):
         div = info.get('dividendYield', None)
         roe = info.get('returnOnEquity', None)
         mktcap = info.get('marketCap', None)
+        currency = info.get('currency', 'JPY')
+        symbol = '¥' if currency == 'JPY' else '$'
         c1.metric("PER", f"{per:.1f}x" if per else "N/A")
         c2.metric("PBR", f"{pbr:.2f}x" if pbr else "N/A")
         c3.metric("配当利回り", f"{div:.2f}%" if div else "N/A")
         c4.metric("ROE", f"{roe*100:.1f}%" if roe else "N/A")
         if mktcap:
-            st.caption(f"時価総額: ¥{mktcap:,.0f}")
+            st.caption(f"時価総額: {symbol}{mktcap:,.0f}")
     except:
         st.caption("ファンダメンタル情報を取得できませんでした")
+
+def show_news(ticker):
+    try:
+        st.markdown("#### 📰 最新ニュース＆センチメント")
+        stock = yf.Ticker(ticker)
+        news = stock.news
+        if not news:
+            st.caption("ニュースが見つかりませんでした")
+            return
+
+        positive = 0
+        negative = 0
+        neutral = 0
+
+        for item in news[:8]:
+            title = item.get('content', {}).get('title', '')
+            url = item.get('content', {}).get('canonicalUrl', {}).get('url', '#')
+            source = item.get('content', {}).get('provider', {}).get('displayName', '')
+            pub_date = item.get('content', {}).get('pubDate', '')[:10]
+
+            # シンプルなキーワードベースのセンチメント判定
+            positive_words = ['上昇', '増益', '好調', '最高値', '買い', '上方修正',
+                             'beat', 'growth', 'record', 'rise', 'gain', 'up', 'high']
+            negative_words = ['下落', '減益', '不振', '最安値', '売り', '下方修正',
+                             'miss', 'decline', 'fall', 'drop', 'down', 'loss', 'low']
+
+            title_lower = title.lower()
+            if any(w in title_lower for w in positive_words):
+                sentiment = "🟢 ポジティブ"
+                positive += 1
+            elif any(w in title_lower for w in negative_words):
+                sentiment = "🔴 ネガティブ"
+                negative += 1
+            else:
+                sentiment = "🟡 中立"
+                neutral += 1
+
+            st.markdown(f"**{sentiment}** [{title}]({url})")
+            st.caption(f"{source} · {pub_date}")
+
+        # センチメントサマリー
+        total = positive + negative + neutral
+        if total > 0:
+            st.markdown("---")
+            st.markdown("**センチメントサマリー**")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("🟢 ポジティブ", f"{positive}/{total}")
+            c2.metric("🟡 中立", f"{neutral}/{total}")
+            c3.metric("🔴 ネガティブ", f"{negative}/{total}")
+
+            bull_pct = positive / total
+            bear_pct = negative / total
+            neut_pct = neutral / total
+            bar_html = f"""
+            <div style='height:10px;border-radius:5px;overflow:hidden;display:flex;margin-top:8px'>
+                <div style='width:{bull_pct*100:.0f}%;background:#00e5a0'></div>
+                <div style='width:{neut_pct*100:.0f}%;background:#ffd166'></div>
+                <div style='width:{bear_pct*100:.0f}%;background:#ff4d6d'></div>
+            </div>
+            """
+            st.markdown(bar_html, unsafe_allow_html=True)
+
+    except Exception as e:
+        st.caption("ニュースを取得できませんでした")
 
 # 銘柄入力
 st.subheader("銘柄を入力（最大3つ）")
@@ -153,8 +219,8 @@ if tickers:
                 c3.metric("騰落率", f"{pct:.2f}%")
                 c4.metric("RSI", f"{rsi_now:.1f}")
 
-                # ファンダメンタル情報
                 show_fundamentals(t)
+                show_news(t)
 
                 fig = plt.figure(figsize=(12, 8))
                 plt.style.use('dark_background')
