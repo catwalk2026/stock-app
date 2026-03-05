@@ -18,11 +18,6 @@ h2, h3 { color: #e6edf3 !important; }
     border: 1px solid #1f2d3d !important;
     border-radius: 8px !important;
 }
-.stSelectbox div {
-    background-color: #111827 !important;
-    border: 1px solid #1f2d3d !important;
-    border-radius: 8px !important;
-}
 [data-testid="metric-container"] {
     background: #111827;
     border: 1px solid #1f2d3d;
@@ -96,7 +91,7 @@ def get_currency(ticker):
             return '$', 2
         else:
             return currency + ' ', 2
-    except:
+    except Exception:
         return '¥', 0
 
 def show_fundamentals(ticker):
@@ -122,7 +117,7 @@ def show_fundamentals(ticker):
             else:
                 cap_str = f"{symbol}{mktcap:,.0f}"
             st.caption(f"時価総額: {cap_str}")
-    except:
+    except Exception:
         st.caption("ファンダメンタル情報を取得できませんでした")
 
 def show_news(ticker):
@@ -132,7 +127,9 @@ def show_news(ticker):
         if not news:
             st.caption("ニュースが見つかりませんでした")
             return
-        positive = negative = neutral = 0
+        positive = 0
+        negative = 0
+        neutral = 0
         for item in news[:8]:
             title = item.get('content', {}).get('title', '')
             url = item.get('content', {}).get('canonicalUrl', {}).get('url', '#')
@@ -142,11 +139,14 @@ def show_news(ticker):
             neg_words = ['下落','減益','不振','最安値','売り','下方修正','miss','decline','fall','drop','down','loss','low']
             t_lower = title.lower()
             if any(w in t_lower for w in pos_words):
-                sentiment = "🟢 ポジティブ"; positive += 1
+                sentiment = "🟢 ポジティブ"
+                positive += 1
             elif any(w in t_lower for w in neg_words):
-                sentiment = "🔴 ネガティブ"; negative += 1
+                sentiment = "🔴 ネガティブ"
+                negative += 1
             else:
-                sentiment = "🟡 中立"; neutral += 1
+                sentiment = "🟡 中立"
+                neutral += 1
             st.markdown(f"**{sentiment}** [{title}]({url})")
             st.caption(f"{source} · {pub_date}")
         total = positive + negative + neutral
@@ -165,7 +165,7 @@ def show_news(ticker):
             </div>
             """
             st.markdown(bar_html, unsafe_allow_html=True)
-    except:
+    except Exception:
         st.caption("ニュースを取得できませんでした")
 
 def show_chart(df, ticker, interval_label, symbol, decimals):
@@ -194,13 +194,10 @@ def show_chart(df, ticker, interval_label, symbol, decimals):
     hist = df['MACD'] - df['Signal']
     fig.add_trace(go.Bar(
         x=df.index, y=hist, name='Histogram',
-        marker_color=['#00e5a0' if v >= 0 else '#ff4d6d' for v in hist], opacity=0.6
+        marker_color=['#00e5a0' if v >= 0 else '#ff4d6d' for v in hist],
+        opacity=0.6
     ), row=3, col=1)
-
-    # 通貨に合わせたY軸フォーマット
-    ytickformat = f",.{decimals}f"
-    fig.update_yaxes(tickprefix=symbol, tickformat=ytickformat, row=1, col=1)
-
+    fig.update_yaxes(tickprefix=symbol, tickformat=f",.{decimals}f", row=1, col=1)
     fig.update_layout(
         template='plotly_dark',
         paper_bgcolor='#0a0f1a',
@@ -213,48 +210,3 @@ def show_chart(df, ticker, interval_label, symbol, decimals):
         font=dict(family='Inter, sans-serif'),
     )
     fig.update_yaxes(gridcolor='rgba(255,255,255,0.04)')
-    fig.update_xaxes(gridcolor='rgba(255,255,255,0.04)')
-    st.plotly_chart(fig, use_container_width=True)
-
-# 銘柄入力
-st.subheader("銘柄を入力（最大3つ）")
-col1, col2, col3 = st.columns(3)
-with col1:
-    t1 = st.text_input("銘柄1", value="7203.T")
-with col2:
-    t2 = st.text_input("銘柄2", value="6758.T")
-with col3:
-    t3 = st.text_input("銘柄3", value="")
-
-st.subheader("📅 期間・足の設定")
-col_a, col_b = st.columns(2)
-with col_a:
-    period_label = st.selectbox("期間", ["1週間","1ヶ月","3ヶ月","6ヶ月","1年","2年","5年"], index=4)
-with col_b:
-    interval_label = st.selectbox("足の種類", ["日足","週足","月足"], index=0)
-
-period_map = {"1週間":"5d","1ヶ月":"1mo","3ヶ月":"3mo","6ヶ月":"6mo","1年":"1y","2年":"2y","5年":"5y"}
-interval_map = {"日足":"1d","週足":"1wk","月足":"1mo"}
-period = period_map[period_label]
-interval = interval_map[interval_label]
-
-tickers = [t for t in [t1, t2, t3] if t.strip()]
-
-if tickers:
-    try:
-        with st.spinner("データ取得中..."):
-            time.sleep(1)
-            data = {}
-            currencies = {}
-            for t in tickers:
-                df = yf.Ticker(t).history(period=period, interval=interval)
-                if not df.empty:
-                    df['MA25'] = df['Close'].rolling(25).mean()
-                    df['MA75'] = df['Close'].rolling(75).mean()
-                    df['RSI'] = calc_rsi(df['Close'])
-                    df['MACD'], df['Signal'] = calc_macd(df['Close'])
-                    data[t] = df
-                    currencies[t] = get_currency(t)
-
-        if not data:
-            st.error("データが取得できませんでした。")
