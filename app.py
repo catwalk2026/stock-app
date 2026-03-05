@@ -1,7 +1,8 @@
 import streamlit as st
 import yfinance as yf
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import time
 
 st.set_page_config(page_title="株式分析ツール", page_icon="📈", layout="wide")
@@ -139,6 +140,76 @@ def show_news(ticker):
     except:
         st.caption("ニュースを取得できませんでした")
 
+def show_chart(df, ticker, interval_label):
+    fig = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        row_heights=[0.6, 0.2, 0.2],
+        vertical_spacing=0.03,
+        subplot_titles=(f"{ticker} 株価", "RSI", "MACD")
+    )
+
+    # ローソク足
+    fig.add_trace(go.Candlestick(
+        x=df.index,
+        open=df['Open'], high=df['High'],
+        low=df['Low'], close=df['Close'],
+        name='ローソク足',
+        increasing_line_color='#00e5a0',
+        decreasing_line_color='#ff4d6d',
+    ), row=1, col=1)
+
+    # MA25・MA75
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df['MA25'],
+        name='MA25', line=dict(color='#00b8ff', width=1.2)
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df['MA75'],
+        name='MA75', line=dict(color='#ffd166', width=1.2)
+    ), row=1, col=1)
+
+    # RSI
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df['RSI'],
+        name='RSI', line=dict(color='#ff4d6d', width=1.2)
+    ), row=2, col=1)
+    fig.add_hline(y=70, line_dash="dash", line_color="white", opacity=0.3, row=2, col=1)
+    fig.add_hline(y=30, line_dash="dash", line_color="white", opacity=0.3, row=2, col=1)
+
+    # MACD
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df['MACD'],
+        name='MACD', line=dict(color='#00b8ff', width=1.2)
+    ), row=3, col=1)
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df['Signal'],
+        name='Signal', line=dict(color='#ffd166', width=1.2)
+    ), row=3, col=1)
+
+    hist = df['MACD'] - df['Signal']
+    fig.add_trace(go.Bar(
+        x=df.index, y=hist,
+        name='Histogram',
+        marker_color=['#00e5a0' if v >= 0 else '#ff4d6d' for v in hist],
+        opacity=0.6
+    ), row=3, col=1)
+
+    fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor='#0d1117',
+        plot_bgcolor='#0d1117',
+        height=700,
+        hovermode='x unified',
+        xaxis_rangeslider_visible=False,
+        showlegend=True,
+        legend=dict(orientation='h', y=1.02),
+    )
+    fig.update_yaxes(gridcolor='rgba(255,255,255,0.05)')
+    fig.update_xaxes(gridcolor='rgba(255,255,255,0.05)')
+
+    st.plotly_chart(fig, use_container_width=True)
+
 # 銘柄入力
 st.subheader("銘柄を入力（最大3つ）")
 col1, col2, col3 = st.columns(3)
@@ -162,18 +233,11 @@ with col_b:
     ], index=0)
 
 period_map = {
-    "1週間": "5d",
-    "1ヶ月": "1mo",
-    "3ヶ月": "3mo",
-    "6ヶ月": "6mo",
-    "1年": "1y",
-    "2年": "2y",
-    "5年": "5y",
+    "1週間": "5d", "1ヶ月": "1mo", "3ヶ月": "3mo",
+    "6ヶ月": "6mo", "1年": "1y", "2年": "2y", "5年": "5y",
 }
 interval_map = {
-    "日足": "1d",
-    "週足": "1wk",
-    "月足": "1mo",
+    "日足": "1d", "週足": "1wk", "月足": "1mo",
 }
 period = period_map[period_label]
 interval = interval_map[interval_label]
@@ -200,17 +264,24 @@ if tickers:
         else:
             if len(data) > 1:
                 st.subheader("📊 パフォーマンス比較")
-                fig_cmp, ax_cmp = plt.subplots(figsize=(14, 4))
-                plt.style.use('dark_background')
+                fig_cmp = go.Figure()
                 colors = ['#00e5a0', '#00b8ff', '#ffd166']
                 for (t, df), color in zip(data.items(), colors):
                     norm = df['Close'] / df['Close'].iloc[0] * 100
-                    ax_cmp.plot(df.index, norm, color=color, lw=1.5, label=t)
-                ax_cmp.axhline(100, color='white', alpha=0.2, linestyle='--')
-                ax_cmp.set_ylabel('相対パフォーマンス（開始=100）')
-                ax_cmp.legend()
-                ax_cmp.grid(alpha=0.2)
-                st.pyplot(fig_cmp)
+                    fig_cmp.add_trace(go.Scatter(
+                        x=df.index, y=norm,
+                        name=t, line=dict(color=color, width=1.5)
+                    ))
+                fig_cmp.add_hline(y=100, line_dash="dash", line_color="white", opacity=0.2)
+                fig_cmp.update_layout(
+                    template='plotly_dark',
+                    paper_bgcolor='#0d1117',
+                    plot_bgcolor='#0d1117',
+                    height=300,
+                    hovermode='x unified',
+                    yaxis_title='相対パフォーマンス（開始=100）',
+                )
+                st.plotly_chart(fig_cmp, use_container_width=True)
 
             for t, df in data.items():
                 st.markdown("---")
@@ -240,43 +311,7 @@ if tickers:
 
                 show_fundamentals(t)
                 show_news(t)
-
-                fig = plt.figure(figsize=(12, 8))
-                plt.style.use('dark_background')
-                gs = gridspec.GridSpec(3, 1, height_ratios=[3, 1, 1], hspace=0.1)
-
-                ax1 = fig.add_subplot(gs[0])
-                ax1.plot(df.index, df['Close'], color='#00e5a0', lw=1.5, label='Close')
-                ax1.plot(df.index, df['MA25'], color='#00b8ff', lw=1, label='MA25')
-                ax1.plot(df.index, df['MA75'], color='#ffd166', lw=1, label='MA75')
-                ax1.legend(loc='upper left', fontsize=8)
-                ax1.grid(alpha=0.2)
-                ax1.set_ylabel('Price')
-                ax1.set_xticklabels([])
-
-                ax2 = fig.add_subplot(gs[1])
-                ax2.plot(df.index, df['RSI'], color='#ff4d6d', lw=1.2)
-                ax2.axhline(70, color='white', alpha=0.3, linestyle='--', lw=0.8)
-                ax2.axhline(30, color='white', alpha=0.3, linestyle='--', lw=0.8)
-                ax2.fill_between(df.index, df['RSI'], 70, where=(df['RSI'] >= 70), alpha=0.2, color='#ff4d6d')
-                ax2.fill_between(df.index, df['RSI'], 30, where=(df['RSI'] <= 30), alpha=0.2, color='#00e5a0')
-                ax2.set_ylabel('RSI')
-                ax2.set_ylim(0, 100)
-                ax2.grid(alpha=0.2)
-                ax2.set_xticklabels([])
-
-                ax3 = fig.add_subplot(gs[2])
-                ax3.plot(df.index, df['MACD'], color='#00b8ff', lw=1.2, label='MACD')
-                ax3.plot(df.index, df['Signal'], color='#ffd166', lw=1.2, label='Signal')
-                ax3.bar(df.index, df['MACD'] - df['Signal'],
-                    color=['#00e5a0' if v >= 0 else '#ff4d6d' for v in (df['MACD'] - df['Signal'])],
-                    alpha=0.5, width=1)
-                ax3.axhline(0, color='white', alpha=0.2)
-                ax3.set_ylabel('MACD')
-                ax3.legend(loc='upper left', fontsize=8)
-                ax3.grid(alpha=0.2)
-
-                st.pyplot(fig)
+                show_chart(df, t, interval_label)
 
     except Exception as e:
         st.error("データ取得に失敗しました。少し待ってから再試行してください。")
