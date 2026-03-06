@@ -5,7 +5,32 @@ from plotly.subplots import make_subplots
 import time
 
 st.set_page_config(page_title="株式分析ツール", page_icon="📈", layout="wide")
-
+st.markdown("""
+<style>
+section[data-testid="stSidebar"] {
+    background-color: #0d1117;
+    color: #e6edf3;
+}
+section[data-testid="stSidebar"] * {
+    color: #e6edf3 !important;
+}
+section[data-testid="stSidebar"] .stButton button {
+    background-color: #161b22;
+    color: #e6edf3 !important;
+    border: 1px solid #30363d;
+    text-align: left;
+    border-radius: 8px;
+}
+section[data-testid="stSidebar"] .stButton button:hover {
+    background-color: #1f2d3d;
+    border-color: #00e5a0;
+}
+section[data-testid="stSidebar"] .stSelectbox div {
+    background-color: #161b22 !important;
+    color: #e6edf3 !important;
+}
+</style>
+""", unsafe_allow_html=True)
 def calc_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0).rolling(period).mean()
