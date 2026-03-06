@@ -7,6 +7,32 @@ import time
 st.set_page_config(page_title="株式分析ツール", page_icon="📈", layout="wide")
 st.markdown("""
 <style>
+.stApp { background-color: #0d1117; color: #e6edf3; }
+.stMarkdown { color: #e6edf3; }
+section[data-testid="stSidebar"] { background-color: #0d1117; }
+section[data-testid="stSidebar"] * { color: #e6edf3 !important; }
+section[data-testid="stSidebar"] .stButton button {
+    background-color: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    text-align: left;
+}
+section[data-testid="stSidebar"] .stButton button:hover {
+    border-color: #00e5a0;
+    background-color: #1f2d3d;
+}
+[data-testid="metric-container"] {
+    background: #161b22;
+    border: 1px solid #1f2d3d;
+    border-radius: 10px;
+    padding: 12px !important;
+}
+[data-testid="metric-container"] label { color: #6b7280 !important; }
+[data-testid="metric-container"] [data-testid="metric-value"] { color: #e6edf3 !important; }
+</style>
+""", unsafe_allow_html=True)
+st.markdown("""
+<style>
 section[data-testid="stSidebar"] {
     background-color: #0d1117;
     color: #e6edf3;
