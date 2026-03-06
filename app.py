@@ -202,7 +202,7 @@ if main_ticker:
             # ヘッダー
             col_a, col_b, col_c, col_d, col_e = st.columns([3,2,2,2,2])
             fmt = f"{{:.{decimals}f}}"
-            col_a.markdown(f"## {main_ticker}　`{period_label} / {interval_label}`")
+           col_a.markdown(f"<h2 style='color:#00e5a0;margin:0'>{main_ticker} <span style='color:#6b7280;font-size:16px'>{period_label} / {interval_label}</span></h2>", unsafe_allow_html=True)
             col_b.metric("現在値", symbol + fmt.format(latest))
             col_c.metric("変化", symbol + fmt.format(change))
             col_d.metric("騰落率", f"{pct:.2f}%")
@@ -281,7 +281,7 @@ if main_ticker:
                 hovermode='x unified',
                 xaxis_rangeslider_visible=False,
                 showlegend=True,
-                legend=dict(orientation='h', y=1.02, font=dict(size=11)),
+       legend=dict(orientation='h', y=1.02, font=dict(size=11, color='#e6edf3')),
                 margin=dict(l=0, r=0, t=30, b=0),
             )
             fig.update_yaxes(gridcolor='rgba(255,255,255,0.04)')
