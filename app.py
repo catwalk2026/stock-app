@@ -408,4 +408,3 @@ if main_ticker:
         st.error("データ取得に失敗しました。少し待ってから再試行してください。")
         if st.button("再試行"):
             st.rerun()
-        
