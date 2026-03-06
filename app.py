@@ -5,58 +5,61 @@ from plotly.subplots import make_subplots
 import time
 
 st.set_page_config(page_title="株式分析ツール", page_icon="📈", layout="wide")
+
 st.markdown("""
 <style>
-.stApp { background-color: #0d1117; color: #e6edf3; }
-.stMarkdown { color: #e6edf3; }
-section[data-testid="stSidebar"] { background-color: #0d1117; }
-section[data-testid="stSidebar"] * { color: #e6edf3 !important; }
-section[data-testid="stSidebar"] .stButton button {
-    background-color: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    text-align: left;
+/* 全体背景 */
+.stApp, .main, .block-container {
+    background-color: #0d1117 !important;
+    color: #c9d1d9 !important;
 }
-section[data-testid="stSidebar"] .stButton button:hover {
-    border-color: #00e5a0;
-    background-color: #1f2d3d;
+/* サイドバー */
+[data-testid="stSidebar"] {
+    background-color: #161b22 !important;
 }
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] div {
+    color: #c9d1d9 !important;
+}
+/* ボタン */
+[data-testid="stSidebar"] button {
+    background-color: #21262d !important;
+    color: #c9d1d9 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 6px !important;
+}
+[data-testid="stSidebar"] button:hover {
+    border-color: #00e5a0 !important;
+    color: #00e5a0 !important;
+}
+/* セレクトボックス */
+[data-testid="stSidebar"] select,
+[data-testid="stSidebar"] [data-baseweb="select"] {
+    background-color: #21262d !important;
+    color: #c9d1d9 !important;
+}
+/* メトリクス */
 [data-testid="metric-container"] {
-    background: #161b22;
-    border: 1px solid #1f2d3d;
-    border-radius: 10px;
+    background-color: #161b22 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
     padding: 12px !important;
 }
-[data-testid="metric-container"] label { color: #6b7280 !important; }
-[data-testid="metric-container"] [data-testid="metric-value"] { color: #e6edf3 !important; }
+[data-testid="stMetricLabel"] { color: #8b949e !important; font-size: 11px !important; }
+[data-testid="stMetricValue"] { color: #c9d1d9 !important; font-size: 20px !important; font-weight: 700 !important; }
+/* テキスト全般 */
+h1, h2, h3, h4, p, span, div { color: #c9d1d9 !important; }
+h1 { color: #00e5a0 !important; }
+hr { border-color: #30363d !important; }
+/* チェックボックス */
+[data-testid="stCheckbox"] label { color: #c9d1d9 !important; }
+/* テキスト入力 */
+input { background-color: #21262d !important; color: #c9d1d9 !important; border-color: #30363d !important; }
 </style>
 """, unsafe_allow_html=True)
-st.markdown("""
-<style>
-section[data-testid="stSidebar"] {
-    background-color: #0d1117;
-    color: #e6edf3;
-}
-section[data-testid="stSidebar"] * {
-    color: #e6edf3 !important;
-}
-section[data-testid="stSidebar"] .stButton button {
-    background-color: #161b22;
-    color: #e6edf3 !important;
-    border: 1px solid #30363d;
-    text-align: left;
-    border-radius: 8px;
-}
-section[data-testid="stSidebar"] .stButton button:hover {
-    background-color: #1f2d3d;
-    border-color: #00e5a0;
-}
-section[data-testid="stSidebar"] .stSelectbox div {
-    background-color: #161b22 !important;
-    color: #e6edf3 !important;
-}
-</style>
-""", unsafe_allow_html=True)
+
 def calc_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0).rolling(period).mean()
@@ -125,13 +128,14 @@ def get_currency(ticker):
 
 # ===== サイドバー =====
 with st.sidebar:
-    st.markdown("## 📈 株式分析ツール")
-    st.markdown("---")
+    st.title("📈 株式分析")
+    st.divider()
 
-    st.markdown("### 🔍 銘柄検索")
-    main_ticker = st.text_input("銘柄コード", value="7203.T", label_visibility="collapsed")
+    main_ticker = st.text_input("🔍 銘柄コード", value="7203.T")
 
-    st.markdown("### ⭐ ウォッチリスト")
+    st.divider()
+    st.subheader("⭐ ウォッチリスト")
+
     watchlist = [
         ("7203.T", "トヨタ"),
         ("6758.T", "ソニー"),
@@ -144,23 +148,31 @@ with st.sidebar:
     for symbol, name in watchlist:
         try:
             d = yf.Ticker(symbol).history(period="2d")
-            if not d.empty:
+            if not d.empty and len(d) >= 2:
                 price = d['Close'].iloc[-1]
                 chg = (d['Close'].iloc[-1] - d['Close'].iloc[-2]) / d['Close'].iloc[-2] * 100
-                color = "🟢" if chg >= 0 else "🔴"
-                sign = "+" if chg >= 0 else ""
-                if st.button(f"{color} **{name}**\n{price:.0f}  {sign}{chg:.2f}%", key=symbol, use_container_width=True):
-                    main_ticker = symbol
+                arrow = "▲" if chg >= 0 else "▼"
+                color = "#00e5a0" if chg >= 0 else "#ff4d6d"
+                st.markdown(f"""
+                <div style='background:#21262d;border:1px solid #30363d;border-radius:6px;
+                padding:8px 12px;margin-bottom:6px;cursor:pointer'>
+                    <div style='font-weight:600;font-size:13px;color:#c9d1d9'>{name}</div>
+                    <div style='display:flex;justify-content:space-between;margin-top:2px'>
+                        <span style='font-size:12px;color:#8b949e'>{symbol}</span>
+                        <span style='font-size:12px;color:{color}'>{arrow} {chg:+.2f}%</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
         except Exception:
             pass
 
-    st.markdown("---")
-    st.markdown("### 📅 期間・足")
+    st.divider()
+    st.subheader("📅 期間・足")
     period_label = st.selectbox("期間", ["1週間","1ヶ月","3ヶ月","6ヶ月","1年","2年","5年"], index=4)
     interval_label = st.selectbox("足の種類", ["日足","週足","月足"], index=0)
 
-    st.markdown("---")
-    st.markdown("### 📐 インジケーター")
+    st.divider()
+    st.subheader("📐 インジケーター")
     show_ma25 = st.checkbox("MA25", value=True)
     show_ma75 = st.checkbox("MA75", value=True)
     show_bb   = st.checkbox("ボリンジャーバンド", value=False)
@@ -190,30 +202,34 @@ if main_ticker:
             df['MACD'], df['Signal'] = calc_macd(df['Close'])
             df['BB_upper'], df['BB_mid'], df['BB_lower'] = calc_bb(df['Close'])
 
-            latest = df['Close'].iloc[-1]
-            change = df['Close'].iloc[-1] - df['Close'].iloc[-2]
-            pct    = change / df['Close'].iloc[-2] * 100
+            latest  = df['Close'].iloc[-1]
+            change  = df['Close'].iloc[-1] - df['Close'].iloc[-2]
+            pct     = change / df['Close'].iloc[-2] * 100
             rsi_now  = df['RSI'].iloc[-1]
             macd_now = df['MACD'].iloc[-1]
             sig_now  = df['Signal'].iloc[-1]
             ma25_now = df['MA25'].iloc[-1]
             ma75_now = df['MA75'].iloc[-1]
 
-            # ヘッダー
-            col_a, col_b, col_c, col_d, col_e = st.columns([3,2,2,2,2])
             fmt = f"{{:.{decimals}f}}"
-           col_a.markdown(f"<h2 style='color:#00e5a0;margin:0'>{main_ticker} <span style='color:#6b7280;font-size:16px'>{period_label} / {interval_label}</span></h2>", unsafe_allow_html=True)
-            col_b.metric("現在値", symbol + fmt.format(latest))
-            col_c.metric("変化", symbol + fmt.format(change))
-            col_d.metric("騰落率", f"{pct:.2f}%")
-            col_e.metric("RSI", f"{rsi_now:.1f}")
+
+            # ヘッダー
+            st.markdown(f"# {main_ticker}")
+            st.caption(f"{period_label} / {interval_label}")
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("現在値", symbol + fmt.format(latest))
+            c2.metric("変化", symbol + fmt.format(change))
+            c3.metric("騰落率", f"{pct:.2f}%")
+            c4.metric("RSI", f"{rsi_now:.1f}")
 
             # AIシグナル
             signal, score, reasons = ai_signal(rsi_now, macd_now, sig_now, ma25_now, ma75_now, latest)
-            st.markdown(f"**AIシグナル: {signal}** (スコア: {score:+d})　" + "　".join([f"・{r}" for r in reasons]))
-            st.markdown("---")
+            reason_text = "　".join([f"• {r}" for r in reasons])
+            st.markdown(f"**AIシグナル: {signal}** (スコア: {score:+d})　{reason_text}")
+            st.divider()
 
-            # サブプロット構成
+            # チャート構成
             rows = 1
             row_heights = [0.6]
             if show_vol:
@@ -239,53 +255,75 @@ if main_ticker:
                 open=df['Open'], high=df['High'],
                 low=df['Low'], close=df['Close'],
                 name='ローソク足',
-                increasing_line_color='#00e5a0',
-                decreasing_line_color='#ff4d6d',
+                increasing_line_color='#3fb950',
+                decreasing_line_color='#f85149',
             ), row=1, col=1)
 
             if show_ma25:
-                fig.add_trace(go.Scatter(x=df.index, y=df['MA25'], name='MA25', line=dict(color='#00b8ff', width=1.2)), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df['MA25'], name='MA25',
+                    line=dict(color='#58a6ff', width=1.2)), row=1, col=1)
             if show_ma75:
-                fig.add_trace(go.Scatter(x=df.index, y=df['MA75'], name='MA75', line=dict(color='#ffd166', width=1.2)), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df['MA75'], name='MA75',
+                    line=dict(color='#f0883e', width=1.2)), row=1, col=1)
             if show_bb:
-                fig.add_trace(go.Scatter(x=df.index, y=df['BB_upper'], name='BB上限', line=dict(color='rgba(180,100,255,0.6)', width=1, dash='dot')), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df.index, y=df['BB_lower'], name='BB下限', line=dict(color='rgba(180,100,255,0.6)', width=1, dash='dot'), fill='tonexty', fillcolor='rgba(180,100,255,0.05)'), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df['BB_upper'], name='BB上限',
+                    line=dict(color='rgba(188,140,255,0.7)', width=1, dash='dot')), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df['BB_lower'], name='BB下限',
+                    line=dict(color='rgba(188,140,255,0.7)', width=1, dash='dot'),
+                    fill='tonexty', fillcolor='rgba(188,140,255,0.05)'), row=1, col=1)
 
             current_row = 2
 
             if show_vol:
-                colors = ['#00e5a0' if c >= o else '#ff4d6d' for c, o in zip(df['Close'], df['Open'])]
-                fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='出来高', marker_color=colors, opacity=0.6), row=current_row, col=1)
+                vol_colors = ['#3fb950' if c >= o else '#f85149'
+                              for c, o in zip(df['Close'], df['Open'])]
+                fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='出来高',
+                    marker_color=vol_colors, opacity=0.7), row=current_row, col=1)
                 current_row += 1
 
             if show_rsi:
-                fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], name='RSI', line=dict(color='#ff4d6d', width=1.2)), row=current_row, col=1)
-                fig.add_hline(y=70, line_dash="dash", line_color="white", opacity=0.3, row=current_row, col=1)
-                fig.add_hline(y=30, line_dash="dash", line_color="white", opacity=0.3, row=current_row, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], name='RSI',
+                    line=dict(color='#f85149', width=1.2)), row=current_row, col=1)
+                fig.add_hline(y=70, line_dash="dash", line_color="#8b949e", opacity=0.5, row=current_row, col=1)
+                fig.add_hline(y=30, line_dash="dash", line_color="#8b949e", opacity=0.5, row=current_row, col=1)
                 fig.update_yaxes(range=[0, 100], row=current_row, col=1)
                 current_row += 1
 
             if show_macd:
-                fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], name='MACD', line=dict(color='#00b8ff', width=1.2)), row=current_row, col=1)
-                fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], name='Signal', line=dict(color='#ffd166', width=1.2)), row=current_row, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], name='MACD',
+                    line=dict(color='#58a6ff', width=1.2)), row=current_row, col=1)
+                fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], name='Signal',
+                    line=dict(color='#f0883e', width=1.2)), row=current_row, col=1)
                 hist = df['MACD'] - df['Signal']
                 fig.add_trace(go.Bar(x=df.index, y=hist, name='Histogram',
-                    marker_color=['#00e5a0' if v >= 0 else '#ff4d6d' for v in hist], opacity=0.6), row=current_row, col=1)
+                    marker_color=['#3fb950' if v >= 0 else '#f85149' for v in hist],
+                    opacity=0.6), row=current_row, col=1)
 
             fig.update_yaxes(tickprefix=symbol, tickformat=f",.{decimals}f", row=1, col=1)
             fig.update_layout(
-                template='plotly_dark',
                 paper_bgcolor='#0d1117',
                 plot_bgcolor='#0d1117',
                 height=750,
                 hovermode='x unified',
                 xaxis_rangeslider_visible=False,
                 showlegend=True,
-       legend=dict(orientation='h', y=1.02, font=dict(size=11, color='#e6edf3')),
+                legend=dict(
+                    orientation='h', y=1.02,
+                    font=dict(size=11, color='#c9d1d9'),
+                    bgcolor='rgba(0,0,0,0)',
+                ),
                 margin=dict(l=0, r=0, t=30, b=0),
+                font=dict(color='#c9d1d9'),
             )
-            fig.update_yaxes(gridcolor='rgba(255,255,255,0.04)')
-            fig.update_xaxes(gridcolor='rgba(255,255,255,0.04)')
+            fig.update_yaxes(
+                gridcolor='rgba(255,255,255,0.05)',
+                tickfont=dict(color='#8b949e'),
+                zerolinecolor='rgba(255,255,255,0.1)',
+            )
+            fig.update_xaxes(
+                gridcolor='rgba(255,255,255,0.05)',
+                tickfont=dict(color='#8b949e'),
+            )
             st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
