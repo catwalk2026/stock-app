@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ポートフォリオ Pro - 資産管理ダッシュボード</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' }
+        if (localStorage.getItem('theme') === 'light') {
+            document.documentElement.classList.remove('dark');
+        } else {
+            document.documentElement.classList.add('dark');
+        }
+    </script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Noto+Sans+JP:wght@400;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
+        body { font-family: 'Inter', 'Noto Sans JP', sans-serif; transition: background-color 0.3s; overflow-x: hidden; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .text-gradient {
+            background: linear-gradient(to right, #34d399, #22d3ee);
+            -webkit-background-clip: text; color: transparent;
+        }
+        .modal { display: none; }
+        .modal.active { display: flex; }
+        .chart-slice { cursor: pointer; transition: opacity 0.2s, stroke-width 0.2s; outline: none; }
+        .chart-slice:hover { opacity: 0.8; stroke-width: 18; }
+        .extra-news.hidden { display: none; }
+        .portfolio-grid { align-items: start; }
+        .stock-icon {
+            width: 3.25rem !important; height: 3.25rem !important;
+            min-width: 3.25rem !important; min-height: 3.25rem !important;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 0.85rem; flex-shrink: 0; font-size: 1.25rem; font-weight: 900;
+        }
+        .loading-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+        .sync-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+        .sync-ok { background-color: #10b981; }
+    </style>
+</head>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen p-4 md:p-8 transition-colors duration-300 font-sans">
+
+    <!-- ロード画面 -->
+    <div id="loader" class="fixed inset-0 z-[110] bg-slate-950 flex flex-col items-center justify-center transition-opacity duration-500">
+        <i data-lucide="activity" class="w-16 h-16 text-emerald-500 mb-4 loading-pulse"></i>
+        <p class="text-emerald-500 font-bold tracking-widest animate-pulse font-sans uppercase text-xs">System Synchronizing...</p>
+    </div>
+
+    <!-- 🚀 はじめてガイド -->
+    <div id="guide-modal" class="modal fixed inset-0 z-[130] items-center justify-center p-4 bg-slate-950/95 backdrop-blur-xl">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden p-8 md:p-10 space-y-8 animate-in fade-in zoom-in duration-500 text-slate-900 dark:text-white">
+            <div class="text-center space-y-3">
+                <div class="w-20 h-20 bg-emerald-500/10 rounded-3xl flex items-center justify-center mx-auto text-emerald-500 shadow-inner">
+                    <i data-lucide="sparkles" class="w-10 h-10 font-black"></i>
+                </div>
+                <h2 class="text-3xl font-black tracking-tighter leading-tight font-sans">資産管理 Pro<br><span class="text-emerald-500 text-2xl font-black">投資信託 ＆ 株式 対応版</span></h2>
+                <p class="text-slate-400 text-[10px] font-black uppercase tracking-widest font-mono font-black">Build 18.5 Final Stable</p>
+            </div>
+            
+            <div class="space-y-6 font-black">
+                <div class="flex gap-5">
+                    <div class="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center shrink-0 text-indigo-500 shadow-sm"><i data-lucide="layers" class="w-6 h-6"></i></div>
+                    <div>
+                        <p class="font-black text-base">1. 投資信託もまとめて管理</p>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-1">「eMAXIS Slim」などの投資信託も登録可能。基準価額を入れるだけで評価額を自動算出します。</p>
+                    </div>
+                </div>
+                <div class="flex gap-5">
+                    <div class="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center shrink-0 text-emerald-500 shadow-sm"><i data-lucide="zap" class="w-6 h-6"></i></div>
+                    <div>
+                        <p class="font-black text-base">2. 爆速レスポンス</p>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-1">「ボタンが止まらない」不具合を解消。通信を待たずに即座に反応を返す快適設計です。</p>
+                    </div>
+                </div>
+                <div class="flex gap-5">
+                    <div class="w-12 h-12 rounded-2xl bg-cyan-500/10 flex items-center justify-center shrink-0 text-cyan-500 shadow-sm"><i data-lucide="file-text" class="w-6 h-6"></i></div>
+                    <div>
+                        <p class="font-black text-base">3. 戦略メモの視認性向上</p>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mt-1">カード内に「メモ」見出しを追加。あなたの投資判断をいつでも一目で確認できます。</p>
+                    </div>
+                </div>
+            </div>
+
+            <button onclick="closeGuide()" class="w-full bg-slate-900 dark:bg-emerald-500 text-white dark:text-slate-950 font-black py-5 rounded-2xl shadow-xl hover:scale-[1.02] active:scale-95 transition-all tracking-widest text-sm uppercase">
+                ダッシュボードを開始する
+            </button>
+        </div>
+    </div>
+
+    <!-- メイン -->
+    <div class="max-w-7xl mx-auto hidden opacity-0 transition-opacity duration-500" id="main-content">
+        <!-- 統合サマリー -->
+        <div class="mb-8 bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-[2.5rem] p-6 sm:p-8 shadow-2xl relative overflow-hidden transition-colors flex flex-col lg:flex-row items-center justify-between gap-8 sm:gap-12 font-black">
+            <div class="absolute right-0 top-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl font-black"></div>
+            
+            <div class="flex flex-col gap-6 z-10 w-full lg:w-auto text-center lg:text-left font-black">
+                <div>
+                    <h1 class="text-3xl sm:text-4xl font-black text-gradient tracking-tighter flex items-center gap-2 mb-2 justify-center lg:justify-start">
+                        <i data-lucide="activity" class="w-8 h-8 sm:w-10 sm:h-10 text-emerald-500"></i> ポートフォリオ Pro
+                    </h1>
+                    <div class="flex flex-wrap items-center justify-center lg:justify-start gap-3">
+                        <button onclick="openSyncModal()" id="cloud-status-btn" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-black text-slate-500 transition-all hover:scale-105 shadow-sm uppercase font-sans">
+                            <span class="sync-dot sync-ok"></span> <span>DATA CONNECTED</span>
+                        </button>
+                        <div class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-400 shadow-sm font-sans">
+                           為替 1$ = 
+                           <input type="number" id="usd-jpy-rate" onchange="updateRate(this.value)" class="w-14 bg-transparent focus:outline-none text-emerald-500 text-center font-mono border-b border-emerald-500/30 ml-1 font-black" value="150">
+                           <span class="mr-1 text-[10px] font-black">円</span>
+                           <button onclick="fetchCurrentFX()" id="fx-refresh-btn" class="p-1 hover:text-emerald-500 transition-all active:scale-90" title="最新レートを取得">
+                               <i data-lucide="refresh-cw" class="w-3.5 h-3.5 font-black"></i>
+                           </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="flex flex-wrap items-center justify-center lg:justify-start gap-3 font-sans font-black">
+                    <button onclick="toggleTheme()" class="flex-none p-3.5 rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-all shadow-sm">
+                        <i data-lucide="sun" class="w-5 h-5 hidden dark:block text-amber-400"></i>
+                        <i data-lucide="moon" class="w-5 h-5 block dark:hidden text-indigo-500"></i>
+                    </button>
+                    <button onclick="toggleBaseCurrency()" class="group flex-none px-5 py-3.5 rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-black shadow-sm transition-all hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2">
+                        <span class="text-[10px] text-slate-400 uppercase tracking-widest font-bold">表示単位</span>
+                        <span id="display-currency-label" class="text-xl text-emerald-500 font-mono tracking-widest font-black">USD</span>
+                    </button>
+                    <button onclick="refreshData()" class="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 px-6 py-3.5 rounded-2xl border border-slate-300 dark:border-slate-700 transition-all text-sm font-black text-slate-700 dark:text-slate-200 shadow-sm uppercase tracking-tight font-black">
+                        <i data-lucide="refresh-cw" class="w-4 h-4 font-black" id="refresh-icon"></i> 最新価格に更新
+                    </button>
+                    <button onclick="openModal()" class="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 dark:hover:bg-emerald-500 px-6 py-3.5 rounded-2xl transition-all shadow-lg text-sm font-black text-white uppercase font-black">
+                        <i data-lucide="plus" class="w-5 h-5 font-black"></i> 銘柄追加
+                    </button>
+                </div>
+            </div>
+
+            <!-- 右側：総資産 -->
+            <div class="relative z-10 flex flex-col sm:flex-row items-center gap-6 sm:gap-10 shrink-0 w-full lg:w-auto justify-center lg:justify-end">
+                <div class="text-center sm:text-right font-black">
+                    <h2 class="text-slate-500 dark:text-slate-400 font-bold tracking-widest mb-1 flex items-center justify-center sm:justify-end gap-2 text-xs sm:text-sm uppercase font-sans font-black">
+                        <i data-lucide="wallet" class="w-4 h-4 text-emerald-500 font-black"></i> 総資産評価額
+                    </h2>
+                    <p class="text-5xl sm:text-6xl md:text-7xl font-black text-slate-900 dark:text-white tracking-tighter font-mono font-black" id="total-value">--</p>
+                </div>
+                <div class="h-32 w-32 sm:h-48 sm:w-48 relative shrink-0 font-black">
+                    <div id="chart-wrapper" class="w-full h-full font-black"></div>
+                    <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none font-black">
+                        <i data-lucide="pie-chart" class="w-5 h-5 sm:w-6 sm:h-6 text-slate-400 dark:text-slate-500 mb-0.5 sm:mb-1 opacity-50 font-black"></i>
+                        <span class="text-xl sm:text-3xl font-black text-slate-800 dark:text-white leading-none font-mono font-black"><span id="stock-count">0</span></span>
+                        <span class="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest font-black">銘柄</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mb-12 font-black">
+            <h2 class="text-xl font-bold flex items-center gap-2 px-2 text-slate-800 dark:text-white pb-4 transition-colors font-sans font-black">
+                <i data-lucide="layout-grid" class="w-5 h-5 text-cyan-500 dark:text-cyan-400 font-black"></i> 保有アセットリスト
+            </h2>
+            <div id="portfolio-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5 portfolio-grid font-black">
+                <!-- JS生成 -->
+            </div>
+            <div id="empty-state" class="hidden text-center py-24 bg-white/50 dark:bg-slate-900/20 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-[2.5rem] transition-colors font-sans font-black">
+                <p class="text-slate-500 dark:text-slate-400 font-medium text-lg text-center font-bold tracking-tight font-black">アセットが登録されていません。<br><span class="text-sm opacity-60 font-medium font-sans">右上の「銘柄追加」から始めましょう。</span></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ID連携設定モーダル -->
+    <div id="sync-modal" class="modal fixed inset-0 z-[120] items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 w-full max-w-md rounded-[2.5rem] shadow-2xl p-8 space-y-6 font-sans">
+            <div class="flex justify-between items-center font-black">
+                <h3 class="text-xl font-black flex items-center gap-2 tracking-tighter text-slate-900 dark:text-white uppercase font-sans font-black"><i data-lucide="cloud" class="text-indigo-500 font-black"></i> Sync Account</h3>
+                <button onclick="closeSyncModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors font-black"><i data-lucide="x" class="font-black"></i></button>
+            </div>
+            <div class="space-y-4 text-slate-600 dark:text-slate-400 font-black">
+                <p class="text-sm leading-relaxed font-medium font-black">このIDはあなた専用の資産データに紐付いています。別の端末で入力すると、データを即座に同期できます。</p>
+                <div class="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-inner font-black">
+                    <label class="block text-[10px] font-bold text-slate-400 uppercase mb-2 tracking-widest font-black">Your Private ID</label>
+                    <div class="flex items-center justify-between font-black">
+                        <span id="display-uid" class="font-mono text-sm font-bold truncate mr-3 text-slate-700 dark:text-slate-200 tracking-tighter font-black">取得中...</span>
+                        <button onclick="copyID()" class="bg-emerald-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-600 transition-colors font-black font-black">Copy ID</button>
+                    </div>
+                </div>
+                <div class="pt-4 border-t border-slate-100 dark:border-slate-800 font-black">
+                    <p class="text-[10px] font-bold text-slate-400 mb-3 uppercase tracking-widest font-black">Sync Another Device</p>
+                    <div class="flex gap-2 font-black">
+                        <input type="text" id="input-sync-id" placeholder="別の端末のIDを入力" class="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-xs font-mono focus:outline-none focus:border-indigo-500 text-slate-800 dark:text-white tracking-tighter font-black">
+                        <button onclick="manualSync()" class="bg-indigo-600 text-white px-5 py-3 rounded-xl text-xs font-black hover:bg-indigo-700 transition-colors font-sans uppercase font-black">連携</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 銘柄登録モーダル -->
+    <div id="add-modal" class="modal fixed inset-0 z-50 items-center justify-center p-4 bg-slate-900/40 dark:bg-slate-950/80 backdrop-blur-sm transition-colors font-sans font-black">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 w-full max-w-md rounded-[2rem] shadow-2xl overflow-hidden animate-in fade-in duration-200">
+            <div class="flex justify-between items-center p-6 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/20 transition-colors font-sans font-black">
+                <h3 id="modal-title" class="text-xl font-black text-slate-800 dark:text-white flex items-center gap-2 uppercase tracking-tighter font-black">
+                    <i data-lucide="plus-circle" class="w-5 h-5 text-emerald-500 font-black"></i> 銘柄の登録
+                </h3>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-white bg-slate-100 dark:bg-slate-800 p-2 rounded-full transition-colors font-black">
+                    <i data-lucide="x" class="w-4 h-4 font-black"></i>
+                </button>
+            </div>
+            <form id="add-form" onsubmit="addStock(event)" class="p-6 space-y-5 font-black">
+                <!-- 資産タイプ選択 -->
+                <div class="flex p-1 bg-slate-100 dark:bg-slate-950 rounded-xl font-black">
+                    <button type="button" onclick="setAssetType('stock')" id="btn-type-stock" class="flex-1 py-2.5 text-[11px] font-black rounded-lg transition-all bg-white dark:bg-slate-800 shadow text-emerald-500">個別株式</button>
+                    <button type="button" onclick="setAssetType('fund')" id="btn-type-fund" class="flex-1 py-2.5 text-[11px] font-black rounded-lg transition-all text-slate-400">投資信託</button>
+                </div>
+
+                <div class="relative font-black">
+                    <label class="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-2 ml-1 uppercase tracking-widest font-sans font-black">銘柄名・コード</label>
+                    <input type="text" id="input-ticker" oninput="handleTickerInput(event)" autocomplete="off" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-2xl px-4 py-3.5 focus:outline-none focus:border-emerald-500 text-slate-900 dark:text-white font-bold transition-colors tracking-tight font-sans font-black" required placeholder="AAPL, 7203, eMAXIS Slimなど">
+                    <ul id="ticker-suggestions" class="hidden absolute z-[150] w-full mt-1 max-h-60 overflow-y-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl py-2 font-black font-sans"></ul>
+                </div>
+                <div class="grid grid-cols-2 gap-4 font-black font-black">
+                    <div>
+                        <label id="label-shares" class="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-2 ml-1 uppercase tracking-widest font-black font-black">保有株数</label>
+                        <input type="number" id="input-shares" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-2xl px-4 py-3.5 focus:outline-none focus:border-emerald-500 text-slate-900 dark:text-white font-mono font-bold font-black font-black" step="any" required placeholder="100">
+                    </div>
+                    <div>
+                        <label id="label-price" class="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-2 ml-1 uppercase tracking-widest text-justify font-black font-black font-black">現在価格 <span id="input-price-unit" class="text-emerald-500 font-black font-sans font-black font-black">(USD)</span></label>
+                        <input type="number" id="input-price" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-2xl px-4 py-3.5 focus:outline-none focus:border-emerald-500 text-slate-900 dark:text-white font-mono font-bold font-black font-black" step="any" required placeholder="150.5">
+                    </div>
+                </div>
+                <div class="font-black font-black font-black">
+                    <label class="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-2 ml-1 uppercase tracking-widest font-sans font-black font-black">戦略・メモ</label>
+                    <textarea id="input-memo" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-2xl px-4 py-3.5 focus:outline-none focus:border-emerald-500 text-slate-900 dark:text-white h-24 resize-none text-sm font-medium transition-colors font-black font-black font-black" placeholder="理由や将来の戦略をメモ"></textarea>
+                </div>
+                <div class="pt-2 font-black font-black font-black font-black">
+                    <button id="submit-btn" type="submit" class="w-full bg-gradient-to-r from-emerald-600 to-emerald-500 text-white font-black py-4 rounded-2xl shadow-lg transition-all active:scale-[0.98] uppercase tracking-widest font-black">
+                        ポートフォリオに保存
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ツールチップ -->
+    <div id="chart-tooltip" class="fixed hidden bg-slate-900/95 dark:bg-slate-800/95 backdrop-blur-md border border-slate-700 text-white px-3 py-2 rounded-xl shadow-2xl pointer-events-none z-[200] transition-opacity duration-200 opacity-0 whitespace-nowrap flex items-center gap-2 font-sans font-black"></div>
+
+    <script type="module">
+        // --- 状態管理 ---
+        let portfolio = JSON.parse(localStorage.getItem('myPortfolioPro_local')) || [];
+        let userId = localStorage.getItem('portfolio_user_id') || Math.random().toString(36).substring(2, 12);
+        localStorage.setItem('portfolio_user_id', userId);
+
+        let usdJpyRate = 150;
+        let baseCurrency = localStorage.getItem('baseCurrency') || 'USD';
+        let newsData = JSON.parse(localStorage.getItem('news_cache')) || {}; 
+        let editingStockId = null;
+        let currentAssetType = 'stock';
+
+        window.portfolio = portfolio;
+        window.usdJpyRate = usdJpyRate;
+        window.baseCurrency = baseCurrency;
+
+        const CHART_COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899', '#14b8a6', '#f43f5e'];
+        const popularStocks = [
+            { ticker: '247A.T', name: 'Aiロボティクス' }, { ticker: '7203.T', name: 'トヨタ自動車' },
+            { ticker: 'AAPL', name: 'Apple' }, { ticker: 'NVDA', name: 'NVIDIA' },
+            { ticker: 'IONQ', name: 'IonQ' }, { ticker: 'TSLA', name: 'Tesla' }
+        ];
+
+        // --- 安全なDOM操作 ---
+        const safeSetStyle = (id, prop, val) => { const el = document.getElementById(id); if(el) el.style[prop] = val; };
+        const safeAddClass = (id, cls) => { const el = document.getElementById(id); if(el) el.classList.add(cls); };
+        const safeRemoveClass = (id, cls) => { const el = document.getElementById(id); if(el) el.classList.remove(cls); };
+
+        // --- 初期化 ---
+        async function startApp() {
+            lucide.createIcons();
+            const uidEl = document.getElementById('display-uid');
+            if(uidEl) uidEl.textContent = userId;
+            
+            renderDashboard();
+            
+            if (!localStorage.getItem('portfolio_guide_v18_final_v12')) {
+                safeAddClass('guide-modal', 'active');
+            } else {
+                safeRemoveClass('main-content', 'hidden');
+                setTimeout(() => safeAddClass('main-content', 'opacity-100'), 50);
+            }
+
+            setTimeout(() => {
+                safeSetStyle('loader', 'opacity', '0');
+                setTimeout(() => safeSetStyle('loader', 'display', 'none'), 500);
+            }, 200);
+
+            window.fetchCurrentFX();
+            connectCloud();
+            fetchRealNews();
+
+            document.addEventListener('click', (e) => {
+                if(e.target.id !== 'input-ticker') {
+                    const box = document.getElementById('ticker-suggestions');
+                    if(box) box.classList.add('hidden');
+                }
+            });
+            const curLabel = document.getElementById('display-currency-label');
+            if(curLabel) curLabel.textContent = baseCurrency;
+        }
+
+        async function connectCloud() {
+            try {
+                const { initializeApp } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
+                const { getAuth, signInAnonymously, signInWithCustomToken } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
+                const { getFirestore, doc, setDoc, onSnapshot } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
+                const config = JSON.parse(__firebase_config);
+                const app = initializeApp(config);
+                const auth = getAuth(app);
+                const db = getFirestore(app);
+                window.db = db; window.doc = doc; window.setDoc = setDoc; window.onSnapshot = onSnapshot;
+
+                const authPromise = (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) 
+                    ? signInWithCustomToken(auth, __initial_auth_token) 
+                    : signInAnonymously(auth);
+
+                await Promise.race([authPromise, new Promise((_, rej) => setTimeout(() => rej('Timeout'), 2500))]);
+
+                const docRef = doc(db, 'artifacts', 'portfolio-pro-v18', 'users', userId, 'portfolio', 'main');
+                onSnapshot(docRef, (snap) => {
+                    if (snap.exists()) {
+                        portfolio = snap.data().holdings || [];
+                        window.portfolio = portfolio;
+                        localStorage.setItem('myPortfolioPro_local', JSON.stringify(portfolio));
+                        renderDashboard();
+                    }
+                });
+            } catch (e) { console.warn("Local Mode Active"); }
+        }
+
+        window.setAssetType = (type) => {
+            currentAssetType = type;
+            const btnS = document.getElementById('btn-type-stock');
+            const btnF = document.getElementById('btn-type-fund');
+            const labelS = document.getElementById('label-shares');
+            const labelP = document.getElementById('label-price');
+            const unit = document.getElementById('input-price-unit');
+            if(type === 'fund') {
+                btnF.className = "flex-1 py-2.5 text-[11px] font-black rounded-lg transition-all bg-white dark:bg-slate-800 shadow text-indigo-500";
+                btnS.className = "flex-1 py-2.5 text-[11px] font-black rounded-lg transition-all text-slate-400";
+                labelS.textContent = "保有口数"; labelP.textContent = "基準価額(1万口当り)"; unit.textContent = "(JPY)";
+            } else {
+                btnS.className = "flex-1 py-2.5 text-[11px] font-black rounded-lg transition-all bg-white dark:bg-slate-800 shadow text-emerald-500";
+                btnF.className = "flex-1 py-2.5 text-[11px] font-black rounded-lg transition-all text-slate-400";
+                labelS.textContent = "保有株数"; labelP.textContent = "現在価格"; unit.textContent = "(USD)";
+            }
+        };
+
+        window.closeGuide = () => {
+            safeRemoveClass('guide-modal', 'active');
+            safeRemoveClass('main-content', 'hidden');
+            setTimeout(() => safeAddClass('main-content', 'opacity-100'), 50);
+            localStorage.setItem('portfolio_guide_v18_final_v12', 'true');
+            renderDashboard();
+            lucide.createIcons();
+        };
+
+        window.fetchCurrentFX = async () => {
+            const btn = document.getElementById('fx-refresh-btn');
+            if(btn) btn.classList.add('animate-spin');
+            const fetchFX = async () => {
+                const url = 'https://query1.finance.yahoo.com/v8/finance/chart/JPY=X?interval=1m&range=1d';
+                const proxies = [`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,`https://corsproxy.io/?${encodeURIComponent(url)}` ];
+                try {
+                    const res = await Promise.any(proxies.map(p => fetch(p).then(r => r.json())));
+                    const rate = res.chart.result[0].meta.regularMarketPrice;
+                    if (rate) {
+                        usdJpyRate = rate; window.usdJpyRate = rate;
+                        const rateIn = document.getElementById('usd-jpy-rate');
+                        if(rateIn) rateIn.value = rate.toFixed(2);
+                        renderDashboard();
+                    }
+                } catch(e){}
+            };
+            try { await Promise.race([fetchFX(), new Promise((_, rej) => setTimeout(() => rej('Timeout'), 800))]); } catch (e) {}
+            finally { if(btn) setTimeout(() => btn.classList.remove('animate-spin'), 300); }
+        };
+
+        window.updateRate = (val) => { usdJpyRate = parseFloat(val) || 1; window.usdJpyRate = usdJpyRate; renderDashboard(); };
+        window.toggleBaseCurrency = () => {
+            baseCurrency = baseCurrency === 'USD' ? 'JPY' : 'USD';
+            window.baseCurrency = baseCurrency;
+            localStorage.setItem('baseCurrency', baseCurrency);
+            const curLabel = document.getElementById('display-currency-label');
+            if(curLabel) curLabel.textContent = baseCurrency;
+            renderDashboard();
+        };
+
+        window.refreshData = async () => {
+            const icon = document.getElementById('refresh-icon');
+            if (icon) icon.classList.add('animate-spin');
+            portfolio = portfolio.map(s => ({ ...s, price: s.price * (1 + (Math.random() - 0.5) * 0.04) }));
+            window.portfolio = portfolio;
+            renderDashboard();
+            setTimeout(() => { if (icon) icon.classList.remove('animate-spin'); }, 800);
+            saveToCloud(portfolio);
+            window.fetchCurrentFX();
+            fetchRealNews();
+        };
+
+        window.handleTickerInput = async (e) => {
+            const rawVal = e.target.value.trim();
+            const val = rawVal.toUpperCase();
+            const box = document.getElementById('ticker-suggestions');
+            if (!rawVal) { if(box) { box.innerHTML = ''; box.classList.add('hidden'); } return; }
+            if(box) {
+                box.innerHTML = '<li class="p-4 animate-pulse text-slate-400 font-bold text-xs uppercase font-sans tracking-widest text-center">SEARCHING...</li>';
+                box.classList.remove('hidden');
+            }
+            clearTimeout(window.searchT);
+            window.searchT = setTimeout(async () => {
+                let res = popularStocks.filter(s => s.ticker.includes(val) || s.name.includes(rawVal)).map(s => ({ ticker: s.ticker, name: s.name }));
+                try {
+                    const targetUrl = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(rawVal)}&quotesCount=10`;
+                    const proxies = [`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`];
+                    const yf = await Promise.race([Promise.any(proxies.map(p => fetch(p).then(r => r.json()))), new Promise((_, rej) => setTimeout(() => rej('Timeout'), 2000))]);
+                    if (yf && yf.quotes) yf.quotes.forEach(q => { if(!res.find(r => r.ticker === q.symbol)) res.push({ ticker: q.symbol, name: q.shortname || q.longname || q.exchDisp }); });
+                } catch(e){}
+                if (res.length > 0 && box) {
+                    box.innerHTML = res.slice(0,10).map(s => `<li onclick="selectSuggestion('${s.ticker}')" class="px-4 py-3 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer flex justify-between border-b border-slate-100 dark:border-slate-700/50 last:border-0 transition-colors font-black"><div class="flex flex-col font-sans"><span class="font-bold text-slate-900 dark:text-white font-mono text-base font-black">${s.ticker}</span><span class="text-[9px] text-slate-400 uppercase font-black font-sans">MARKET CODE</span></div> <span class="text-xs text-slate-500 truncate max-w-[60%] text-right font-medium font-sans font-black font-black font-black font-black">${s.name}</span></li>`).join('');
+                } else if(box) {
+                    box.innerHTML = '<li class="p-4 text-xs text-slate-400 font-bold font-sans text-center font-black">該当なし (直接入力して保存可)</li>';
+                }
+            }, 350);
+        };
+
+        window.selectSuggestion = (ticker) => {
+            const tickerIn = document.getElementById('input-ticker');
+            if(tickerIn) tickerIn.value = ticker;
+            const box = document.getElementById('ticker-suggestions');
+            if(box) box.classList.add('hidden');
+            const isJp = ticker.includes('.T') || /^\d{3}[A-Z\d]/.test(ticker);
+            const priceUnit = document.getElementById('input-price-unit');
+            if(priceUnit && currentAssetType === 'stock') priceUnit.textContent = isJp ? '(JPY)' : '(USD)';
+            const priceIn = document.getElementById('input-price');
+            if (priceIn && !priceIn.value) priceIn.value = isJp ? 1500 : 150;
+        };
+
+        window.addStock = async (e) => {
+            if(e) e.preventDefault();
+            const t = document.getElementById('input-ticker')?.value;
+            const s = parseFloat(document.getElementById('input-shares')?.value || 0);
+            const p = parseFloat(document.getElementById('input-price')?.value || 0);
+            const m = document.getElementById('input-memo')?.value || '';
+            if(!t) return;
+            const newAsset = { id: Math.random().toString(36).substring(2, 9), ticker: t, shares: s, price: p, memo: m, type: currentAssetType };
+            if (editingStockId) portfolio = portfolio.map(x => x.id === editingStockId ? { ...x, ...newAsset, id: x.id } : x);
+            else portfolio = [...portfolio, newAsset];
+            window.portfolio = portfolio;
+            localStorage.setItem('myPortfolioPro_local', JSON.stringify(portfolio));
+            renderDashboard(); closeModal(); 
+            saveToCloud(portfolio); fetchRealNews();
+        };
+
+        window.removeStock = async (id) => {
+            if(confirm("削除しますか？")) { 
+                portfolio = portfolio.filter(x => x.id !== id); window.portfolio = portfolio;
+                localStorage.setItem('myPortfolioPro_local', JSON.stringify(portfolio));
+                renderDashboard(); saveToCloud(portfolio);
+            }
+        };
+
+        async function saveToCloud(data) {
+            if (!window.db) return;
+            try {
+                const docRef = window.doc(window.db, 'artifacts', 'portfolio-pro-v18', 'users', userId, 'portfolio', 'main');
+                await window.setDoc(docRef, { holdings: data });
+            } catch(e){}
+        }
+
+        async function fetchRealNews() {
+            if (!portfolio.length) return;
+            const mockSentiments = ["positive", "neutral", "positive", "negative", "neutral"];
+            portfolio.forEach(async (stock) => {
+                if(stock.type === 'fund') return;
+                try {
+                    const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(stock.ticker.replace('.T', '') + ' 株探 OR 日経')}&hl=ja&gl=JP&ceid=JP:ja`;
+                    const proxies = [`https://api.allorigins.win/raw?url=${encodeURIComponent(rssUrl)}`,`https://corsproxy.io/?${encodeURIComponent(rssUrl)}` ];
+                    const xml = await Promise.race([Promise.any(proxies.map(url => fetch(url).then(r => r.text()))), new Promise((_, rej) => setTimeout(() => rej('Timeout'), 2500))]);
+                    const items = Array.from(new DOMParser().parseFromString(xml, "text/xml").querySelectorAll("item")).slice(0, 5);
+                    newsData[stock.ticker] = items.map(i => ({ title: i.querySelector("title").textContent, link: i.querySelector("link").textContent, sentiment: mockSentiments[Math.floor(Math.random()*5)] }));
+                    localStorage.setItem('news_cache', JSON.stringify(newsData));
+                    renderDashboard(); 
+                } catch (e) {}
+            });
+        }
+
+        function formatCurrency(val, cur) {
+            if (cur === 'USD') return `<span class="text-emerald-500 mr-0.5 font-black font-mono tracking-tighter">$</span>${val.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            return `<span class="text-indigo-500 dark:text-indigo-400 mr-0.5 font-black font-mono">¥</span>${Math.round(val).toLocaleString()}`;
+        }
+
+        function getTradingViewUrl(ticker) {
+            let symbol = ticker.toUpperCase();
+            if (symbol.endsWith('.T')) symbol = 'TSE:' + symbol.replace('.T', '');
+            else if (/^\d{3}[A-Z\d]$/.test(symbol) || /^\d{4}$/.test(symbol)) symbol = 'TSE:' + symbol;
+            return `https://jp.tradingview.com/chart/?symbol=${symbol}`;
+        }
+
+        window.showTooltip = (e, t, r, c, v) => {
+            const tip = document.getElementById('chart-tooltip');
+            if(!tip) return;
+            tip.innerHTML = `<span class="w-3 h-3 rounded-full shadow-sm" style="background-color: ${c}"></span><span class="font-black text-sm ml-1 font-sans">${t}</span> <span class="text-emerald-400 ml-2 font-mono font-bold">${r}%</span><span class="text-slate-400 ml-2 text-[10px] font-medium font-sans">(${formatCurrency(v, baseCurrency)})</span>`;
+            tip.classList.remove('hidden', 'opacity-0');
+            tip.style.left = (e.clientX + 15) + 'px'; tip.style.top = (e.clientY + 15) + 'px';
+        };
+        window.moveTooltip = (e) => { const tip = document.getElementById('chart-tooltip'); if(tip) { tip.style.left = (e.clientX + 15) + 'px'; tip.style.top = (e.clientY + 15) + 'px'; } };
+        window.hideTooltip = () => { const tip = document.getElementById('chart-tooltip'); if(tip) { tip.classList.add('opacity-0'); setTimeout(() => tip.classList.add('hidden'), 200); } };
+
+        function renderDashboard() {
+            let totalUSD = 0;
+            const stats = portfolio.map(s => {
+                const isF = s.type === 'fund';
+                const isJ = isF || s.ticker.includes('.T') || /^\d{3}[A-Z\d]/.test(s.ticker);
+                let pUSD, vUSD;
+                if(isF) {
+                    const valJPY = (s.price / 10000) * s.shares;
+                    pUSD = s.price / usdJpyRate; vUSD = valJPY / usdJpyRate;
+                } else {
+                    pUSD = isJ ? s.price / usdJpyRate : s.price; vUSD = pUSD * s.shares;
+                }
+                totalUSD += vUSD;
+                return { ...s, isJp: isJ, vUSD, pOrig: s.price, isFund: isF };
+            }).map(s => ({ ...s, ratio: totalUSD > 0 ? (s.vUSD / totalUSD) * 100 : 0 })).sort((a, b) => b.vUSD - a.vUSD);
+
+            const tValEl = document.getElementById('total-value');
+            if(tValEl) tValEl.innerHTML = formatCurrency(baseCurrency === 'USD' ? totalUSD : totalUSD * usdJpyRate, baseCurrency);
+            const cEl = document.getElementById('stock-count');
+            if(cEl) cEl.textContent = portfolio.length;
+
+            const wrapper = document.getElementById('chart-wrapper');
+            if(wrapper) {
+                const isD = document.documentElement.classList.contains('dark');
+                let svg = `<svg viewBox="0 0 100 100" class="w-full h-full transform -rotate-90">`;
+                svg += `<circle cx="50" cy="50" r="40" fill="transparent" stroke="${isD?'#1e293b':'#f1f5f9'}" stroke-width="16" />`;
+                let cum = 0;
+                stats.forEach((s, i) => {
+                    const circ = 2 * Math.PI * 40; const dash = `${(s.ratio / 100) * circ} ${circ}`;
+                    const off = -cum * circ; cum += (s.ratio / 100);
+                    svg += `<circle cx="50" cy="50" r="40" fill="transparent" stroke="${CHART_COLORS[i % CHART_COLORS.length]}" stroke-width="16" stroke-dasharray="${dash}" stroke-dashoffset="${off}" class="chart-slice" onmouseenter="showTooltip(event, '${s.ticker}', '${s.ratio.toFixed(1)}', '${CHART_COLORS[i % CHART_COLORS.length]}', ${baseCurrency==='USD'?s.vUSD:s.vUSD*usdJpyRate})" onmousemove="moveTooltip(event)" onmouseleave="hideTooltip()" />`;
+                });
+                svg += `</svg>`; wrapper.innerHTML = svg;
+            }
+
+            const list = document.getElementById('portfolio-list');
+            const empty = document.getElementById('empty-state');
+            if (!portfolio.length) { if(list) list.innerHTML = ''; if(empty) empty.classList.remove('hidden'); }
+            else {
+                if(empty) empty.classList.add('hidden');
+                if(list) {
+                    list.innerHTML = stats.map((s, i) => {
+                        const col = CHART_COLORS[i % CHART_COLORS.length];
+                        const news = newsData[s.ticker];
+                        const memo = s.memo ? `<div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-200 dark:border-slate-700/50 mb-3 text-xs leading-relaxed text-slate-500 dark:text-slate-300 font-medium font-sans shadow-inner"><div class="flex items-center gap-1.5 mb-1.5 text-indigo-500 dark:text-indigo-400 font-black uppercase tracking-widest text-[10px]"><i data-lucide="file-text" class="w-3.5 h-3.5"></i> メモ</div><p>${s.memo}</p></div>` : '';
+                        const pDisp = s.isJp || s.isFund ? formatCurrency(s.pOrig, 'JPY') : formatCurrency(s.pOrig, 'USD');
+                        const vDisp = formatCurrency(baseCurrency === 'USD' ? s.vUSD : s.vUSD * usdJpyRate, baseCurrency);
+                        let newsH = '';
+                        if(s.isFund) {
+                            newsH = `<div class="flex items-center gap-2 px-4 py-3 bg-indigo-50 dark:bg-indigo-950/30 rounded-2xl border border-indigo-100 dark:border-indigo-900/50 text-indigo-500 dark:text-indigo-400 text-[10px] font-black"><i data-lucide="info" class="w-4 h-4"></i> 投資信託として管理中</div>`;
+                        } else if (news) {
+                            newsH = `<div class="news-container bg-slate-50 dark:bg-slate-950/60 p-5 rounded-2xl border border-slate-200 dark:border-slate-800/50 shadow-inner font-black"><div class="flex items-center justify-between mb-3 pb-2 border-b border-slate-200/50 dark:border-slate-700/50 text-slate-400 font-black font-sans uppercase"><span class="text-[10px] flex items-center gap-1.5 uppercase tracking-widest font-bold"><i data-lucide="newspaper" class="w-3.5 h-3.5 text-indigo-500"></i> 最新ニュース</span><span class="text-[9px] font-mono tracking-tighter">ALL ${news.length}</span></div>${news.map((n, idx) => {
+                                const bCol = n.sentiment === 'positive' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : n.sentiment === 'negative' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400' : 'bg-slate-200 text-slate-700 dark:bg-slate-500/10 dark:text-slate-400';
+                                return `<div class="${idx > 0 ? 'hidden extra-news' : ''} flex flex-col gap-1.5 ${idx > 0 ? 'pt-4 mt-2 border-t border-slate-200 dark:border-slate-700/30' : ''}"><span class="text-[9px] font-black uppercase px-2 py-0.5 rounded ${bCol} w-fit tracking-tighter">AI判定: ${n.sentiment === 'positive' ? 'ポジティブ' : n.sentiment === 'negative' ? 'ネガティブ' : '中立'}</span><a href="${n.link}" target="_blank" rel="noopener noreferrer" class="text-xs font-bold hover:text-emerald-500 transition-colors line-clamp-2 block">${n.title}</a></div>`;
+                            }).join('')}${news.length > 1 ? `<button onclick="toggleNewsDOM(this)" data-expanded="false" class="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700/50 text-[10px] font-black text-slate-400 hover:text-emerald-500 flex items-center justify-center gap-1 w-full uppercase transition-all font-sans font-bold">他 ${news.length - 1}件を表示 <i data-lucide="chevron-down" class="w-3 h-3"></i></button>` : ''}</div>`;
+                        } else { newsH = `<div class="p-6 bg-slate-100 dark:bg-slate-800/50 animate-pulse rounded-2xl h-28 border border-dashed border-slate-300 dark:border-slate-700"></div>`; }
+
+                        return `<div class="bg-white dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-[2rem] p-6 hover:shadow-2xl transition-all flex flex-col relative overflow-hidden group shadow-lg font-sans font-black"><div class="absolute left-0 top-0 right-0 h-1.5" style="background-color: ${col}"></div><div class="flex justify-between items-start mb-5 mt-1 font-black"><div class="flex items-center gap-4 font-black"><div class="stock-icon rounded-2xl flex items-center justify-center font-black text-white shadow-xl shrink-0 transition-all group-hover:scale-110 shadow-lg font-sans font-black" style="background-color: ${col}">${s.ticker[0]}</div><div class="min-w-0 font-black"><div class="flex items-center gap-2">${s.isFund ? `<span class="text-[9px] bg-indigo-500 text-white px-1.5 py-0.5 rounded font-black uppercase">Fund</span>` : ''}<h3 class="font-black text-2xl text-slate-800 dark:text-white transition-colors truncate tracking-tighter uppercase font-mono">${s.ticker}</h3></div><p class="text-[11px] text-slate-500 font-bold uppercase tracking-wider font-sans">${s.shares} ${s.isFund?'口':'株'}保有</p></div></div><div class="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity font-sans font-black"><button onclick="editStock('${s.id}')" class="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-emerald-500 transition-all shadow-sm font-black"><i data-lucide="edit-2" class="w-4 h-4 font-black font-black"></i></button><button onclick="removeStock('${s.id}')" class="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-rose-500 transition-all shadow-sm font-black font-black"><i data-lucide="trash-2" class="w-4 h-4 font-black font-black"></i></button></div></div><div class="grid grid-cols-2 gap-3 mb-5 font-sans font-black"><div class="p-3 bg-slate-50 dark:bg-slate-950/80 rounded-2xl border border-slate-100 dark:border-slate-800/50 shadow-inner font-black"><p class="text-[9px] text-slate-400 uppercase font-black mb-1 tracking-widest font-sans font-black font-black">取得単価</p><p class="text-[14px] font-mono font-bold text-slate-700 dark:text-slate-200 font-sans tracking-tighter font-black font-black">${pDisp}</p></div><div class="p-3 bg-slate-50 dark:bg-slate-950/80 rounded-2xl border border-slate-100 dark:border-slate-800/50 shadow-inner font-black"><p class="text-[9px] text-slate-400 uppercase font-black mb-1 text-right tracking-widest font-sans font-bold font-black font-black">評価額</p><p class="text-[14px] font-mono font-black text-emerald-500 text-right tracking-tighter font-sans font-black font-black">${vDisp}</p></div></div><div class="flex flex-col gap-0 font-black">${memo}${newsH}</div></div>`;
+                    }).join('');
+                }
+            }
+            lucide.createIcons();
+        }
+
+        window.openModal = () => { editingStockId = null; const f = document.getElementById('add-form'); if(f) f.reset(); setAssetType('stock'); const t = document.getElementById('modal-title'); if(t) t.innerHTML = `<i data-lucide="plus-circle" class="w-5 h-5 text-emerald-500"></i> 銘柄の登録`; const m = document.getElementById('add-modal'); if(m) m.classList.add('active'); lucide.createIcons(); };
+        window.closeModal = () => { const m = document.getElementById('add-modal'); if(m) m.classList.remove('active'); const box = document.getElementById('ticker-suggestions'); if(box) box.classList.add('hidden'); };
+        window.editStock = (id) => {
+            const s = portfolio.find(x => x.id === id); if (!s) return;
+            setAssetType(s.type || 'stock'); const tI = document.getElementById('input-ticker'); const sI = document.getElementById('input-shares'); const pI = document.getElementById('input-price'); const mI = document.getElementById('input-memo');
+            if(tI) tI.value = s.ticker; if(sI) sI.value = s.shares; if(pI) pI.value = s.price; if(mI) mI.value = s.memo || '';
+            editingStockId = id; const t = document.getElementById('modal-title'); if(t) t.innerHTML = `<i data-lucide="edit-3" class="w-5 h-5 text-emerald-500"></i> 銘柄の編集`; const m = document.getElementById('add-modal'); if(m) m.classList.add('active'); lucide.createIcons();
+        };
+
+        window.openSyncModal = () => { safeAddClass('sync-modal', 'active'); };
+        window.closeSyncModal = () => { safeRemoveClass('sync-modal', 'active'); };
+        window.copyID = () => { const el = document.createElement('textarea'); el.value = userId; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); alert("IDをコピーしました！"); };
+        window.manualSync = () => { const nI = document.getElementById('input-sync-id').value.trim(); if(!nI) return; if(confirm("同期しますか？")) { localStorage.setItem('portfolio_user_id', nI); location.reload(); } };
+        window.toggleTheme = () => { const h = document.documentElement; const t = h.classList.contains('dark') ? 'light' : 'dark'; h.classList.remove('dark', 'light'); h.classList.add(t); localStorage.setItem('theme', t); renderDashboard(); };
+        window.toggleNewsDOM = (btn) => { const c = btn.closest('.news-container'); const e = c.querySelectorAll('.extra-news'); const ex = btn.getAttribute('data-expanded') === 'true'; if (ex) { e.forEach(el => el.classList.add('hidden')); btn.setAttribute('data-expanded', 'false'); btn.innerHTML = `他 ${e.length}件を表示 <i data-lucide="chevron-down" class="w-3 h-3"></i>`; } else { e.forEach(el => el.classList.remove('hidden')); btn.setAttribute('data-expanded', 'true'); btn.innerHTML = `折りたたむ <i data-lucide="chevron-up" class="w-3 h-3 font-black"></i>`; } lucide.createIcons(); };
+
+        startApp();
+    </script>
+</body>
+</html>
+
