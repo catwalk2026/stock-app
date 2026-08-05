@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ABCash ポートフォリオダッシュボード</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --turquoise-main: #25B2C7;
+            --turquoise-base: #60C7D5;
+            --text-black: #2F3842;
+            --accent-orange: #F77261;
+            --stone: #596572;
+            --white: #FFFFFF;
+            --light-border: #F7F7F8;
+            --mint-main: #42B187;
+            --mint-base: #60D5A9;
+            --ivory-main: #CBC2B3;
+            --ivory-base: #F8F6ED;
+            --flamingo-main: #D56C76;
+            --blue-base: #6FAFE4;
+        }
+
+        body { 
+            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif; 
+            background-color: var(--ivory-base); 
+            color: var(--text-black); 
+            margin: 0; 
+            line-height: 1.6;
+        }
+        
+        /* ログイン画面用 */
+        #login-screen {
+            display: none; height: 100vh; justify-content: center; align-items: center; background: var(--ivory-base);
+        }
+        .login-card {
+            background: var(--white); padding: 50px 60px; border-radius: 16px; box-shadow: 0 4px 24px rgba(47, 56, 66, 0.05); text-align: center;
+        }
+        
+        /* ダッシュボード用 */
+        #dashboard-screen { display: none; padding: 30px 20px; }
+        .container { max-width: 1040px; margin: 0 auto; background: var(--white); padding: 40px; border-radius: 16px; box-shadow: 0 4px 24px rgba(47, 56, 66, 0.04); }
+        
+        h1, h2, h3 { margin-top: 0; color: var(--text-black); font-weight: 700; letter-spacing: 0.05em; }
+        h1 { font-size: 1.6rem; margin-bottom: 30px; }
+        h2 { font-size: 1.3rem; margin-bottom: 24px; }
+        h3 { font-size: 1.1rem; color: var(--stone); margin-bottom: 16px; }
+
+        .header-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; background: var(--white); padding: 24px 30px; border-radius: 12px; border: 1px solid var(--light-border); }
+        .total-assets { font-size: 1.8rem; font-weight: bold; color: var(--text-black); }
+        .fx-rate { font-size: 0.95rem; color: var(--ivory-main); font-weight: bold; }
+        .user-id-badge { font-size: 0.9rem; background: var(--ivory-base); color: var(--stone); padding: 6px 12px; border-radius: 20px; font-weight: bold; margin-left:15px; }
+
+        .tabs { display: flex; border-bottom: 2px solid var(--light-border); margin-bottom: 35px; gap: 10px; }
+        .tab-button { padding: 12px 24px; font-weight: bold; cursor: pointer; border: none; background: none; outline: none; font-size: 1rem; color: var(--ivory-main); transition: all 0.3s ease; }
+        .tab-button:hover { color: var(--stone); }
+        .tab-button.active { color: var(--turquoise-main); border-bottom: 3px solid var(--turquoise-main); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; animation: fadeIn 0.5s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+        .charts-wrapper { display: flex; gap: 24px; margin-bottom: 40px; flex-wrap: wrap; }
+        .chart-box { flex: 1; min-width: 320px; background: var(--white); padding: 24px; border-radius: 12px; border: 1px solid var(--light-border); }
+        
+        .summary-card { background: var(--white); border: 1px solid var(--light-border); border-radius: 12px; padding: 24px; margin-top: 20px; }
+        .summary-row { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--light-border); }
+        .summary-row:last-child { border-bottom: none; padding-bottom: 0; }
+        .category-badge { font-weight: bold; font-size: 1.05rem; display: flex; align-items: center; gap: 10px; color: var(--text-black); }
+        .badge-icon { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
+        .val-total { font-size: 1.25rem; font-weight: bold; color: var(--text-black); letter-spacing: 0.05em; }
+
+        .add-form, .rule-box { background: var(--white); border: 1px solid var(--light-border); padding: 24px; border-radius: 12px; margin-bottom: 35px; }
+        .form-group { display: inline-block; margin-right: 16px; margin-bottom: 16px; vertical-align: top; }
+        .form-group label { display: block; font-size: 0.85rem; margin-bottom: 6px; color: var(--stone); font-weight: bold; }
+        .form-group input, .form-group select { padding: 10px 14px; border: 1px solid var(--ivory-main); border-radius: 8px; color: var(--text-black); font-size: 0.95rem; outline: none; transition: border-color 0.3s; background-color: var(--white); }
+        .form-group input:focus, .form-group select:focus { border-color: var(--turquoise-base); }
+
+        .btn-submit { padding: 12px 28px; background: var(--turquoise-base); color: var(--white); border: none; border-radius: 30px; cursor: pointer; font-weight: bold; margin-top: 20px; transition: all 0.3s ease; font-size: 1rem; letter-spacing: 0.05em; display: inline-block;}
+        .btn-submit:hover { background: var(--turquoise-main); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(37, 178, 199, 0.2); }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 40px; }
+        th, td { border: none; border-bottom: 1px solid var(--light-border); padding: 16px 12px; text-align: right; color: var(--text-black); font-size: 0.95rem; }
+        th { text-align: center; color: var(--stone); font-weight: normal; font-size: 0.85rem; }
+        td:first-child, td:nth-child(2) { text-align: left; }
+        
+        .type-buy-auto { color: var(--turquoise-main); font-weight: bold; }
+        .type-buy-spot { color: var(--blue-base); font-weight: bold; }
+        .positive { color: var(--mint-main); font-weight: bold; }
+        .negative { color: var(--flamingo-main); font-weight: bold; }
+        
+        .btn-delete { background: var(--accent-orange); color: var(--white); border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; transition: 0.3s; font-size: 0.85rem; }
+        .btn-delete:hover { background: var(--flamingo-main); }
+        .btn-edit { background: var(--ivory-main); color: var(--white); border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; margin-right: 6px; transition: 0.3s; font-size: 0.85rem; }
+        .btn-edit:hover { background: var(--stone); }
+        .section-title { margin-top: 50px; border-bottom: 1px solid var(--light-border); padding-bottom: 12px; color: var(--text-black); }
+    </style>
+</head>
+<body>
+    <!-- ログイン（会員番号入力）画面 -->
+    <div id="login-screen">
+        <div class="login-card">
+            <h1 style="color: var(--turquoise-main); margin-bottom: 10px;">ABCash Portfolio</h1>
+            <p style="color: var(--stone); margin-bottom: 30px;">生徒さんの会員番号を入力してください</p>
+            <input type="text" id="login-id" placeholder="例: 123456" maxlength="6" style="padding: 15px; font-size: 1.4rem; text-align: center; border: 2px solid var(--ivory-main); border-radius: 8px; width: 220px; display: block; margin: 0 auto 20px auto; color: var(--text-black); font-weight: bold; letter-spacing: 0.2em;">
+            <button onclick="enterDashboard()" class="btn-submit">ダッシュボードを開く</button>
+        </div>
+    </div>
+
+    <!-- ダッシュボード画面 -->
+    <div id="dashboard-screen">
+        <div class="container">
+            <h1 style="display:flex; align-items:center;">
+                ✨ ポートフォリオダッシュボード
+                <span class="user-id-badge">ID: <span id="display-user-id"></span></span>
+            </h1>
+            
+            <div class="header-info">
+                <div class="total-assets">総資産額: <span id="total-assets">計算中...</span></div>
+                <div class="fx-rate">米ドル/円: <span id="fx-rate">-</span>円</div>
+            </div>
+
+            <div class="tabs">
+                <button class="tab-button active" onclick="switchTab('tab-all')">資産全体</button>
+                <button class="tab-button" onclick="switchTab('tab-jp')">日本株</button>
+                <button class="tab-button" onclick="switchTab('tab-us')">米国株</button>
+                <button class="tab-button" onclick="switchTab('tab-fund')">投資信託</button>
+            </div>
+
+            <!-- ① 資産全体 -->
+            <div id="tab-all" class="tab-content active">
+                <h2>資産サマリー</h2>
+                <div class="charts-wrapper">
+                    <div class="chart-box"><canvas id="portfolioChart"></canvas></div>
+                    <div class="chart-box"><canvas id="historyChart"></canvas></div>
+                </div>
+
+                <div class="summary-card">
+                    <h3>クラス別評価額</h3>
+                    <div class="summary-row">
+                        <div class="category-badge"><span class="badge-icon" style="background:var(--turquoise-base);"></span>日本株式</div>
+                        <div class="val-box"><div class="val-total" id="cat-jp-total">¥0</div></div>
+                    </div>
+                    <div class="summary-row">
+                        <div class="category-badge"><span class="badge-icon" style="background:var(--accent-orange);"></span>米国株式</div>
+                        <div class="val-box"><div class="val-total" id="cat-us-total">¥0</div></div>
+                    </div>
+                    <div class="summary-row">
+                        <div class="category-badge"><span class="badge-icon" style="background:var(--mint-base);"></span>投資信託</div>
+                        <div class="val-box"><div class="val-total" id="cat-fund-total">¥0</div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ② 日本株管理 -->
+            <div id="tab-jp" class="tab-content">
+                <h2>日本株ポートフォリオ</h2>
+                <div class="add-form">
+                    <h3>取引の追加</h3>
+                    <div class="form-group"><label>指定形式</label><select id="jp-calc-mode" onchange="toggleCalcMode('jp')"><option value="QTY">株数指定 (株)</option><option value="AMOUNT">金額指定 (円)</option></select></div>
+                    <div class="form-group"><label>区分</label><select id="jp-trade-type"><option value="BUY_SPOT">買付</option><option value="SELL">売却</option></select></div>
+                    <div class="form-group"><label>取引日</label><input type="date" id="jp-trade-date" class="default-date"></div>
+                    <div class="form-group"><label>証券コード</label><input type="text" id="jp-ticker" placeholder="例: 7203"></div>
+                    <div class="form-group"><label>銘柄名</label><input type="text" id="jp-name" placeholder="例: トヨタ自動車"></div>
+                    <div class="form-group"><label>株単価 (円)</label><input type="number" id="jp-price" oninput="calculateQty('jp')" placeholder="例: 2800"></div>
+                    <div class="form-group" id="jp-amount-group" style="display:none;"><label>買付金額 (円)</label><input type="number" id="jp-amount" oninput="calculateQty('jp')" placeholder="例: 100000"></div>
+                    <div class="form-group"><label>株数</label><input type="number" id="jp-qty" placeholder="例: 100"></div>
+                    <button type="button" class="btn-submit" onclick="submitStockTrade('JP')">日本株を記録する</button>
+                </div>
+                <table>
+                    <thead><tr><th>コード</th><th>銘柄名</th><th>株数</th><th>取得単価 (円)</th><th>現在価格 (円)</th><th>評価額 (円)</th><th>損益 (円)</th><th>操作</th></tr></thead>
+                    <tbody id="table-jp"></tbody>
+                </table>
+                <h3 class="section-title">取引履歴</h3>
+                <table>
+                    <thead><tr><th>取引日</th><th>区分</th><th>銘柄名</th><th>株数</th><th>取得単価 (円)</th><th>取引総額 (円)</th><th>操作</th></tr></thead>
+                    <tbody id="tx-table-jp"></tbody>
+                </table>
+            </div>
+
+            <!-- ③ 米国株管理 -->
+            <div id="tab-us" class="tab-content">
+                <h2>米国株ポートフォリオ</h2>
+                <div class="add-form">
+                    <h3>取引の追加</h3>
+                    <div class="form-group"><label>指定形式</label><select id="us-calc-mode" onchange="toggleCalcMode('us')"><option value="QTY">株数指定 (株)</option><option value="AMOUNT">金額指定 ($)</option></select></div>
+                    <div class="form-group"><label>区分</label><select id="us-trade-type"><option value="BUY_SPOT">買付</option><option value="SELL">売却</option></select></div>
+                    <div class="form-group"><label>取引日</label><input type="date" id="us-trade-date" class="default-date"></div>
+                    <div class="form-group"><label>ティッカー</label><input type="text" id="us-ticker" placeholder="例: AAPL"></div>
+                    <div class="form-group"><label>銘柄名</label><input type="text" id="us-name" placeholder="例: Apple"></div>
+                    <div class="form-group"><label>株単価 ($)</label><input type="number" step="any" id="us-price" oninput="calculateQty('us')" placeholder="例: 220.5"></div>
+                    <div class="form-group" id="us-amount-group" style="display:none;"><label>買付金額 ($)</label><input type="number" step="any" id="us-amount" oninput="calculateQty('us')" placeholder="例: 1000"></div>
+                    <div class="form-group"><label>株数</label><input type="number" step="any" id="us-qty" placeholder="例: 10"></div>
+                    <button type="button" class="btn-submit" onclick="submitStockTrade('US')">米国株を記録する</button>
+                </div>
+                <table>
+                    <thead><tr><th>コード</th><th>銘柄名</th><th>株数</th><th>取得単価 ($)</th><th>現在価格 ($)</th><th>評価額 (円)</th><th>損益 (円)</th><th>操作</th></tr></thead>
+                    <tbody id="table-us"></tbody>
+                </table>
+                <h3 class="section-title">取引履歴</h3>
+                <table>
+                    <thead><tr><th>取引日</th><th>区分</th><th>銘柄名</th><th>株数</th><th>取得単価 ($)</th><th>取引総額 ($)</th><th>操作</th></tr></thead>
+                    <tbody id="tx-table-us"></tbody>
+                </table>
+            </div>
+
+            <!-- ④ 投資信託 -->
+            <div id="tab-fund" class="tab-content">
+                <h2>投資信託ポートフォリオ</h2>
+                <div class="rule-box">
+                    <h3>自動積立ルール設定</h3>
+                    <div class="form-group"><label>投信コード</label><input type="text" id="rule-ticker" onchange="fetchFundPriceAuto('rule')" placeholder="例: 0331418A"></div>
+                    <div class="form-group"><label>ファンド名</label><input type="text" id="rule-name" placeholder="例: eMAXIS Slim 全世界株式"></div>
+                    <div class="form-group"><label>積立コース</label><select id="rule-freq" onchange="toggleRuleFreq()"><option value="MONTHLY">毎月コース</option><option value="DAILY">毎日コース</option></select></div>
+                    <div class="form-group" id="rule-day-group"><label>積立日 (毎月)</label><select id="rule-day"><option value="1">1日</option><option value="5">5日</option><option value="10">10日</option><option value="15">15日</option><option value="20">20日</option><option value="25">25日</option></select></div>
+                    <div class="form-group"><label>積立金額 (円)</label><input type="number" id="rule-amount" placeholder="30000"></div>
+                    <div class="form-group"><label>取得基準価額</label><input type="number" id="rule-avg-price" placeholder="例: 28459"></div>
+                    <div class="form-group"><label>開始日</label><input type="date" id="rule-start-date" class="default-date"></div>
+                    <button type="button" class="btn-submit" onclick="submitFundRule()">積立を開始する</button>
+                </div>
+                <div class="add-form">
+                    <h3>スポット買付（一括・個別追加）</h3>
+                    <div class="form-group"><label>指定形式</label><select id="fund-calc-mode" onchange="toggleCalcMode('fund')"><option value="AMOUNT">金額指定 (円)</option><option value="QTY">口数指定 (口)</option></select></div>
+                    <div class="form-group"><label>区分</label><select id="fund-trade-type"><option value="BUY_SPOT">買付</option><option value="SELL">売却</option></select></div>
+                    <div class="form-group"><label>取引日</label><input type="date" id="fund-trade-date" class="default-date"></div>
+                    <div class="form-group"><label>投信コード</label><input type="text" id="fund-ticker" onchange="fetchFundPriceAuto('spot')" placeholder="例: 0331418A"></div>
+                    <div class="form-group"><label>ファンド名</label><input type="text" id="fund-name" placeholder="例: eMAXIS Slim S&P500"></div>
+                    <div class="form-group"><label>基準価額 (1万口)</label><input type="number" id="fund-price" oninput="calculateQty('fund')" placeholder="例: 28459"></div>
+                    <div class="form-group" id="fund-amount-group"><label>買付金額 (円)</label><input type="number" id="fund-amount" oninput="calculateQty('fund')" placeholder="例: 30000"></div>
+                    <div class="form-group"><label>買付口数 (口)</label><input type="number" id="fund-qty" placeholder="例: 35138"></div>
+                    <button type="button" class="btn-submit" onclick="submitStockTrade('FUND')">買付を記録する</button>
+                </div>
+                <table>
+                    <thead><tr><th>ファンド名</th><th>保有口数</th><th>平均取得価額</th><th>現在基準価額</th><th>評価額 (円)</th><th>損益 (円)</th><th>操作</th></tr></thead>
+                    <tbody id="table-fund"></tbody>
+                </table>
+                <h3 class="section-title">取引履歴</h3>
+                <table>
+                    <thead><tr><th>取引日</th><th>区分</th><th>ファンド名</th><th>買付口数</th><th>取得基準価額</th><th>買付総額 (円)</th><th>操作</th></tr></thead>
+                    <tbody id="tx-table-fund"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let myDoughnutChart = null;
+        let myLineChart = null;
+
+        const COLOR_TURQUOISE = '#60C7D5';
+        const COLOR_TURQUOISE_MAIN = '#25B2C7';
+        const COLOR_ORANGE = '#F77261';
+        const COLOR_MINT = '#60D5A9';
+        const COLOR_LIGHT = 'rgba(96, 199, 213, 0.15)';
+        const COLOR_DISABLED = '#F7F7F8';
+
+        document.querySelectorAll('.default-date').forEach(el => el.valueAsDate = new Date());
+
+        // ==========================================
+        // マルチユーザー (URLルーティング) 制御
+        // ==========================================
+        const path = window.location.pathname.replace('/', '');
+        let currentUserId = null;
+
+        if (/^\d{6}$/.test(path)) {
+            currentUserId = path;
+            document.getElementById('display-user-id').textContent = currentUserId;
+            document.getElementById('login-screen').style.display = 'none';
+            document.getElementById('dashboard-screen').style.display = 'block';
+            fetchPortfolio();
+        } else {
+            document.getElementById('login-screen').style.display = 'flex';
+            document.getElementById('dashboard-screen').style.display = 'none';
+        }
+
+        function enterDashboard() {
+            const inputId = document.getElementById('login-id').value;
+            if (/^\d{6}$/.test(inputId)) {
+                window.location.href = '/' + inputId;
+            } else {
+                alert('会員番号は6桁の数字を入力してください。（例: 123456）');
+            }
+        }
+
+        // ==========================================
+        // UI & 計算制御
+        // ==========================================
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            event.target.classList.add('active');
+
+            if (tabId === 'tab-jp') fetchCategoryTransactions('JP', 'tx-table-jp');
+            if (tabId === 'tab-us') fetchCategoryTransactions('US', 'tx-table-us');
+            if (tabId === 'tab-fund') fetchCategoryTransactions('FUND', 'tx-table-fund');
+        }
+
+        function toggleRuleFreq() {
+            const freq = document.getElementById('rule-freq').value;
+            document.getElementById('rule-day-group').style.display = freq === 'MONTHLY' ? 'inline-block' : 'none';
+        }
+
+        function toggleCalcMode(prefix) {
+            const mode = document.getElementById(`${prefix}-calc-mode`).value;
+            const amountGroup = document.getElementById(`${prefix}-amount-group`);
+            const qtyInput = document.getElementById(`${prefix}-qty`);
+
+            if (mode === 'AMOUNT') {
+                amountGroup.style.display = 'inline-block';
+                qtyInput.readOnly = true;
+                qtyInput.style.backgroundColor = COLOR_DISABLED;
+                qtyInput.style.color = '#CBC2B3';
+            } else {
+                amountGroup.style.display = 'none';
+                qtyInput.readOnly = false;
+                qtyInput.style.backgroundColor = '#FFFFFF';
+                qtyInput.style.color = '#2F3842';
+            }
+            calculateQty(prefix);
+        }
+
+        function calculateQty(prefix) {
+            const modeElem = document.getElementById(`${prefix}-calc-mode`);
+            const mode = modeElem ? modeElem.value : 'QTY';
+            if (mode === 'AMOUNT') {
+                const amount = parseFloat(document.getElementById(`${prefix}-amount`).value);
+                const price = parseFloat(document.getElementById(`${prefix}-price`).value);
+                const qtyInput = document.getElementById(`${prefix}-qty`);
+
+                if (!isNaN(amount) && !isNaN(price) && price > 0) {
+                    if (prefix === 'fund') qtyInput.value = Math.round((amount / price) * 10000.0);
+                    else qtyInput.value = (amount / price).toFixed(4);
+                }
+            }
+        }
+
+        // ==========================================
+        // API 呼び出し (全て user_id 付き)
+        // ==========================================
+        async function fetchFundPriceAuto(type) {
+            const ticker = (type === 'rule' ? document.getElementById('rule-ticker') : document.getElementById('fund-ticker')).value.trim();
+            if (ticker.length === 8) {
+                try {
+                    const res = await fetch(`/api/fund_info/${ticker}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.price > 0) {
+                            if (type === 'rule') document.getElementById('rule-avg-price').value = data.price;
+                            else { document.getElementById('fund-price').value = data.price; calculateQty('fund'); }
+                        }
+                    }
+                } catch(e) {}
+            }
+        }
+
+        async function submitStockTrade(type) {
+            let trade_type, trade_date, ticker, name, price, quantity;
+            if (type === 'JP') {
+                trade_type = document.getElementById('jp-trade-type').value; trade_date = document.getElementById('jp-trade-date').value;
+                ticker = document.getElementById('jp-ticker').value.trim(); name = document.getElementById('jp-name').value.trim();
+                price = parseFloat(document.getElementById('jp-price').value); quantity = parseFloat(document.getElementById('jp-qty').value);
+            } else if (type === 'US') {
+                trade_type = document.getElementById('us-trade-type').value; trade_date = document.getElementById('us-trade-date').value;
+                ticker = document.getElementById('us-ticker').value.trim().toUpperCase(); name = document.getElementById('us-name').value.trim();
+                price = parseFloat(document.getElementById('us-price').value); quantity = parseFloat(document.getElementById('us-qty').value);
+            } else if (type === 'FUND') {
+                trade_type = document.getElementById('fund-trade-type').value; trade_date = document.getElementById('fund-trade-date').value;
+                ticker = document.getElementById('fund-ticker').value.trim(); name = document.getElementById('fund-name').value.trim();
+                price = parseFloat(document.getElementById('fund-price').value); quantity = parseFloat(document.getElementById('fund-qty').value);
+            }
+
+            if (!name || isNaN(price) || isNaN(quantity)) { alert('入力内容を確認してください。'); return; }
+
+            const res = await fetch(`/api/${currentUserId}/trade`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticker, name, trade_type, asset_type: type === 'FUND' ? 'FUND' : 'STOCK', trade_date, quantity, price })
+            });
+
+            if (res.ok) {
+                alert('取引を記録しました。行動が自信に繋がりますね！');
+                fetchPortfolio();
+                if (type === 'JP') fetchCategoryTransactions('JP', 'tx-table-jp');
+                if (type === 'US') fetchCategoryTransactions('US', 'tx-table-us');
+                if (type === 'FUND') fetchCategoryTransactions('FUND', 'tx-table-fund');
+            }
+        }
+
+        async function submitFundRule() {
+            const ticker = document.getElementById('rule-ticker').value.trim();
+            const name = document.getElementById('rule-name').value.trim();
+            const frequency = document.getElementById('rule-freq').value;
+            const monthly_day = parseInt(document.getElementById('rule-day').value);
+            const amount = parseFloat(document.getElementById('rule-amount').value);
+            const avg_price = parseFloat(document.getElementById('rule-avg-price').value) || 10000.0;
+            const start_date = document.getElementById('rule-start-date').value;
+
+            if (!ticker || !name || isNaN(amount) || !start_date) { alert('すべての項目を入力してください。'); return; }
+
+            const res = await fetch(`/api/${currentUserId}/fund_rule`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticker, name, frequency, monthly_day, amount, avg_price, start_date })
+            });
+
+            if (res.ok) {
+                alert('自動積立の設定が完了しました！未来への第一歩です。');
+                fetchPortfolio(); fetchCategoryTransactions('FUND', 'tx-table-fund');
+            }
+        }
+
+        async function updatePrice(ticker, currentPrice) {
+            const newPriceStr = prompt(`最新の基準価額（1万口あたり）を入力してください:`, currentPrice);
+            if (!newPriceStr) return;
+            const newPrice = parseFloat(newPriceStr);
+            if (isNaN(newPrice) || newPrice <= 0) return;
+
+            const res = await fetch(`/api/${currentUserId}/update_price`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticker: ticker, current_price: newPrice })
+            });
+            if (res.ok) fetchPortfolio();
+        }
+
+        async function deleteStock(ticker) {
+            if (!confirm(`選択した資産（${ticker}）の記録を削除してもよろしいですか？`)) return;
+            const res = await fetch(`/api/${currentUserId}/delete_stock/${encodeURIComponent(ticker)}`, { method: 'DELETE' });
+            if (res.ok) {
+                fetchPortfolio(); fetchCategoryTransactions('JP', 'tx-table-jp'); fetchCategoryTransactions('US', 'tx-table-us'); fetchCategoryTransactions('FUND', 'tx-table-fund');
+            }
+        }
+
+        async function fetchCategoryTransactions(category, targetTableId) {
+            const res = await fetch(`/api/${currentUserId}/transactions/${category}`);
+            const data = await res.json();
+            const tbody = document.getElementById(targetTableId);
+            tbody.innerHTML = '';
+
+            data.forEach(item => {
+                let totalVal = (item.quantity * item.price);
+                if (category === 'FUND') totalVal = totalVal / 10000.0;
+                let typeText = "買付"; let typeClass = "type-buy-spot";
+                if (item.type === "BUY_AUTO") { typeText = "自動積立"; typeClass = "type-buy-auto"; }
+                else if (item.type === "BUY_SPOT") { typeText = "一括買付"; typeClass = "type-buy-spot"; }
+                else if (item.type === "SELL") { typeText = "売却"; typeClass = "negative"; }
+
+                const unit = category === 'FUND' ? '口' : '株'; const currency = category === 'US' ? '$' : '¥';
+                tbody.innerHTML += `
+                    <tr>
+                        <td style="text-align:center; color:#596572;">${item.trade_date}</td>
+                        <td style="text-align:center;" class="${typeClass}">${typeText}</td>
+                        <td style="font-weight:bold;">${item.name}</td>
+                        <td>${item.quantity.toLocaleString()} ${unit}</td>
+                        <td>${currency}${item.price.toLocaleString()}</td>
+                        <td>${currency}${Math.floor(totalVal).toLocaleString()}</td>
+                        <td style="text-align:center;"><button class="btn-delete" onclick="deleteTx(${item.id}, '${category}')">削除</button></td>
+                    </tr>
+                `;
+            });
+        }
+
+        async function deleteTx(txId, category) {
+            if (!confirm(`この取引履歴を削除しますか？`)) return;
+            const res = await fetch(`/api/${currentUserId}/transaction/${txId}`, { method: 'DELETE' });
+            if (res.ok) { fetchPortfolio(); fetchCategoryTransactions(category, `tx-table-${category.toLowerCase()}`); }
+        }
+
+        async function fetchPortfolio() {
+            try {
+                const response = await fetch(`/api/${currentUserId}/portfolio`);
+                const data = await response.json();
+
+                document.getElementById('total-assets').textContent = `¥${Math.floor(data.total_assets).toLocaleString()}`;
+                document.getElementById('fx-rate').textContent = data.usdjpy_rate.toFixed(2);
+
+                const tJp = document.getElementById('table-jp'); const tUs = document.getElementById('table-us'); const tFund = document.getElementById('table-fund');
+                tJp.innerHTML = ''; tUs.innerHTML = ''; tFund.innerHTML = '';
+                let catStats = { "日本株": 0, "米国株": 0, "投資信託": 0 };
+
+                data.portfolio.forEach(item => {
+                    const plClass = item.profit_loss_jpy >= 0 ? 'positive' : 'negative';
+                    const plSign = item.profit_loss_jpy >= 0 ? '+' : '';
+                    const cat = item.category || (item.is_fund ? "投資信託" : (item.ticker.includes('.T') ? "日本株" : "米国株"));
+                    catStats[cat] += item.current_value_jpy;
+
+                    if (item.is_fund) {
+                        tFund.innerHTML += `<tr><td style="font-weight:bold;">${item.name}</td><td>${item.quantity.toLocaleString()} 口</td><td>¥${Math.floor(item.average_price).toLocaleString()}</td><td style="color:${COLOR_MINT}; font-weight:bold;">¥${Math.floor(item.current_price).toLocaleString()}</td><td>¥${Math.floor(item.current_value_jpy).toLocaleString()}</td><td class="${plClass}">${plSign}¥${Math.floor(item.profit_loss_jpy).toLocaleString()}</td><td style="text-align:center;"><button class="btn-edit" onclick="updatePrice('${item.ticker}', ${item.current_price})">更新</button><button class="btn-delete" onclick="deleteStock('${item.ticker}')">削除</button></td></tr>`;
+                    } else if (item.ticker.includes('.T')) {
+                        tJp.innerHTML += `<tr><td style="color:#596572;">${item.ticker.replace('.T', '')}</td><td style="font-weight:bold;">${item.name}</td><td>${item.quantity}</td><td>¥${item.average_price.toLocaleString()}</td><td>¥${item.current_price.toLocaleString()}</td><td>¥${Math.floor(item.current_value_jpy).toLocaleString()}</td><td class="${plClass}">${plSign}¥${Math.floor(item.profit_loss_jpy).toLocaleString()}</td><td style="text-align:center;"><button class="btn-delete" onclick="deleteStock('${item.ticker}')">削除</button></td></tr>`;
+                    } else {
+                        tUs.innerHTML += `<tr><td style="color:#596572;">${item.ticker}</td><td style="font-weight:bold;">${item.name}</td><td>${item.quantity}</td><td>$${item.average_price.toLocaleString()}</td><td>$${item.current_price.toLocaleString()}</td><td>¥${Math.floor(item.current_value_jpy).toLocaleString()}</td><td class="${plClass}">${plSign}¥${Math.floor(item.profit_loss_jpy).toLocaleString()}</td><td style="text-align:center;"><button class="btn-delete" onclick="deleteStock('${item.ticker}')">削除</button></td></tr>`;
+                    }
+                });
+
+                document.getElementById('cat-jp-total').textContent = `¥${Math.floor(catStats["日本株"]).toLocaleString()}`;
+                document.getElementById('cat-us-total').textContent = `¥${Math.floor(catStats["米国株"]).toLocaleString()}`;
+                document.getElementById('cat-fund-total').textContent = `¥${Math.floor(catStats["投資信託"]).toLocaleString()}`;
+
+                const ctx1 = document.getElementById('portfolioChart').getContext('2d');
+                if (myDoughnutChart) myDoughnutChart.destroy();
+                myDoughnutChart = new Chart(ctx1, {
+                    type: 'doughnut',
+                    data: { labels: ["日本株式", "米国株式", "投資信託"], datasets: [{ data: [catStats["日本株"], catStats["米国株"], catStats["投資信託"]], backgroundColor: [COLOR_TURQUOISE, COLOR_ORANGE, COLOR_MINT], borderWidth: 2, borderColor: '#FFFFFF' }] },
+                    options: { responsive: true, cutout: '70%', plugins: { legend: { position: 'bottom', labels: { color: '#2F3842', padding: 20, font: { size: 13 } } } } }
+                });
+
+                fetchHistory();
+            } catch(e) { console.error(e); }
+        }
+
+        async function fetchHistory() {
+            try {
+                const res = await fetch(`/api/${currentUserId}/history`);
+                const historyData = await res.json();
+                const ctx2 = document.getElementById('historyChart').getContext('2d');
+                if (myLineChart) myLineChart.destroy();
+
+                if (!Array.isArray(historyData) || historyData.length === 0) {
+                    myLineChart = new Chart(ctx2, { type: 'line', data: { labels: ['データなし'], datasets: [{ label: '資産推移', data: [0], borderColor: '#F7F7F8' }] }, options: { responsive: true, plugins: { legend: { display: false } } } });
+                    return;
+                }
+
+                const dates = historyData.map(h => h.date); const totals = historyData.map(h => h.total_assets);
+                myLineChart = new Chart(ctx2, {
+                    type: 'line',
+                    data: { labels: dates, datasets: [{ label: '総資産額 (円)', data: totals, borderColor: COLOR_TURQUOISE_MAIN, backgroundColor: COLOR_LIGHT, fill: true, pointRadius: 2, pointBackgroundColor: '#FFFFFF', pointBorderColor: COLOR_TURQUOISE_MAIN, tension: 0.4 }] },
+                    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false, drawBorder: false }, ticks: { color: '#596572' } }, y: { grid: { color: '#F7F7F8' }, ticks: { color: '#596572', padding: 10 } } } }
+                });
+            } catch (e) { console.error("グラフ描画エラー: ", e); }
+        }
+    </script>
+</body>
+</html>
