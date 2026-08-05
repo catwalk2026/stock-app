@@ -1,4 +1,7 @@
-streamlit
+fastapi
+uvicorn
 yfinance
-matplotlib
-plotly
+pydantic
+requests
+beautifulsoup4
+jpholiday
