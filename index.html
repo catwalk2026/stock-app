@@ -165,6 +165,7 @@
                     <div class="form-group"><label>株単価 (円)</label><input type="number" id="jp-price" oninput="calculateQty('jp')" placeholder="例: 2800"></div>
                     <div class="form-group" id="jp-amount-group" style="display:none;"><label>買付金額 (円)</label><input type="number" id="jp-amount" oninput="calculateQty('jp')" placeholder="例: 100000"></div>
                     <div class="form-group"><label>株数</label><input type="number" id="jp-qty" placeholder="例: 100"></div>
+                    <div class="form-group"><label>取引理由（任意）</label><input type="text" id="jp-reason" placeholder="例: 決算内容の好感"></div>
                     <button type="button" class="btn-submit" onclick="submitStockTrade('JP')">日本株を記録する</button>
                 </div>
                 <table>
@@ -173,7 +174,7 @@
                 </table>
                 <h3 class="section-title">取引履歴</h3>
                 <table>
-                    <thead><tr><th>取引日</th><th>区分</th><th>銘柄名</th><th>株数</th><th>取得単価 (円)</th><th>取引総額 (円)</th><th>操作</th></tr></thead>
+                    <thead><tr><th>取引日</th><th>区分</th><th>銘柄名</th><th>株数</th><th>取得単価 (円)</th><th>取引総額 (円)</th><th>理由</th><th>操作</th></tr></thead>
                     <tbody id="tx-table-jp"></tbody>
                 </table>
             </div>
@@ -191,6 +192,7 @@
                     <div class="form-group"><label>株単価 ($)</label><input type="number" step="any" id="us-price" oninput="calculateQty('us')" placeholder="例: 220.5"></div>
                     <div class="form-group" id="us-amount-group" style="display:none;"><label>買付金額 ($)</label><input type="number" step="any" id="us-amount" oninput="calculateQty('us')" placeholder="例: 1000"></div>
                     <div class="form-group"><label>株数</label><input type="number" step="any" id="us-qty" placeholder="例: 10"></div>
+                    <div class="form-group"><label>取引理由（任意）</label><input type="text" id="us-reason" placeholder="例: 将来の成長に期待"></div>
                     <button type="button" class="btn-submit" onclick="submitStockTrade('US')">米国株を記録する</button>
                 </div>
                 <table>
@@ -199,7 +201,7 @@
                 </table>
                 <h3 class="section-title">取引履歴</h3>
                 <table>
-                    <thead><tr><th>取引日</th><th>区分</th><th>銘柄名</th><th>株数</th><th>取得単価 ($)</th><th>取引総額 ($)</th><th>操作</th></tr></thead>
+                    <thead><tr><th>取引日</th><th>区分</th><th>銘柄名</th><th>株数</th><th>取得単価 ($)</th><th>取引総額 ($)</th><th>理由</th><th>操作</th></tr></thead>
                     <tbody id="tx-table-us"></tbody>
                 </table>
             </div>
@@ -355,34 +357,37 @@
         }
 
         async function submitStockTrade(type) {
-            let trade_type, trade_date, ticker, name, price, quantity;
+            let trade_type, trade_date, ticker, name, price, quantity, reason = ""; // デフォルトを空文字に
             if (type === 'JP') {
                 trade_type = document.getElementById('jp-trade-type').value; trade_date = document.getElementById('jp-trade-date').value;
                 ticker = document.getElementById('jp-ticker').value.trim(); name = document.getElementById('jp-name').value.trim();
                 price = parseFloat(document.getElementById('jp-price').value); quantity = parseFloat(document.getElementById('jp-qty').value);
+                reason = document.getElementById('jp-reason').value.trim();
             } else if (type === 'US') {
                 trade_type = document.getElementById('us-trade-type').value; trade_date = document.getElementById('us-trade-date').value;
                 ticker = document.getElementById('us-ticker').value.trim().toUpperCase(); name = document.getElementById('us-name').value.trim();
                 price = parseFloat(document.getElementById('us-price').value); quantity = parseFloat(document.getElementById('us-qty').value);
+                reason = document.getElementById('us-reason').value.trim();
             } else if (type === 'FUND') {
                 trade_type = document.getElementById('fund-trade-type').value; trade_date = document.getElementById('fund-trade-date').value;
                 ticker = document.getElementById('fund-ticker').value.trim(); name = document.getElementById('fund-name').value.trim();
                 price = parseFloat(document.getElementById('fund-price').value); quantity = parseFloat(document.getElementById('fund-qty').value);
+                // 投資信託は理由欄がないので空文字のまま
             }
 
             if (!name || isNaN(price) || isNaN(quantity)) { alert('入力内容を確認してください。'); return; }
 
             const res = await fetch(`/api/${currentUserId}/trade`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ticker, name, trade_type, asset_type: type === 'FUND' ? 'FUND' : 'STOCK', trade_date, quantity, price })
+                body: JSON.stringify({ ticker, name, trade_type, asset_type: type === 'FUND' ? 'FUND' : 'STOCK', trade_date, quantity, price, reason })
             });
 
             if (res.ok) {
                 alert('取引を記録しました。行動が自信に繋がりますね！');
                 fetchPortfolio();
-                if (type === 'JP') fetchCategoryTransactions('JP', 'tx-table-jp');
-                if (type === 'US') fetchCategoryTransactions('US', 'tx-table-us');
-                if (type === 'FUND') fetchCategoryTransactions('FUND', 'tx-table-fund');
+                if (type === 'JP') { fetchCategoryTransactions('JP', 'tx-table-jp'); document.getElementById('jp-reason').value = ''; }
+                if (type === 'US') { fetchCategoryTransactions('US', 'tx-table-us'); document.getElementById('us-reason').value = ''; }
+                if (type === 'FUND') { fetchCategoryTransactions('FUND', 'tx-table-fund'); }
             }
         }
 
@@ -444,6 +449,12 @@
                 else if (item.type === "SELL") { typeText = "売却"; typeClass = "negative"; }
 
                 const unit = category === 'FUND' ? '口' : '株'; const currency = category === 'US' ? '$' : '¥';
+                
+                // 株式クラスの場合のみ、理由のセル（<td>）を作る
+                const reasonHtml = category !== 'FUND' 
+                    ? `<td style="color:#596572; font-size:0.85rem; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${item.reason ? item.reason : "-"}">${item.reason ? item.reason : "-"}</td>` 
+                    : '';
+
                 tbody.innerHTML += `
                     <tr>
                         <td style="text-align:center; color:#596572;">${item.trade_date}</td>
@@ -452,6 +463,7 @@
                         <td>${item.quantity.toLocaleString()} ${unit}</td>
                         <td>${currency}${item.price.toLocaleString()}</td>
                         <td>${currency}${Math.floor(totalVal).toLocaleString()}</td>
+                        ${reasonHtml}
                         <td style="text-align:center;"><button class="btn-delete" onclick="deleteTx(${item.id}, '${category}')">削除</button></td>
                     </tr>
                 `;
