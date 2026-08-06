@@ -132,7 +132,6 @@
                 <div class="charts-wrapper">
                     <div class="chart-box"><canvas id="portfolioChart"></canvas></div>
                     <div class="chart-box">
-                        <!-- 追加：グラフの期間フィルター -->
                         <div class="chart-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
                             <h3 style="margin:0;">資産推移</h3>
                             <div class="chart-filters" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
@@ -155,7 +154,6 @@
 
                 <div class="summary-card">
                     <h3>クラス別評価額・損益</h3>
-                    <!-- 修正：損益とリターン率を追加 -->
                     <div class="summary-row">
                         <div class="category-badge"><span class="badge-icon" style="background:var(--turquoise-base);"></span>日本株式</div>
                         <div class="val-box" style="text-align: right;">
@@ -277,7 +275,7 @@
     <script>
         let myDoughnutChart = null;
         let myLineChart = null;
-        let globalHistoryData = []; // グラフ用データ全体を保持
+        let globalHistoryData = []; 
 
         const COLOR_TURQUOISE = '#60C7D5';
         const COLOR_TURQUOISE_MAIN = '#25B2C7';
@@ -398,7 +396,6 @@
 
             if (!name || isNaN(price) || isNaN(quantity)) { alert('入力内容を確認してください。'); return; }
 
-            // 修正：asset_typeに 'JP' や 'US' などの正しいtypeを送信
             const res = await fetch(`/api/${currentUserId}/trade`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ticker, name, trade_type, asset_type: type, trade_date, quantity, price, reason }) 
@@ -517,24 +514,21 @@
                     }
                 });
 
-                // 修正：バックエンドから受け取った cat_totals を使って損益・リターン率を計算＆表示
                 const catStats = data.category_totals;
                 function updateCatUI(idPrefix, current, book) {
                     const pl = current - book;
                     const pct = book > 0 ? (pl / book) * 100 : 0;
                     const sign = pl >= 0 ? '+' : '';
-                    const colorClass = pl >= 0 ? 'positive' : 'negative';
 
                     document.getElementById(`cat-${idPrefix}-total`).textContent = `¥${Math.floor(current).toLocaleString()}`;
                     const plElem = document.getElementById(`cat-${idPrefix}-pl`);
                     
                     if (book > 0) {
                         plElem.textContent = `${sign}¥${Math.floor(pl).toLocaleString()} (${sign}${pct.toFixed(2)}%)`;
-                        plElem.className = colorClass;
+                        plElem.style.color = pl >= 0 ? 'var(--mint-main)' : 'var(--flamingo-main)';
                         plElem.style.fontWeight = "bold";
                     } else {
                         plElem.textContent = '保有なし';
-                        plElem.className = '';
                         plElem.style.color = 'var(--stone)';
                         plElem.style.fontWeight = "normal";
                     }
@@ -561,7 +555,6 @@
                 const res = await fetch(`/api/${currentUserId}/history`);
                 globalHistoryData = await res.json();
                 
-                // グラフの初期化
                 const ctx2 = document.getElementById('historyChart').getContext('2d');
                 if (myLineChart) myLineChart.destroy();
                 
@@ -571,12 +564,10 @@
                     options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false, drawBorder: false }, ticks: { color: '#596572' } }, y: { grid: { color: '#F7F7F8' }, ticks: { color: '#596572', padding: 10 } } } }
                 });
 
-                // デフォルトは全期間表示
                 filterChart('ALL');
             } catch (e) { console.error("グラフ描画エラー: ", e); }
         }
 
-        // グラフ期間の絞り込み機能
         function filterChart(range, btnElement = null) {
             if (!Array.isArray(globalHistoryData) || globalHistoryData.length === 0) {
                 myLineChart.data.labels = ['データなし'];
@@ -585,7 +576,6 @@
                 return;
             }
 
-            // ボタンの見た目（青色）切り替え
             if (range !== 'CUSTOM' && btnElement) {
                 document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
                 btnElement.classList.add('active');
@@ -613,7 +603,7 @@
             if (startDate) {
                 filtered = filtered.filter(d => {
                     const dTime = new Date(d.date).getTime();
-                    return dTime >= startDate.getTime() && dTime <= (endDate.getTime() + 86400000); // 終了日の23:59まで含むため1日分足す
+                    return dTime >= startDate.getTime() && dTime <= (endDate.getTime() + 86400000);
                 });
             }
 
