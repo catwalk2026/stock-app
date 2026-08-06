@@ -21,6 +21,7 @@ class TradeCreate(BaseModel):
     trade_date: str
     quantity: float
     price: float
+    reason: str = ""  # ← 追加：取引の理由・根拠
 
 class FundRuleCreate(BaseModel):
     ticker: str
@@ -58,9 +59,17 @@ def init_db():
             type TEXT,
             trade_date TEXT,
             quantity REAL,
-            price REAL
+            price REAL,
+            reason TEXT
         )
     ''')
+    
+    # すでに transactions テーブルが存在する場合、reason 列を後から追加（安全策）
+    try:
+        cursor.execute("ALTER TABLE transactions ADD COLUMN reason TEXT")
+    except sqlite3.OperationalError:
+        pass # すでに reason 列が存在する場合は何もしない
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fund_rules (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,10 +157,11 @@ def record_trade(user_id: str, trade: TradeCreate):
         ticker = f"{ticker}.T"
     name = trade.name.strip() if trade.name.strip() else ticker
     
+    # ↓ INSERT文に reason を追加
     cursor.execute('''
-        INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (user_id, ticker, trade.trade_type, trade.trade_date, trade.quantity, trade.price))
+        INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price, reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (user_id, ticker, trade.trade_type, trade.trade_date, trade.quantity, trade.price, trade.reason))
     
     cursor.execute("SELECT * FROM portfolio WHERE user_id = ? AND ticker = ?", (user_id, ticker))
     current = cursor.fetchone()
@@ -279,9 +289,9 @@ def add_fund_rule(user_id: str, rule: FundRuleCreate):
             trade_date_str = actual_date.strftime("%Y-%m-%d")
             quantity = (rule.amount / base_price) * 10000.0
             cursor.execute('''
-                INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price)
-                VALUES (?, ?, 'BUY_AUTO', ?, ?, ?)
-            ''', (user_id, rule.ticker, trade_date_str, quantity, base_price))
+                INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price, reason)
+                VALUES (?, ?, 'BUY_AUTO', ?, ?, ?, ?)
+            ''', (user_id, rule.ticker, trade_date_str, quantity, base_price, "自動積立")) # 積立の場合は自動的に理由が入るように設定
         curr += timedelta(days=1)
 
     cursor.execute("SELECT SUM(quantity) FROM transactions WHERE user_id = ? AND ticker = ?", (user_id, rule.ticker))
