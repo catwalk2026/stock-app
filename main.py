@@ -21,7 +21,7 @@ class TradeCreate(BaseModel):
     trade_date: str
     quantity: float
     price: float
-    reason: str = ""  # ← 追加：取引の理由・根拠
+    reason: str = ""
 
 class FundRuleCreate(BaseModel):
     ticker: str
@@ -39,7 +39,6 @@ class PriceUpdate(BaseModel):
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    # すべてのテーブルに user_id を追加し、マルチユーザー対応
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS portfolio (
             user_id TEXT,
@@ -63,12 +62,10 @@ def init_db():
             reason TEXT
         )
     ''')
-    
-    # すでに transactions テーブルが存在する場合、reason 列を後から追加（安全策）
     try:
         cursor.execute("ALTER TABLE transactions ADD COLUMN reason TEXT")
     except sqlite3.OperationalError:
-        pass # すでに reason 列が存在する場合は何もしない
+        pass
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fund_rules (
@@ -125,7 +122,6 @@ def fetch_latest_fund_price(ticker: str) -> float:
         pass
     return 0.0
 
-# === 画面ルーティング ===
 @app.get("/")
 def read_root():
     return FileResponse("index.html")
@@ -136,7 +132,6 @@ def read_user_dashboard(user_id: str):
         return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の数字である必要があります")
 
-# === APIエンドポイント（すべて user_id 紐付け） ===
 @app.post("/api/{user_id}/update_price")
 def update_price(user_id: str, data: PriceUpdate):
     conn = sqlite3.connect(DB_PATH)
@@ -153,11 +148,14 @@ def record_trade(user_id: str, trade: TradeCreate):
     cursor = conn.cursor()
     
     ticker = trade.ticker.strip() if trade.ticker.strip() else trade.name.strip()
-    if trade.asset_type == "STOCK" and not ticker.endswith(".T") and not ticker.isupper():
+    # 日本株入力の場合は強制的に.Tを付ける（英字入りティッカー対策）
+    if trade.asset_type == "JP" and not ticker.endswith(".T"):
         ticker = f"{ticker}.T"
+    elif trade.asset_type == "US":
+        ticker = ticker.upper()
+
     name = trade.name.strip() if trade.name.strip() else ticker
     
-    # ↓ INSERT文に reason を追加
     cursor.execute('''
         INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price, reason)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -199,8 +197,15 @@ def get_portfolio(user_id: str):
     
     usdjpy = get_usdjpy_rate()
     portfolio_data = []
-    cat_totals = {"日本株": 0.0, "米国株": 0.0, "投資信託": 0.0}
+    
+    # 評価額(current)と投資元本(book)を保持する構造に変更
+    cat_totals = {
+        "日本株": {"current": 0.0, "book": 0.0}, 
+        "米国株": {"current": 0.0, "book": 0.0}, 
+        "投資信託": {"current": 0.0, "book": 0.0}
+    }
     total_assets = 0.0
+    total_book = 0.0
     
     for row in rows:
         item = dict(row)
@@ -216,8 +221,7 @@ def get_portfolio(user_id: str):
         
         if is_fund and len(ticker) == 8 and ticker.isalnum():
             scraped = fetch_latest_fund_price(ticker)
-            if scraped > 0:
-                current_price = scraped
+            if scraped > 0: current_price = scraped
         else:
             try:
                 search_target = ticker if ticker.endswith(".T") else (f"{ticker}.T" if ticker.isdigit() or (len(ticker)==4 and ticker[:-1].isdigit()) else ticker)
@@ -225,8 +229,7 @@ def get_portfolio(user_id: str):
                 hist = stock.history(period="1d")
                 if not hist.empty:
                     val = float(hist['Close'].iloc[-1])
-                    if not math.isnan(val):
-                        current_price = val
+                    if not math.isnan(val): current_price = val
             except:
                 pass
             
@@ -252,12 +255,20 @@ def get_portfolio(user_id: str):
         item["current_value_jpy"] = current_value_jpy
         item["profit_loss_jpy"] = profit_loss_jpy
         
-        cat_totals[category] += current_value_jpy
-        portfolio_data.append(item)
+        cat_totals[category]["current"] += current_value_jpy
+        cat_totals[category]["book"] += book_value_jpy
         total_assets += current_value_jpy
+        total_book += book_value_jpy
+        portfolio_data.append(item)
 
     conn.close()
-    return {"total_assets": total_assets, "usdjpy_rate": usdjpy, "category_totals": cat_totals, "portfolio": portfolio_data}
+    return {
+        "total_assets": total_assets, 
+        "total_book": total_book,
+        "usdjpy_rate": usdjpy, 
+        "category_totals": cat_totals, 
+        "portfolio": portfolio_data
+    }
 
 @app.post("/api/{user_id}/fund_rule")
 def add_fund_rule(user_id: str, rule: FundRuleCreate):
@@ -291,7 +302,7 @@ def add_fund_rule(user_id: str, rule: FundRuleCreate):
             cursor.execute('''
                 INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price, reason)
                 VALUES (?, ?, 'BUY_AUTO', ?, ?, ?, ?)
-            ''', (user_id, rule.ticker, trade_date_str, quantity, base_price, "自動積立")) # 積立の場合は自動的に理由が入るように設定
+            ''', (user_id, rule.ticker, trade_date_str, quantity, base_price, "自動積立"))
         curr += timedelta(days=1)
 
     cursor.execute("SELECT SUM(quantity) FROM transactions WHERE user_id = ? AND ticker = ?", (user_id, rule.ticker))
