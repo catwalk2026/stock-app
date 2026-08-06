@@ -30,7 +30,6 @@
             line-height: 1.6;
         }
         
-        /* ログイン画面用 */
         #login-screen {
             display: none; height: 100vh; justify-content: center; align-items: center; background: var(--ivory-base);
         }
@@ -38,7 +37,6 @@
             background: var(--white); padding: 50px 60px; border-radius: 16px; box-shadow: 0 4px 24px rgba(47, 56, 66, 0.05); text-align: center;
         }
         
-        /* ダッシュボード用 */
         #dashboard-screen { display: none; padding: 30px 20px; }
         .container { max-width: 1040px; margin: 0 auto; background: var(--white); padding: 40px; border-radius: 16px; box-shadow: 0 4px 24px rgba(47, 56, 66, 0.04); }
         
@@ -63,6 +61,10 @@
         .charts-wrapper { display: flex; gap: 24px; margin-bottom: 40px; flex-wrap: wrap; }
         .chart-box { flex: 1; min-width: 320px; background: var(--white); padding: 24px; border-radius: 12px; border: 1px solid var(--light-border); }
         
+        .filter-btn { background: var(--white); border: 1px solid var(--ivory-main); color: var(--stone); padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: 0.2s; font-size: 0.8rem; }
+        .filter-btn:hover { border-color: var(--turquoise-base); color: var(--turquoise-base); }
+        .filter-btn.active { background: var(--turquoise-base); color: var(--white); border-color: var(--turquoise-base); font-weight: bold; }
+
         .summary-card { background: var(--white); border: 1px solid var(--light-border); border-radius: 12px; padding: 24px; margin-top: 20px; }
         .summary-row { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--light-border); }
         .summary-row:last-child { border-bottom: none; padding-bottom: 0; }
@@ -97,7 +99,6 @@
     </style>
 </head>
 <body>
-    <!-- ログイン（会員番号入力）画面 -->
     <div id="login-screen">
         <div class="login-card">
             <h1 style="color: var(--turquoise-main); margin-bottom: 10px;">ABCash Portfolio</h1>
@@ -107,7 +108,6 @@
         </div>
     </div>
 
-    <!-- ダッシュボード画面 -->
     <div id="dashboard-screen">
         <div class="container">
             <h1 style="display:flex; align-items:center;">
@@ -127,32 +127,60 @@
                 <button class="tab-button" onclick="switchTab('tab-fund')">投資信託</button>
             </div>
 
-            <!-- ① 資産全体 -->
             <div id="tab-all" class="tab-content active">
                 <h2>資産サマリー</h2>
                 <div class="charts-wrapper">
                     <div class="chart-box"><canvas id="portfolioChart"></canvas></div>
-                    <div class="chart-box"><canvas id="historyChart"></canvas></div>
+                    <div class="chart-box">
+                        <!-- 追加：グラフの期間フィルター -->
+                        <div class="chart-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
+                            <h3 style="margin:0;">資産推移</h3>
+                            <div class="chart-filters" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                                <button class="filter-btn" onclick="filterChart('1W', this)">1週間</button>
+                                <button class="filter-btn" onclick="filterChart('1M', this)">1ヶ月</button>
+                                <button class="filter-btn" onclick="filterChart('3M', this)">3ヶ月</button>
+                                <button class="filter-btn" onclick="filterChart('1Y', this)">1年</button>
+                                <button class="filter-btn" onclick="filterChart('3Y', this)">3年</button>
+                                <button class="filter-btn active" onclick="filterChart('ALL', this)">全期間</button>
+                                <div style="display:flex; align-items:center; gap:4px; border-left:1px solid var(--light-border); padding-left:8px; margin-left:4px;">
+                                    <input type="date" id="chart-start" onchange="filterChart('CUSTOM')" style="padding:4px; border:1px solid var(--ivory-main); border-radius:4px; font-size:0.8rem; outline:none;">
+                                    <span style="color:var(--stone);">〜</span>
+                                    <input type="date" id="chart-end" onchange="filterChart('CUSTOM')" style="padding:4px; border:1px solid var(--ivory-main); border-radius:4px; font-size:0.8rem; outline:none;">
+                                </div>
+                            </div>
+                        </div>
+                        <canvas id="historyChart"></canvas>
+                    </div>
                 </div>
 
                 <div class="summary-card">
-                    <h3>クラス別評価額</h3>
+                    <h3>クラス別評価額・損益</h3>
+                    <!-- 修正：損益とリターン率を追加 -->
                     <div class="summary-row">
                         <div class="category-badge"><span class="badge-icon" style="background:var(--turquoise-base);"></span>日本株式</div>
-                        <div class="val-box"><div class="val-total" id="cat-jp-total">¥0</div></div>
+                        <div class="val-box" style="text-align: right;">
+                            <div class="val-total" id="cat-jp-total">¥0</div>
+                            <div style="font-size: 0.95rem; margin-top:2px;" id="cat-jp-pl">-</div>
+                        </div>
                     </div>
                     <div class="summary-row">
                         <div class="category-badge"><span class="badge-icon" style="background:var(--accent-orange);"></span>米国株式</div>
-                        <div class="val-box"><div class="val-total" id="cat-us-total">¥0</div></div>
+                        <div class="val-box" style="text-align: right;">
+                            <div class="val-total" id="cat-us-total">¥0</div>
+                            <div style="font-size: 0.95rem; margin-top:2px;" id="cat-us-pl">-</div>
+                        </div>
                     </div>
                     <div class="summary-row">
                         <div class="category-badge"><span class="badge-icon" style="background:var(--mint-base);"></span>投資信託</div>
-                        <div class="val-box"><div class="val-total" id="cat-fund-total">¥0</div></div>
+                        <div class="val-box" style="text-align: right;">
+                            <div class="val-total" id="cat-fund-total">¥0</div>
+                            <div style="font-size: 0.95rem; margin-top:2px;" id="cat-fund-pl">-</div>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- ② 日本株管理 -->
+            <!-- 日本株タブ -->
             <div id="tab-jp" class="tab-content">
                 <h2>日本株ポートフォリオ</h2>
                 <div class="add-form">
@@ -179,7 +207,7 @@
                 </table>
             </div>
 
-            <!-- ③ 米国株管理 -->
+            <!-- 米国株タブ -->
             <div id="tab-us" class="tab-content">
                 <h2>米国株ポートフォリオ</h2>
                 <div class="add-form">
@@ -206,7 +234,7 @@
                 </table>
             </div>
 
-            <!-- ④ 投資信託 -->
+            <!-- 投資信託タブ -->
             <div id="tab-fund" class="tab-content">
                 <h2>投資信託ポートフォリオ</h2>
                 <div class="rule-box">
@@ -230,6 +258,7 @@
                     <div class="form-group"><label>基準価額 (1万口)</label><input type="number" id="fund-price" oninput="calculateQty('fund')" placeholder="例: 28459"></div>
                     <div class="form-group" id="fund-amount-group"><label>買付金額 (円)</label><input type="number" id="fund-amount" oninput="calculateQty('fund')" placeholder="例: 30000"></div>
                     <div class="form-group"><label>買付口数 (口)</label><input type="number" id="fund-qty" placeholder="例: 35138"></div>
+                    <div class="form-group"><label>取引理由（任意）</label><input type="text" id="fund-reason" placeholder="例: 余剰資金の投資"></div>
                     <button type="button" class="btn-submit" onclick="submitStockTrade('FUND')">買付を記録する</button>
                 </div>
                 <table>
@@ -238,7 +267,7 @@
                 </table>
                 <h3 class="section-title">取引履歴</h3>
                 <table>
-                    <thead><tr><th>取引日</th><th>区分</th><th>ファンド名</th><th>買付口数</th><th>取得基準価額</th><th>買付総額 (円)</th><th>操作</th></tr></thead>
+                    <thead><tr><th>取引日</th><th>区分</th><th>ファンド名</th><th>買付口数</th><th>取得基準価額</th><th>買付総額 (円)</th><th>理由</th><th>操作</th></tr></thead>
                     <tbody id="tx-table-fund"></tbody>
                 </table>
             </div>
@@ -248,6 +277,7 @@
     <script>
         let myDoughnutChart = null;
         let myLineChart = null;
+        let globalHistoryData = []; // グラフ用データ全体を保持
 
         const COLOR_TURQUOISE = '#60C7D5';
         const COLOR_TURQUOISE_MAIN = '#25B2C7';
@@ -258,9 +288,6 @@
 
         document.querySelectorAll('.default-date').forEach(el => el.valueAsDate = new Date());
 
-        // ==========================================
-        // マルチユーザー (URLルーティング) 制御
-        // ==========================================
         const path = window.location.pathname.replace('/', '');
         let currentUserId = null;
 
@@ -284,9 +311,6 @@
             }
         }
 
-        // ==========================================
-        // UI & 計算制御
-        // ==========================================
         function switchTab(tabId) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('active'));
@@ -337,9 +361,6 @@
             }
         }
 
-        // ==========================================
-        // API 呼び出し (全て user_id 付き)
-        // ==========================================
         async function fetchFundPriceAuto(type) {
             const ticker = (type === 'rule' ? document.getElementById('rule-ticker') : document.getElementById('fund-ticker')).value.trim();
             if (ticker.length === 8) {
@@ -357,7 +378,7 @@
         }
 
         async function submitStockTrade(type) {
-            let trade_type, trade_date, ticker, name, price, quantity, reason = ""; // デフォルトを空文字に
+            let trade_type, trade_date, ticker, name, price, quantity, reason;
             if (type === 'JP') {
                 trade_type = document.getElementById('jp-trade-type').value; trade_date = document.getElementById('jp-trade-date').value;
                 ticker = document.getElementById('jp-ticker').value.trim(); name = document.getElementById('jp-name').value.trim();
@@ -372,14 +393,15 @@
                 trade_type = document.getElementById('fund-trade-type').value; trade_date = document.getElementById('fund-trade-date').value;
                 ticker = document.getElementById('fund-ticker').value.trim(); name = document.getElementById('fund-name').value.trim();
                 price = parseFloat(document.getElementById('fund-price').value); quantity = parseFloat(document.getElementById('fund-qty').value);
-                // 投資信託は理由欄がないので空文字のまま
+                reason = document.getElementById('fund-reason').value.trim();
             }
 
             if (!name || isNaN(price) || isNaN(quantity)) { alert('入力内容を確認してください。'); return; }
 
+            // 修正：asset_typeに 'JP' や 'US' などの正しいtypeを送信
             const res = await fetch(`/api/${currentUserId}/trade`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ticker, name, trade_type, asset_type: type === 'FUND' ? 'FUND' : 'STOCK', trade_date, quantity, price, reason })
+                body: JSON.stringify({ ticker, name, trade_type, asset_type: type, trade_date, quantity, price, reason }) 
             });
 
             if (res.ok) {
@@ -387,7 +409,7 @@
                 fetchPortfolio();
                 if (type === 'JP') { fetchCategoryTransactions('JP', 'tx-table-jp'); document.getElementById('jp-reason').value = ''; }
                 if (type === 'US') { fetchCategoryTransactions('US', 'tx-table-us'); document.getElementById('us-reason').value = ''; }
-                if (type === 'FUND') { fetchCategoryTransactions('FUND', 'tx-table-fund'); }
+                if (type === 'FUND') { fetchCategoryTransactions('FUND', 'tx-table-fund'); document.getElementById('fund-reason').value = ''; }
             }
         }
 
@@ -449,11 +471,7 @@
                 else if (item.type === "SELL") { typeText = "売却"; typeClass = "negative"; }
 
                 const unit = category === 'FUND' ? '口' : '株'; const currency = category === 'US' ? '$' : '¥';
-                
-                // 株式クラスの場合のみ、理由のセル（<td>）を作る
-                const reasonHtml = category !== 'FUND' 
-                    ? `<td style="color:#596572; font-size:0.85rem; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${item.reason ? item.reason : "-"}">${item.reason ? item.reason : "-"}</td>` 
-                    : '';
+                const reasonText = item.reason ? item.reason : "-";
 
                 tbody.innerHTML += `
                     <tr>
@@ -463,7 +481,7 @@
                         <td>${item.quantity.toLocaleString()} ${unit}</td>
                         <td>${currency}${item.price.toLocaleString()}</td>
                         <td>${currency}${Math.floor(totalVal).toLocaleString()}</td>
-                        ${reasonHtml}
+                        <td style="color:#596572; font-size:0.85rem; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${reasonText}">${reasonText}</td>
                         <td style="text-align:center;"><button class="btn-delete" onclick="deleteTx(${item.id}, '${category}')">削除</button></td>
                     </tr>
                 `;
@@ -486,14 +504,10 @@
 
                 const tJp = document.getElementById('table-jp'); const tUs = document.getElementById('table-us'); const tFund = document.getElementById('table-fund');
                 tJp.innerHTML = ''; tUs.innerHTML = ''; tFund.innerHTML = '';
-                let catStats = { "日本株": 0, "米国株": 0, "投資信託": 0 };
-
+                
                 data.portfolio.forEach(item => {
                     const plClass = item.profit_loss_jpy >= 0 ? 'positive' : 'negative';
                     const plSign = item.profit_loss_jpy >= 0 ? '+' : '';
-                    const cat = item.category || (item.is_fund ? "投資信託" : (item.ticker.includes('.T') ? "日本株" : "米国株"));
-                    catStats[cat] += item.current_value_jpy;
-
                     if (item.is_fund) {
                         tFund.innerHTML += `<tr><td style="font-weight:bold;">${item.name}</td><td>${item.quantity.toLocaleString()} 口</td><td>¥${Math.floor(item.average_price).toLocaleString()}</td><td style="color:${COLOR_MINT}; font-weight:bold;">¥${Math.floor(item.current_price).toLocaleString()}</td><td>¥${Math.floor(item.current_value_jpy).toLocaleString()}</td><td class="${plClass}">${plSign}¥${Math.floor(item.profit_loss_jpy).toLocaleString()}</td><td style="text-align:center;"><button class="btn-edit" onclick="updatePrice('${item.ticker}', ${item.current_price})">更新</button><button class="btn-delete" onclick="deleteStock('${item.ticker}')">削除</button></td></tr>`;
                     } else if (item.ticker.includes('.T')) {
@@ -503,15 +517,38 @@
                     }
                 });
 
-                document.getElementById('cat-jp-total').textContent = `¥${Math.floor(catStats["日本株"]).toLocaleString()}`;
-                document.getElementById('cat-us-total').textContent = `¥${Math.floor(catStats["米国株"]).toLocaleString()}`;
-                document.getElementById('cat-fund-total').textContent = `¥${Math.floor(catStats["投資信託"]).toLocaleString()}`;
+                // 修正：バックエンドから受け取った cat_totals を使って損益・リターン率を計算＆表示
+                const catStats = data.category_totals;
+                function updateCatUI(idPrefix, current, book) {
+                    const pl = current - book;
+                    const pct = book > 0 ? (pl / book) * 100 : 0;
+                    const sign = pl >= 0 ? '+' : '';
+                    const colorClass = pl >= 0 ? 'positive' : 'negative';
+
+                    document.getElementById(`cat-${idPrefix}-total`).textContent = `¥${Math.floor(current).toLocaleString()}`;
+                    const plElem = document.getElementById(`cat-${idPrefix}-pl`);
+                    
+                    if (book > 0) {
+                        plElem.textContent = `${sign}¥${Math.floor(pl).toLocaleString()} (${sign}${pct.toFixed(2)}%)`;
+                        plElem.className = colorClass;
+                        plElem.style.fontWeight = "bold";
+                    } else {
+                        plElem.textContent = '保有なし';
+                        plElem.className = '';
+                        plElem.style.color = 'var(--stone)';
+                        plElem.style.fontWeight = "normal";
+                    }
+                }
+
+                updateCatUI('jp', catStats["日本株"].current, catStats["日本株"].book);
+                updateCatUI('us', catStats["米国株"].current, catStats["米国株"].book);
+                updateCatUI('fund', catStats["投資信託"].current, catStats["投資信託"].book);
 
                 const ctx1 = document.getElementById('portfolioChart').getContext('2d');
                 if (myDoughnutChart) myDoughnutChart.destroy();
                 myDoughnutChart = new Chart(ctx1, {
                     type: 'doughnut',
-                    data: { labels: ["日本株式", "米国株式", "投資信託"], datasets: [{ data: [catStats["日本株"], catStats["米国株"], catStats["投資信託"]], backgroundColor: [COLOR_TURQUOISE, COLOR_ORANGE, COLOR_MINT], borderWidth: 2, borderColor: '#FFFFFF' }] },
+                    data: { labels: ["日本株式", "米国株式", "投資信託"], datasets: [{ data: [catStats["日本株"].current, catStats["米国株"].current, catStats["投資信託"].current], backgroundColor: [COLOR_TURQUOISE, COLOR_ORANGE, COLOR_MINT], borderWidth: 2, borderColor: '#FFFFFF' }] },
                     options: { responsive: true, cutout: '70%', plugins: { legend: { position: 'bottom', labels: { color: '#2F3842', padding: 20, font: { size: 13 } } } } }
                 });
 
@@ -522,22 +559,72 @@
         async function fetchHistory() {
             try {
                 const res = await fetch(`/api/${currentUserId}/history`);
-                const historyData = await res.json();
+                globalHistoryData = await res.json();
+                
+                // グラフの初期化
                 const ctx2 = document.getElementById('historyChart').getContext('2d');
                 if (myLineChart) myLineChart.destroy();
-
-                if (!Array.isArray(historyData) || historyData.length === 0) {
-                    myLineChart = new Chart(ctx2, { type: 'line', data: { labels: ['データなし'], datasets: [{ label: '資産推移', data: [0], borderColor: '#F7F7F8' }] }, options: { responsive: true, plugins: { legend: { display: false } } } });
-                    return;
-                }
-
-                const dates = historyData.map(h => h.date); const totals = historyData.map(h => h.total_assets);
+                
                 myLineChart = new Chart(ctx2, {
                     type: 'line',
-                    data: { labels: dates, datasets: [{ label: '総資産額 (円)', data: totals, borderColor: COLOR_TURQUOISE_MAIN, backgroundColor: COLOR_LIGHT, fill: true, pointRadius: 2, pointBackgroundColor: '#FFFFFF', pointBorderColor: COLOR_TURQUOISE_MAIN, tension: 0.4 }] },
+                    data: { labels: [], datasets: [{ label: '総資産額 (円)', data: [], borderColor: COLOR_TURQUOISE_MAIN, backgroundColor: COLOR_LIGHT, fill: true, pointRadius: 2, pointBackgroundColor: '#FFFFFF', pointBorderColor: COLOR_TURQUOISE_MAIN, tension: 0.4 }] },
                     options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false, drawBorder: false }, ticks: { color: '#596572' } }, y: { grid: { color: '#F7F7F8' }, ticks: { color: '#596572', padding: 10 } } } }
                 });
+
+                // デフォルトは全期間表示
+                filterChart('ALL');
             } catch (e) { console.error("グラフ描画エラー: ", e); }
+        }
+
+        // グラフ期間の絞り込み機能
+        function filterChart(range, btnElement = null) {
+            if (!Array.isArray(globalHistoryData) || globalHistoryData.length === 0) {
+                myLineChart.data.labels = ['データなし'];
+                myLineChart.data.datasets[0].data = [0];
+                myLineChart.update();
+                return;
+            }
+
+            // ボタンの見た目（青色）切り替え
+            if (range !== 'CUSTOM' && btnElement) {
+                document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+                btnElement.classList.add('active');
+            } else if (range === 'CUSTOM') {
+                document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            }
+
+            let filtered = [...globalHistoryData];
+            const today = new Date();
+            let startDate = null;
+            let endDate = today;
+
+            if (range === '1W') startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7);
+            else if (range === '1M') startDate = new Date(today.getFullYear(), today.getMonth() - 1, today.getDate());
+            else if (range === '3M') startDate = new Date(today.getFullYear(), today.getMonth() - 3, today.getDate());
+            else if (range === '1Y') startDate = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+            else if (range === '3Y') startDate = new Date(today.getFullYear() - 3, today.getMonth(), today.getDate());
+            else if (range === 'CUSTOM') {
+                const s = document.getElementById('chart-start').value;
+                const e = document.getElementById('chart-end').value;
+                if (s) startDate = new Date(s);
+                if (e) endDate = new Date(e);
+            }
+
+            if (startDate) {
+                filtered = filtered.filter(d => {
+                    const dTime = new Date(d.date).getTime();
+                    return dTime >= startDate.getTime() && dTime <= (endDate.getTime() + 86400000); // 終了日の23:59まで含むため1日分足す
+                });
+            }
+
+            if (filtered.length === 0) {
+                myLineChart.data.labels = ['期間内データなし'];
+                myLineChart.data.datasets[0].data = [0];
+            } else {
+                myLineChart.data.labels = filtered.map(h => h.date);
+                myLineChart.data.datasets[0].data = filtered.map(h => h.total_assets);
+            }
+            myLineChart.update();
         }
     </script>
 </body>
