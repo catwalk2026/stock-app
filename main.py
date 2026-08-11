@@ -128,9 +128,10 @@ def read_root():
 
 @app.get("/{user_id}")
 def read_user_dashboard(user_id: str):
-    if re.match(r"^\d{6}$", user_id):
+    # 修正: 6桁の英数字（大文字・小文字・数字）を許可
+    if re.match(r"^[a-zA-Z0-9]{6}$", user_id):
         return FileResponse("index.html")
-    raise HTTPException(status_code=404, detail="会員番号は6桁の数字である必要があります")
+    raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
 @app.post("/api/{user_id}/update_price")
 def update_price(user_id: str, data: PriceUpdate):
@@ -148,7 +149,6 @@ def record_trade(user_id: str, trade: TradeCreate):
     cursor = conn.cursor()
     
     ticker = trade.ticker.strip() if trade.ticker.strip() else trade.name.strip()
-    # 日本株入力の場合は強制的に.Tを付ける（英字入りティッカー対策）
     if trade.asset_type == "JP" and not ticker.endswith(".T"):
         ticker = f"{ticker}.T"
     elif trade.asset_type == "US":
@@ -198,7 +198,6 @@ def get_portfolio(user_id: str):
     usdjpy = get_usdjpy_rate()
     portfolio_data = []
     
-    # 評価額(current)と投資元本(book)を保持する構造に変更
     cat_totals = {
         "日本株": {"current": 0.0, "book": 0.0}, 
         "米国株": {"current": 0.0, "book": 0.0}, 
