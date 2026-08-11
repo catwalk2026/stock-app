@@ -103,7 +103,8 @@
         <div class="login-card">
             <h1 style="color: var(--turquoise-main); margin-bottom: 10px;">ABCash Portfolio</h1>
             <p style="color: var(--stone); margin-bottom: 30px;">生徒さんの会員番号を入力してください</p>
-            <input type="text" id="login-id" placeholder="例: 123456" maxlength="6" style="padding: 15px; font-size: 1.4rem; text-align: center; border: 2px solid var(--ivory-main); border-radius: 8px; width: 220px; display: block; margin: 0 auto 20px auto; color: var(--text-black); font-weight: bold; letter-spacing: 0.2em;">
+            <!-- 修正：プレースホルダーをAB1234など英数字に変更 -->
+            <input type="text" id="login-id" placeholder="例: AB1234" maxlength="6" style="padding: 15px; font-size: 1.4rem; text-align: center; border: 2px solid var(--ivory-main); border-radius: 8px; width: 220px; display: block; margin: 0 auto 20px auto; color: var(--text-black); font-weight: bold; letter-spacing: 0.2em;">
             <button onclick="enterDashboard()" class="btn-submit">ダッシュボードを開く</button>
         </div>
     </div>
@@ -289,7 +290,8 @@
         const path = window.location.pathname.replace('/', '');
         let currentUserId = null;
 
-        if (/^\d{6}$/.test(path)) {
+        // 修正：URLパスのチェックを英数字に変更
+        if (/^[a-zA-Z0-9]{6}$/.test(path)) {
             currentUserId = path;
             document.getElementById('display-user-id').textContent = currentUserId;
             document.getElementById('login-screen').style.display = 'none';
@@ -302,10 +304,11 @@
 
         function enterDashboard() {
             const inputId = document.getElementById('login-id').value;
-            if (/^\d{6}$/.test(inputId)) {
+            // 修正：入力チェックを英数字に変更、アラート文言も修正
+            if (/^[a-zA-Z0-9]{6}$/.test(inputId)) {
                 window.location.href = '/' + inputId;
             } else {
-                alert('会員番号は6桁の数字を入力してください。（例: 123456）');
+                alert('会員番号は6桁の英数字を入力してください。（例: AB1234）');
             }
         }
 
@@ -525,6 +528,7 @@
                     
                     if (book > 0) {
                         plElem.textContent = `${sign}¥${Math.floor(pl).toLocaleString()} (${sign}${pct.toFixed(2)}%)`;
+                        // 修正：プラスならミントグリーン、マイナスならフラミンゴレッドを直接スタイルで指定
                         plElem.style.color = pl >= 0 ? 'var(--mint-main)' : 'var(--flamingo-main)';
                         plElem.style.fontWeight = "bold";
                     } else {
