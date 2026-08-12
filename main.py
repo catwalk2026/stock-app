@@ -16,11 +16,11 @@ from email.utils import parsedate_to_datetime
 # --- LINE連携用ライブラリ ---
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
+from linebot.models import MessageEvent, TextMessage, TextSendMessage, FollowEvent # ← FollowEventを追加
 
 # ▼▼▼ ここに取得した2つの鍵を貼り付けてください ▼▼▼
-LINE_CHANNEL_ACCESS_TOKEN = "rlJ1YRFK3hCEYnrfCe5k9kO2gjyX3YkqhfdAvnT28lWoC/9Q6NTtPdBNvGU6jVWunuf7k6NPAg/d2r39X+IxD4mlNjs2bH4krV2B7zWilto5IHSvo7QXkKbIxa0GNvVN2SK9b2AH03Rs/M6VrJBIlwdB04t89/1O/w1cDnyilFU="
-LINE_CHANNEL_SECRET = "c8caf38acc62174908dcff1f782621f6"
+LINE_CHANNEL_ACCESS_TOKEN = """rlJ1YRFK3hCEYnrfCe5k9kO2gjyX3YkqhfdAvnT28lWoC/9Q6NTtPdBNvGU6jVWunuf7k6NPAg/d2r39X+IxD4mlNjs2bH4krV2B7zWilto5IHSvo7QXkKbIxa0GNvVN2SK9b2AH03Rs/M6VrJBIlwdB04t89/1O/w1cDnyilFU="""
+LINE_CHANNEL_SECRET = """c8caf38acc62174908dcff1f782621f6"""
 # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
@@ -108,7 +108,6 @@ def init_db():
             PRIMARY KEY (user_id, ticker)
         )
     ''')
-    # 追加: LINEのIDとアプリの会員番号を紐づけるテーブル
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS line_users (
             line_user_id TEXT PRIMARY KEY,
@@ -132,16 +131,28 @@ async def callback(request: Request, x_line_signature: str = Header(None)):
         raise HTTPException(status_code=400, detail="Invalid signature")
     return "OK"
 
+# 🌟 追加：友だち追加された時の挨拶メッセージ
+@handler.add(FollowEvent)
+def handle_follow(event):
+    welcome_msg = (
+        "友だち追加ありがとうございます！🎉\n\n"
+        "まずは、ポートフォリオで利用している「会員番号（6桁の英数字）」をこのトークに送信して、通知の連携を完了させてください。\n\n"
+        "▼ ポートフォリオ画面はこちら\n"
+        "https://stock-app-xyif.onrender.com"  # ← ここを実際のRenderのURLに変えてください！
+    )
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=welcome_msg)
+    )
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     text = event.message.text.strip()
     line_user_id = event.source.user_id
 
-    # 送られてきたメッセージが6桁の英数字（会員番号）かチェック
     if re.match(r"^[a-zA-Z0-9]{6}$", text):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        # LINEユーザーIDと会員番号を紐付けて保存
         cursor.execute("INSERT OR REPLACE INTO line_users (line_user_id, app_user_id) VALUES (?, ?)", (line_user_id, text))
         conn.commit()
         conn.close()
@@ -151,14 +162,13 @@ def handle_message(event):
             TextSendMessage(text=f"✅ 会員番号「{text}」との紐付けが完了しました！\n今後、登録した銘柄の通知や最新ニュースをこのLINEにお届けします📉✨")
         )
     else:
-        # 6桁の英数字以外が送られてきた場合
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="📝 通知を受け取るには、ダッシュボードの会員番号（6桁の英数字）を送信してください！\n例: AB1234")
         )
 
 # ==========================================
-# 既存のAPI・処理 (変更なし)
+# 以下、既存のAPI・処理 (変更なし)
 # ==========================================
 def get_usdjpy_rate():
     fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
