@@ -118,7 +118,6 @@ def init_db():
             app_user_id TEXT
         )
     ''')
-    # 🌟 追加：送ったニュースがダブらないように記録するテーブル
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sent_news (
             line_user_id TEXT,
@@ -132,7 +131,7 @@ def init_db():
 init_db()
 
 # ==========================================
-# 🌟 新機能：リアルタイムニュースのパトロールとPush送信
+# ニュースのパトロールとPush送信機能
 # ==========================================
 def check_and_send_news():
     print("ニュースのパトロールを開始します...")
@@ -140,18 +139,16 @@ def check_and_send_news():
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    # LINEが紐づいているユーザーを全員取得
     cursor.execute("SELECT * FROM line_users")
     users = cursor.fetchall()
     
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    yesterday = datetime.now() - timedelta(days=1) # 24時間以内のニュースだけを対象にする
+    yesterday = datetime.now() - timedelta(days=1)
 
     for u in users:
         line_user_id = u["line_user_id"]
         app_user_id = u["app_user_id"]
         
-        # ユーザーの保有銘柄と気になるリストの「銘柄名」を重複なしで集める
         cursor.execute("SELECT name FROM portfolio WHERE user_id = ? AND ticker LIKE '%.T' AND quantity > 0", (app_user_id,))
         p_names = [r["name"] for r in cursor.fetchall()]
         cursor.execute("SELECT name FROM watchlist WHERE user_id = ? AND ticker LIKE '%.T'", (app_user_id,))
@@ -169,26 +166,22 @@ def check_and_send_news():
                     root = ET.fromstring(res.text)
                     items = root.findall('.//item')
                     
-                    for item in items[:5]: # 最新の数件だけチェック
+                    for item in items[:5]:
                         link = item.find('link').text if item.find('link') is not None else ""
                         title = item.find('title').text if item.find('title') is not None else ""
                         pub_date_str = item.find('pubDate').text if item.find('pubDate') is not None else ""
                         
                         try:
                             dt = parsedate_to_datetime(pub_date_str)
-                            # ニュースが24時間以内のものかチェック
                             if dt.timestamp() < yesterday.timestamp():
                                 continue
                         except:
                             continue
                         
-                        # すでに送ったことがあるニュースかチェック
                         cursor.execute("SELECT 1 FROM sent_news WHERE line_user_id = ? AND news_link = ?", (line_user_id, link))
                         if not cursor.fetchone():
-                            # 新しいニュースを発見！
                             msg_text = f"📰 【{company_name}】の最新ニュース\n\n{title}\n{link}"
                             new_messages.append((msg_text, link))
-                            # LINEは1回で最大5吹き出しまでしか送れないため、5個を超えそうなら制限
                             if len(new_messages) >= 5:
                                 break
             except Exception as e:
@@ -197,13 +190,11 @@ def check_and_send_news():
             if len(new_messages) >= 5:
                 break
         
-        # 新しいニュースがあればLINEに送信（Push通知）
         if new_messages:
             try:
                 send_data = [TextSendMessage(text=m[0]) for m in new_messages]
                 line_bot_api.push_message(line_user_id, send_data)
                 
-                # 送信済みに記録
                 for m in new_messages:
                     cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (?, ?)", (line_user_id, m[1]))
                 conn.commit()
@@ -250,7 +241,14 @@ def handle_message(event):
     text = event.message.text.strip()
     line_user_id = event.source.user_id
 
-    if re.match(r"^[a-zA-Z0-9]{6}$", text):
+    # リッチメニュー等から「会員連携」と送られた場合
+    if text == "会員連携":
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="📝 ダッシュボードに表示されている「会員番号（6桁の英数字）」をそのまま送信してください。\n例: AB1234")
+        )
+    # 6桁の会員番号が送られてきた場合
+    elif re.match(r"^[a-zA-Z0-9]{6}$", text):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("INSERT OR REPLACE INTO line_users (line_user_id, app_user_id) VALUES (?, ?)", (line_user_id, text))
@@ -261,14 +259,15 @@ def handle_message(event):
             event.reply_token,
             TextSendMessage(text=f"✅ 会員番号「{text}」との紐付けが完了しました！\n今後、保有銘柄や気になる銘柄の新しいニュースが出たら、いち早くお知らせします📉✨")
         )
+    # それ以外の場合
     else:
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="📝 通知を受け取るには、ダッシュボードの会員番号（6桁の英数字）を送信してください！\n例: AB1234")
+            TextSendMessage(text="💡 メニューの「会員連携」ボタンを押すか、通知を受け取りたい会員番号（6桁の英数字）を送信してください！")
         )
 
 # ==========================================
-# 以下、既存のAPI・処理 (変更なし)
+# API・コア機能
 # ==========================================
 def get_usdjpy_rate():
     fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
@@ -503,7 +502,7 @@ def get_jp_news(user_id: str):
             if res.status_code == 200:
                 root = ET.fromstring(res.text)
                 items = root.findall('.//item')
-                for item in items[:25]:
+                for item in items:
                     title_elem = item.find('title')
                     link_elem = item.find('link')
                     pubdate_elem = item.find('pubDate')
