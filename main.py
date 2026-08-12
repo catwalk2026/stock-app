@@ -11,6 +11,7 @@ import re
 import math
 import urllib.parse
 import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime  # ← 追加：RSSの日時を確実にパースする標準ライブラリ
 
 app = FastAPI()
 DB_PATH = "portfolio.db"
@@ -278,13 +279,12 @@ def get_portfolio(user_id: str):
         "portfolio": portfolio_data
     }
 
-# --- 日本株の関連ニュース取得 API（件数拡張版） ---
+# --- 日本株の関連ニュース取得 API（件数拡張＆確実な日時解析） ---
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    # 保有中（保有数 > 0）の日本株のみ抽出
     cursor.execute("SELECT name FROM portfolio WHERE user_id = ? AND ticker LIKE '%.T' AND quantity > 0", (user_id,))
     rows = cursor.fetchall()
     conn.close()
@@ -293,19 +293,19 @@ def get_jp_news(user_id: str):
         return []
 
     news_list = []
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
     for row in rows:
         company_name = row["name"]
         query = urllib.parse.quote(f"{company_name} 株")
         url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
         try:
-            res = requests.get(url, headers=headers, timeout=4)
+            res = requests.get(url, headers=headers, timeout=5)
             if res.status_code == 200:
                 root = ET.fromstring(res.text)
                 items = root.findall('.//item')
-                # 修正：各銘柄の取得件数を8件に増やして期間指定に備える
-                for item in items[:8]:
+                # 修正：1銘柄につき最大25件まで取得（過去1ヶ月以上のニュースもしっかり残す）
+                for item in items[:25]:
                     title_elem = item.find('title')
                     link_elem = item.find('link')
                     pubdate_elem = item.find('pubDate')
@@ -315,12 +315,12 @@ def get_jp_news(user_id: str):
                     pub_date = pubdate_elem.text if pubdate_elem is not None else ""
                     
                     try:
-                        # 日時解析とISOフォーマット（YYYY-MM-DD）生成
-                        dt = datetime.strptime(pub_date.replace("GMT", "+0000").strip(), "%a, %d %b %Y %H:%M:%S %z")
+                        # 標準ライブラリ parsedate_to_datetime で確実に日時に変換
+                        dt = parsedate_to_datetime(pub_date)
                         ts = dt.timestamp()
                         date_str = dt.strftime("%Y/%m/%d %H:%M")
                         iso_date = dt.strftime("%Y-%m-%d")
-                    except:
+                    except Exception:
                         ts = 0
                         date_str = pub_date
                         iso_date = ""
@@ -336,9 +336,9 @@ def get_jp_news(user_id: str):
         except Exception as e:
             print("News error:", e)
 
-    # 全体を新しい順にソートして最大50件返す
+    # 全体を新しい順にソートして最大100件返す
     news_list.sort(key=lambda x: x["timestamp"], reverse=True)
-    return news_list[:50]
+    return news_list[:100]
 
 @app.post("/api/{user_id}/fund_rule")
 def add_fund_rule(user_id: str, rule: FundRuleCreate):
