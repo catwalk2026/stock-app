@@ -10,6 +10,7 @@ import jpholiday
 import re
 import math
 import urllib.parse
+import xml.etree.ElementTree as ET  # ← 追加：RSS(XML)解析用の標準ライブラリ
 
 app = FastAPI()
 DB_PATH = "portfolio.db"
@@ -85,7 +86,6 @@ def init_db():
 
 init_db()
 
-# --- 為替取得（時間も返すように改修） ---
 def get_usdjpy_rate():
     fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
     try:
@@ -125,12 +125,10 @@ def fetch_latest_fund_price(ticker: str) -> float:
         pass
     return 0.0
 
-# === 画面ルーティング ===
 @app.get("/")
 def read_root():
     return FileResponse("index.html")
 
-# 管理者専用ページ
 @app.get("/admin")
 def read_admin():
     return FileResponse("admin.html")
@@ -141,7 +139,6 @@ def read_user_dashboard(user_id: str):
         return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# === APIエンドポイント ===
 @app.post("/api/{user_id}/update_price")
 def update_price(user_id: str, data: PriceUpdate):
     conn = sqlite3.connect(DB_PATH)
@@ -276,7 +273,7 @@ def get_portfolio(user_id: str):
         "total_assets": total_assets, 
         "total_book": total_book,
         "usdjpy_rate": usdjpy, 
-        "usdjpy_time": usdjpy_time, # 追加
+        "usdjpy_time": usdjpy_time, 
         "category_totals": cat_totals, 
         "portfolio": portfolio_data
     }
@@ -287,7 +284,6 @@ def get_jp_news(user_id: str):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    # 日本株のみ抽出
     cursor.execute("SELECT name FROM portfolio WHERE user_id = ? AND ticker LIKE '%.T'", (user_id,))
     rows = cursor.fetchall()
     conn.close()
@@ -300,22 +296,24 @@ def get_jp_news(user_id: str):
     
     for row in rows:
         company_name = row["name"]
-        # 会社名をURLエンコードしてGoogleニュースのRSSで検索
         query = urllib.parse.quote(f"{company_name} 株")
         url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
         try:
             res = requests.get(url, headers=headers, timeout=3)
             if res.status_code == 200:
-                soup = BeautifulSoup(res.text, 'html.parser')
-                items = soup.find_all('item')
-                # 各銘柄につき最新2件を取得
+                # 修正：リンクを正確に取得するためにXML専用解析ツール(ElementTree)を使用
+                root = ET.fromstring(res.text)
+                items = root.findall('.//item')
                 for item in items[:2]:
-                    title = item.title.text if item.title else ""
-                    link = item.link.text if item.link else ""
-                    pub_date = item.pubdate.text if item.pubdate else ""
+                    title_elem = item.find('title')
+                    link_elem = item.find('link')
+                    pubdate_elem = item.find('pubDate')
+                    
+                    title = title_elem.text if title_elem is not None else ""
+                    link = link_elem.text if link_elem is not None else ""
+                    pub_date = pubdate_elem.text if pubdate_elem is not None else ""
                     
                     try:
-                        # ざっくりとした日時変換（ソート用）
                         dt = datetime.strptime(pub_date.replace("GMT", "+0000").strip(), "%a, %d %b %Y %H:%M:%S %z")
                         ts = dt.timestamp()
                         date_str = dt.strftime("%Y/%m/%d %H:%M")
@@ -333,7 +331,6 @@ def get_jp_news(user_id: str):
         except Exception as e:
             print("News error:", e)
 
-    # 全体のニュースを新しい順にソートして15件返す
     news_list.sort(key=lambda x: x["timestamp"], reverse=True)
     return news_list[:15]
 
@@ -509,7 +506,6 @@ def get_fund_info(ticker: str):
     price = fetch_latest_fund_price(ticker)
     return {"ticker": ticker, "price": price}
 
-# === 管理者機能API ===
 @app.get("/api/admin/users")
 def admin_get_users():
     conn = sqlite3.connect(DB_PATH)
