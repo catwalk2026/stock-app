@@ -16,7 +16,11 @@ from email.utils import parsedate_to_datetime
 # --- LINE連携用ライブラリ ---
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage, FollowEvent # ← FollowEventを追加
+from linebot.models import MessageEvent, TextMessage, TextSendMessage, FollowEvent
+
+# --- 定期実行（パトロール）用ライブラリ ---
+from apscheduler.schedulers.background import BackgroundScheduler
+import atexit
 
 # ▼▼▼ ここに取得した2つの鍵を貼り付けてください ▼▼▼
 LINE_CHANNEL_ACCESS_TOKEN = """rlJ1YRFK3hCEYnrfCe5k9kO2gjyX3YkqhfdAvnT28lWoC/9Q6NTtPdBNvGU6jVWunuf7k6NPAg/d2r39X+IxD4mlNjs2bH4krV2B7zWilto5IHSvo7QXkKbIxa0GNvVN2SK9b2AH03Rs/M6VrJBIlwdB04t89/1O/w1cDnyilFU="""
@@ -114,10 +118,107 @@ def init_db():
             app_user_id TEXT
         )
     ''')
+    # 🌟 追加：送ったニュースがダブらないように記録するテーブル
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sent_news (
+            line_user_id TEXT,
+            news_link TEXT,
+            PRIMARY KEY (line_user_id, news_link)
+        )
+    ''')
     conn.commit()
     conn.close()
 
 init_db()
+
+# ==========================================
+# 🌟 新機能：リアルタイムニュースのパトロールとPush送信
+# ==========================================
+def check_and_send_news():
+    print("ニュースのパトロールを開始します...")
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # LINEが紐づいているユーザーを全員取得
+    cursor.execute("SELECT * FROM line_users")
+    users = cursor.fetchall()
+    
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    yesterday = datetime.now() - timedelta(days=1) # 24時間以内のニュースだけを対象にする
+
+    for u in users:
+        line_user_id = u["line_user_id"]
+        app_user_id = u["app_user_id"]
+        
+        # ユーザーの保有銘柄と気になるリストの「銘柄名」を重複なしで集める
+        cursor.execute("SELECT name FROM portfolio WHERE user_id = ? AND ticker LIKE '%.T' AND quantity > 0", (app_user_id,))
+        p_names = [r["name"] for r in cursor.fetchall()]
+        cursor.execute("SELECT name FROM watchlist WHERE user_id = ? AND ticker LIKE '%.T'", (app_user_id,))
+        w_names = [r["name"] for r in cursor.fetchall()]
+        target_names = list(set(p_names + w_names))
+        
+        new_messages = []
+        
+        for company_name in target_names:
+            query = urllib.parse.quote(f"{company_name} 株")
+            url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
+            try:
+                res = requests.get(url, headers=headers, timeout=5)
+                if res.status_code == 200:
+                    root = ET.fromstring(res.text)
+                    items = root.findall('.//item')
+                    
+                    for item in items[:5]: # 最新の数件だけチェック
+                        link = item.find('link').text if item.find('link') is not None else ""
+                        title = item.find('title').text if item.find('title') is not None else ""
+                        pub_date_str = item.find('pubDate').text if item.find('pubDate') is not None else ""
+                        
+                        try:
+                            dt = parsedate_to_datetime(pub_date_str)
+                            # ニュースが24時間以内のものかチェック
+                            if dt.timestamp() < yesterday.timestamp():
+                                continue
+                        except:
+                            continue
+                        
+                        # すでに送ったことがあるニュースかチェック
+                        cursor.execute("SELECT 1 FROM sent_news WHERE line_user_id = ? AND news_link = ?", (line_user_id, link))
+                        if not cursor.fetchone():
+                            # 新しいニュースを発見！
+                            msg_text = f"📰 【{company_name}】の最新ニュース\n\n{title}\n{link}"
+                            new_messages.append((msg_text, link))
+                            # LINEは1回で最大5吹き出しまでしか送れないため、5個を超えそうなら制限
+                            if len(new_messages) >= 5:
+                                break
+            except Exception as e:
+                print("パトロール中のエラー:", e)
+            
+            if len(new_messages) >= 5:
+                break
+        
+        # 新しいニュースがあればLINEに送信（Push通知）
+        if new_messages:
+            try:
+                send_data = [TextSendMessage(text=m[0]) for m in new_messages]
+                line_bot_api.push_message(line_user_id, send_data)
+                
+                # 送信済みに記録
+                for m in new_messages:
+                    cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (?, ?)", (line_user_id, m[1]))
+                conn.commit()
+                print(f"{app_user_id}に {len(new_messages)}件 の新着ニュースを送りました！")
+            except Exception as e:
+                print(f"LINE送信エラー ({app_user_id}):", e)
+
+    conn.close()
+
+# 起動時にスケジューラーをセット（1時間おきにパトロール）
+scheduler = BackgroundScheduler()
+scheduler.add_job(check_and_send_news, 'interval', minutes=60)
+scheduler.start()
+atexit.register(lambda: scheduler.shutdown())
+
 
 # ==========================================
 # LINE Bot 用のWebhook受け取り口
@@ -131,7 +232,6 @@ async def callback(request: Request, x_line_signature: str = Header(None)):
         raise HTTPException(status_code=400, detail="Invalid signature")
     return "OK"
 
-# 🌟 追加：友だち追加された時の挨拶メッセージ
 @handler.add(FollowEvent)
 def handle_follow(event):
     welcome_msg = (
@@ -159,7 +259,7 @@ def handle_message(event):
         
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=f"✅ 会員番号「{text}」との紐付けが完了しました！\n今後、登録した銘柄の通知や最新ニュースをこのLINEにお届けします📉✨")
+            TextSendMessage(text=f"✅ 会員番号「{text}」との紐付けが完了しました！\n今後、保有銘柄や気になる銘柄の新しいニュースが出たら、いち早くお知らせします📉✨")
         )
     else:
         line_bot_api.reply_message(
