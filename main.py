@@ -204,7 +204,6 @@ def check_and_send_news():
 
     conn.close()
 
-# 起動時にスケジューラーをセット（1時間おきにパトロール）
 scheduler = BackgroundScheduler()
 scheduler.add_job(check_and_send_news, 'interval', minutes=60)
 scheduler.start()
@@ -227,9 +226,7 @@ async def callback(request: Request, x_line_signature: str = Header(None)):
 def handle_follow(event):
     welcome_msg = (
         "友だち追加ありがとうございます！🎉\n\n"
-        "まずは、ポートフォリオで利用している「会員番号（6桁の英数字）」をこのトークに送信して、通知の連携を完了させてください。\n\n"
-        "▼ ポートフォリオ画面はこちら\n"
-        "https://stock-app-xyif.onrender.com"  # ← ここを実際のRenderのURLに変えてください！
+        "まずは、メニューの「会員連携」をタップして、ポートフォリオ用の会員番号（6桁の英数字）を登録してください📉✨"
     )
     line_bot_api.reply_message(
         event.reply_token,
@@ -241,12 +238,37 @@ def handle_message(event):
     text = event.message.text.strip()
     line_user_id = event.source.user_id
 
-    # リッチメニュー等から「会員連携」と送られた場合
-    if text == "会員連携":
+    # 🌟 修正1: 「会員連携」という言葉が含まれていればOKにする
+    if "会員連携" in text:
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="📝 ダッシュボードに表示されている「会員番号（6桁の英数字）」をそのまま送信してください。\n例: AB1234")
         )
+        
+    # 🌟 追加: 「ダッシュボード」という言葉が含まれていたら専用URLを作って返す
+    elif "ダッシュボード" in text:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = ?", (line_user_id,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            app_user_id = row["app_user_id"]
+            # ▼▼▼ ここを実際のアプリのURLに変えてください ▼▼▼
+            app_url = f"https://stock-app-xyif.onrender.com/{app_user_id}"
+            
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=f"📊 あなたのダッシュボードはこちらです！\n{app_url}")
+            )
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="⚠️ まだ会員連携が完了していません。\n「会員連携」ボタンをタップして、会員番号を登録してください！")
+            )
+
     # 6桁の会員番号が送られてきた場合
     elif re.match(r"^[a-zA-Z0-9]{6}$", text):
         conn = sqlite3.connect(DB_PATH)
@@ -259,11 +281,12 @@ def handle_message(event):
             event.reply_token,
             TextSendMessage(text=f"✅ 会員番号「{text}」との紐付けが完了しました！\n今後、保有銘柄や気になる銘柄の新しいニュースが出たら、いち早くお知らせします📉✨")
         )
+        
     # それ以外の場合
     else:
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="💡 メニューの「会員連携」ボタンを押すか、通知を受け取りたい会員番号（6桁の英数字）を送信してください！")
+            TextSendMessage(text="💡 メニューから操作を選ぶか、連携したい会員番号（6桁の英数字）を送信してください！")
         )
 
 # ==========================================
@@ -502,7 +525,7 @@ def get_jp_news(user_id: str):
             if res.status_code == 200:
                 root = ET.fromstring(res.text)
                 items = root.findall('.//item')
-                for item in items:
+                for item in items[:25]:
                     title_elem = item.find('title')
                     link_elem = item.find('link')
                     pubdate_elem = item.find('pubDate')
