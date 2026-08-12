@@ -5,3 +5,4 @@ pydantic
 requests
 beautifulsoup4
 jpholiday
+line-bot-sdk
