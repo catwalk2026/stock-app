@@ -24,7 +24,7 @@ import atexit
 
 # ▼▼▼ ここに取得した2つの鍵を貼り付けてください ▼▼▼
 LINE_CHANNEL_ACCESS_TOKEN = """ここにチャネルアクセストークンを貼り付ける"""
-LINE_CHANNEL_SECRET = """ここにチャネルシークレットを貼り付ける"""
+LINE_CHANNEL_SECRET = """c8caf38acc62174908dcff1f782621f6"""
 # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
@@ -255,7 +255,7 @@ def handle_message(event):
         if row:
             app_user_id = row["app_user_id"]
             # ▼▼▼ ここを実際のアプリのURLに変えてください ▼▼▼
-            app_url = f"https://あなたのアプリ名.onrender.com/{app_user_id}"
+            app_url = f"https://stock-app-xyif.onrender.com/{app_user_id}"
             
             line_bot_api.reply_message(
                 event.reply_token,
