@@ -99,6 +99,13 @@
         .news-title { color: var(--text-black); font-weight: bold; font-size: 1.05rem; margin-bottom: 8px; line-height: 1.4; }
         .news-meta { color: var(--stone); font-size: 0.85rem; display: flex; gap: 12px; align-items: center; }
         .news-tag { background: var(--ivory-base); padding: 2px 8px; border-radius: 4px; font-weight: bold; color: var(--turquoise-main); font-size: 0.8rem; }
+
+        /* 追加: サジェストボックス用のデザイン */
+        .search-wrapper { position: relative; display: inline-block; width: 100%; max-width: 300px; }
+        .suggestions-box { position: absolute; top: 100%; left: 0; width: 100%; background: var(--white); border: 1px solid var(--light-border); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 100; display: none; max-height: 250px; overflow-y: auto; }
+        .suggestion-item { padding: 10px 15px; cursor: pointer; border-bottom: 1px solid var(--light-border); font-size: 0.9rem; }
+        .suggestion-item:last-child { border-bottom: none; }
+        .suggestion-item:hover { background: var(--ivory-base); color: var(--turquoise-main); }
     </style>
 </head>
 <body>
@@ -129,6 +136,8 @@
                 <button class="tab-button" onclick="switchTab('tab-us')">米国株</button>
                 <button class="tab-button" onclick="switchTab('tab-fund')">投資信託</button>
                 <button class="tab-button" onclick="switchTab('tab-news')">関連ニュース</button>
+                <!-- 追加: 気になるリストタブ -->
+                <button class="tab-button" onclick="switchTab('tab-watchlist')">気になるリスト</button>
             </div>
 
             <div id="tab-all" class="tab-content active">
@@ -274,16 +283,14 @@
                 </table>
             </div>
 
-            <!-- ⑤ ニュースタブ（期間指定＆銘柄フィルター付き） -->
+            <!-- ニュースタブ -->
             <div id="tab-news" class="tab-content">
                 <h2>保有日本株の関連ニュース</h2>
                 
-                <!-- ニュース用のフィルターバー -->
                 <div style="background: var(--white); border: 1px solid var(--light-border); padding: 16px 20px; border-radius: 12px; margin-bottom: 24px;">
-                    <!-- 期間指定 -->
                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
                         <span style="font-weight:bold; font-size:0.9rem; color:var(--stone);">期間フィルター:</span>
-                        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                        <div id="news-range-buttons" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
                             <button class="filter-btn" onclick="filterNews('1W', this)">1週間</button>
                             <button class="filter-btn" onclick="filterNews('1M', this)">1ヶ月</button>
                             <button class="filter-btn" onclick="filterNews('3M', this)">3ヶ月</button>
@@ -295,16 +302,42 @@
                             </div>
                         </div>
                     </div>
-                    <!-- 保有銘柄ごとの絞り込みボタン置き場 -->
                     <div id="news-stock-filters" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; border-top:1px dashed var(--light-border); padding-top:10px;">
-                        <span style="font-size:0.85rem; color:var(--stone); font-weight:bold;">銘柄:</span>
-                        <button class="filter-btn active" onclick="filterNewsByStock('ALL', this)">すべて</button>
+                        <!-- JSで動的にボタン生成 -->
                     </div>
                 </div>
 
                 <div id="news-container">
                     <p>読み込み中...</p>
                 </div>
+            </div>
+
+            <!-- ⑥ 追加：気になるリスト（ウォッチリスト）タブ -->
+            <div id="tab-watchlist" class="tab-content">
+                <h2>気になるリスト (Watchlist)</h2>
+                <p style="color: var(--stone); font-size: 0.9rem; margin-bottom: 20px;">
+                    まだ購入していないけれど、値動きを追っておきたい銘柄を登録できます。<br>
+                    企業名や証券コードの一部を入力すると、候補が自動で表示されます。
+                </p>
+                
+                <div class="add-form">
+                    <h3>銘柄の追加</h3>
+                    <div class="form-group search-wrapper">
+                        <label>企業名 or 証券コード</label>
+                        <input type="text" id="watchlist-search" placeholder="例: トヨタ または 7203" oninput="handleSearchInput(this.value)" autocomplete="off">
+                        <!-- サジェスト候補を表示するボックス -->
+                        <div id="search-suggestions" class="suggestions-box"></div>
+                    </div>
+                    <div class="form-group" style="display:none;">
+                        <input type="hidden" id="watchlist-ticker">
+                    </div>
+                    <button type="button" class="btn-submit" onclick="addWatchlist()">リストに追加する</button>
+                </div>
+
+                <table>
+                    <thead><tr><th>コード</th><th>銘柄名</th><th>現在価格</th><th>登録日</th><th>操作</th></tr></thead>
+                    <tbody id="table-watchlist"></tbody>
+                </table>
             </div>
 
         </div>
@@ -314,9 +347,11 @@
         let myDoughnutChart = null;
         let myLineChart = null;
         let globalHistoryData = []; 
-        let globalNewsData = []; // 全ニュースデータを保持
+        let globalNewsData = []; 
+        let currentPeriodNews = []; // 期間で絞り込まれたニュース（ボタンの件数用）
         let currentNewsRange = 'ALL';
         let currentNewsStock = 'ALL';
+        let searchTimeout = null; // サジェスト用タイマー
 
         const COLOR_TURQUOISE = '#60C7D5';
         const COLOR_TURQUOISE_MAIN = '#25B2C7';
@@ -360,6 +395,7 @@
             if (tabId === 'tab-us') fetchCategoryTransactions('US', 'tx-table-us');
             if (tabId === 'tab-fund') fetchCategoryTransactions('FUND', 'tx-table-fund');
             if (tabId === 'tab-news') fetchNews();
+            if (tabId === 'tab-watchlist') fetchWatchlist();
         }
 
         function toggleRuleFreq() {
@@ -661,7 +697,7 @@
         }
 
         // ==========================================
-        // ニュース取得 & 期間/銘柄フィルター機能
+        // ニュース取得 & 期間フィルター機能
         // ==========================================
         async function fetchNews() {
             const container = document.getElementById('news-container');
@@ -674,21 +710,8 @@
                     container.innerHTML = '<p style="color:var(--stone);">現在保有している日本株のニュースはありません。</p>';
                     return;
                 }
-
-                // 銘柄ボタン一覧を自動生成
-                const stockFiltersDiv = document.getElementById('news-stock-filters');
-                const uniqueStocks = [...new Set(globalNewsData.map(n => n.stock_name))];
-                let buttonsHtml = `<span style="font-size:0.85rem; color:var(--stone); font-weight:bold;">銘柄:</span>
-                    <button class="filter-btn active" onclick="filterNewsByStock('ALL', this)">すべて (${globalNewsData.length})</button>`;
-                
-                uniqueStocks.forEach(name => {
-                    const count = globalNewsData.filter(n => n.stock_name === name).length;
-                    buttonsHtml += `<button class="filter-btn" onclick="filterNewsByStock('${name}', this)">${name} (${count})</button>`;
-                });
-                stockFiltersDiv.innerHTML = buttonsHtml;
-
-                // 描画
-                renderFilteredNews();
+                // 初回は全期間で表示
+                filterNews('ALL');
             } catch (e) {
                 container.innerHTML = '<p style="color:red;">ニュースの取得に失敗しました。</p>';
             }
@@ -696,63 +719,80 @@
 
         function filterNews(range, btnElement = null) {
             currentNewsRange = range;
+            const buttons = document.querySelectorAll('#news-range-buttons .filter-btn');
+            buttons.forEach(btn => btn.classList.remove('active'));
+
             if (range !== 'CUSTOM' && btnElement) {
-                document.querySelectorAll('#tab-news .filter-btn').forEach(btn => {
-                    if (btn.innerText.includes('週') || btn.innerText.includes('月') || btn.innerText.includes('全期間')) {
-                        btn.classList.remove('active');
-                    }
-                });
                 btnElement.classList.add('active');
             }
+
+            // 1. 期間で先にデータを絞る
+            const now = new Date();
+            let startMs = null;
+            let endMs = null;
+
+            if (range === '1W') startMs = now.getTime() - (7 * 24 * 60 * 60 * 1000);
+            else if (range === '1M') startMs = now.getTime() - (30 * 24 * 60 * 60 * 1000);
+            else if (range === '3M') startMs = now.getTime() - (90 * 24 * 60 * 60 * 1000);
+            else if (range === 'CUSTOM') {
+                const s = document.getElementById('news-start').value;
+                const e = document.getElementById('news-end').value;
+                if (s) { const d = new Date(s); d.setHours(0, 0, 0, 0); startMs = d.getTime(); }
+                if (e) { const d = new Date(e); d.setHours(23, 59, 59, 999); endMs = d.getTime(); }
+            }
+
+            currentPeriodNews = globalNewsData.filter(n => {
+                if (!n.timestamp) return true;
+                const nMs = n.timestamp * 1000;
+                if (startMs !== null && nMs < startMs) return false;
+                if (endMs !== null && nMs > endMs) return false;
+                return true;
+            });
+
+            // 2. 絞った件数で銘柄ボタンを更新する
+            updateStockButtons();
+
+            // 3. 画面に描画
             renderFilteredNews();
+        }
+
+        // ボタン生成と件数表示の独立関数
+        function updateStockButtons() {
+            const stockFiltersDiv = document.getElementById('news-stock-filters');
+            // 表示する銘柄は全て出す（件数が0になるものも含める）
+            const uniqueStocks = [...new Set(globalNewsData.map(n => n.stock_name))];
+            
+            let buttonsHtml = `<span style="font-size:0.85rem; color:var(--stone); font-weight:bold;">銘柄:</span>
+                <button class="filter-btn ${currentNewsStock === 'ALL' ? 'active' : ''}" onclick="filterNewsByStock('ALL', this)">すべて (${currentPeriodNews.length})</button>`;
+            
+            uniqueStocks.forEach(name => {
+                const count = currentPeriodNews.filter(n => n.stock_name === name).length;
+                buttonsHtml += `<button class="filter-btn ${currentNewsStock === name ? 'active' : ''}" onclick="filterNewsByStock('${name}', this)">${name} (${count})</button>`;
+            });
+            stockFiltersDiv.innerHTML = buttonsHtml;
         }
 
         function filterNewsByStock(stockName, btnElement) {
             currentNewsStock = stockName;
-            document.querySelectorAll('#news-stock-filters .filter-btn').forEach(btn => btn.classList.remove('active'));
-            btnElement.classList.add('active');
+            updateStockButtons(); // ボタンの青色(active)状態を更新
             renderFilteredNews();
         }
 
         function renderFilteredNews() {
             const container = document.getElementById('news-container');
-            let filtered = [...globalNewsData];
+            let finalNews = [...currentPeriodNews];
 
-            // 1. 銘柄絞り込み
             if (currentNewsStock !== 'ALL') {
-                filtered = filtered.filter(n => n.stock_name === currentNewsStock);
+                finalNews = finalNews.filter(n => n.stock_name === currentNewsStock);
             }
 
-            // 2. 期間絞り込み
-            const today = new Date();
-            let startDate = null;
-            let endDate = today;
-
-            if (currentNewsRange === '1W') startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7);
-            else if (currentNewsRange === '1M') startDate = new Date(today.getFullYear(), today.getMonth() - 1, today.getDate());
-            else if (currentNewsRange === '3M') startDate = new Date(today.getFullYear(), today.getMonth() - 3, today.getDate());
-            else if (currentNewsRange === 'CUSTOM') {
-                const s = document.getElementById('news-start').value;
-                const e = document.getElementById('news-end').value;
-                if (s) startDate = new Date(s);
-                if (e) endDate = new Date(e);
-            }
-
-            if (startDate) {
-                filtered = filtered.filter(n => {
-                    if (!n.timestamp) return true;
-                    const nTime = n.timestamp * 1000;
-                    return nTime >= startDate.getTime() && nTime <= (endDate.getTime() + 86400000);
-                });
-            }
-
-            if (filtered.length === 0) {
+            if (finalNews.length === 0) {
                 container.innerHTML = '<p style="color:var(--stone);">指定した期間・銘柄のニュースは見つかりませんでした。</p>';
                 return;
             }
 
             let html = '';
-            filtered.forEach(news => {
+            finalNews.forEach(news => {
                 html += `
                     <a href="${news.link}" target="_blank" rel="noopener noreferrer" class="news-card" style="position: relative; padding-right: 40px; display: block;">
                         <div class="news-title">${news.title}</div>
@@ -767,6 +807,113 @@
                 `;
             });
             container.innerHTML = html;
+        }
+
+        // ==========================================
+        // 気になるリスト（サジェスト検索機能）
+        // ==========================================
+        async function handleSearchInput(query) {
+            clearTimeout(searchTimeout);
+            const suggestionsDiv = document.getElementById('search-suggestions');
+            if (!query.trim()) {
+                suggestionsDiv.style.display = 'none';
+                return;
+            }
+            
+            // サーバー負荷軽減のため、入力が止まってから0.3秒後に検索
+            searchTimeout = setTimeout(async () => {
+                try {
+                    const res = await fetch(`/api/search_stock?q=${encodeURIComponent(query)}`);
+                    const results = await res.json();
+                    
+                    if (results.length > 0) {
+                        let html = '';
+                        results.forEach(r => {
+                            // クリックしたら入力欄にセットする
+                            html += `<div class="suggestion-item" onclick="selectSuggestion('${r.ticker}', '${r.name}')">${r.ticker} - ${r.name}</div>`;
+                        });
+                        suggestionsDiv.innerHTML = html;
+                        suggestionsDiv.style.display = 'block';
+                    } else {
+                        suggestionsDiv.innerHTML = '<div class="suggestion-item" style="color:var(--stone); cursor:default;">見つかりませんでした</div>';
+                        suggestionsDiv.style.display = 'block';
+                    }
+                } catch(e) {}
+            }, 300);
+        }
+
+        function selectSuggestion(ticker, name) {
+            // テキストボックスの見た目を「企業名」に、裏に「コード」を保持
+            document.getElementById('watchlist-search').value = name;
+            document.getElementById('watchlist-ticker').value = ticker;
+            document.getElementById('search-suggestions').style.display = 'none';
+        }
+
+        // 検索ボックスからフォーカスが外れたらサジェストを隠す
+        document.addEventListener('click', function(e) {
+            const searchWrapper = document.querySelector('.search-wrapper');
+            if (searchWrapper && !searchWrapper.contains(e.target)) {
+                document.getElementById('search-suggestions').style.display = 'none';
+            }
+        });
+
+        async function fetchWatchlist() {
+            const tbody = document.getElementById('table-watchlist');
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">読み込み中...</td></tr>';
+            try {
+                const res = await fetch(`/api/${currentUserId}/watchlist`);
+                const data = await res.json();
+                
+                if (data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--stone);">まだ登録されていません。</td></tr>';
+                    return;
+                }
+
+                let html = '';
+                data.forEach(item => {
+                    const priceText = item.current_price > 0 ? `${item.currency}${item.current_price.toLocaleString()}` : '-';
+                    html += `
+                        <tr>
+                            <td style="color:var(--stone);">${item.ticker.replace('.T', '')}</td>
+                            <td style="font-weight:bold;">${item.name}</td>
+                            <td style="font-weight:bold; color:var(--text-black);">${priceText}</td>
+                            <td style="color:var(--stone); font-size:0.85rem;">${item.added_date}</td>
+                            <td style="text-align:center;"><button class="btn-delete" onclick="deleteWatchlist('${item.ticker}')">削除</button></td>
+                        </tr>
+                    `;
+                });
+                tbody.innerHTML = html;
+            } catch (e) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:red;">取得エラー</td></tr>';
+            }
+        }
+
+        async function addWatchlist() {
+            const searchInput = document.getElementById('watchlist-search').value.trim();
+            const tickerInput = document.getElementById('watchlist-ticker').value.trim();
+            
+            // サジェストを使わず直接入力した場合もカバー
+            let ticker = tickerInput || searchInput;
+            let name = tickerInput ? searchInput : searchInput;
+            
+            if (!ticker) { alert('企業名や証券コードを入力してください。'); return; }
+
+            const res = await fetch(`/api/${currentUserId}/watchlist`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticker: ticker, name: name })
+            });
+
+            if (res.ok) {
+                document.getElementById('watchlist-search').value = '';
+                document.getElementById('watchlist-ticker').value = '';
+                fetchWatchlist(); // リストを更新
+            }
+        }
+
+        async function deleteWatchlist(ticker) {
+            if (!confirm('この銘柄を気になるリストから削除しますか？')) return;
+            const res = await fetch(`/api/${currentUserId}/watchlist/${encodeURIComponent(ticker)}`, { method: 'DELETE' });
+            if (res.ok) fetchWatchlist();
         }
     </script>
 </body>
