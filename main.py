@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 import jpholiday
 import re
 import math
+import urllib.parse
 
 app = FastAPI()
 DB_PATH = "portfolio.db"
@@ -84,17 +85,19 @@ def init_db():
 
 init_db()
 
+# --- 為替取得（時間も返すように改修） ---
 def get_usdjpy_rate():
+    fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
     try:
         usdjpy = yf.Ticker("JPY=X")
         hist = usdjpy.history(period="1d")
         if not hist.empty:
             val = float(hist['Close'].iloc[-1])
             if not math.isnan(val):
-                return val
-        return 155.0
+                return {"rate": val, "time": fetch_time}
+        return {"rate": 155.0, "time": fetch_time + " (取得エラー)"}
     except Exception:
-        return 155.0
+        return {"rate": 155.0, "time": fetch_time + " (取得エラー)"}
 
 def is_business_day(dt: datetime) -> bool:
     return dt.weekday() not in (5, 6) and not jpholiday.is_holiday(dt)
@@ -122,17 +125,23 @@ def fetch_latest_fund_price(ticker: str) -> float:
         pass
     return 0.0
 
+# === 画面ルーティング ===
 @app.get("/")
 def read_root():
     return FileResponse("index.html")
 
+# 管理者専用ページ
+@app.get("/admin")
+def read_admin():
+    return FileResponse("admin.html")
+
 @app.get("/{user_id}")
 def read_user_dashboard(user_id: str):
-    # 修正: 6桁の英数字（大文字・小文字・数字）を許可
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id):
         return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
+# === APIエンドポイント ===
 @app.post("/api/{user_id}/update_price")
 def update_price(user_id: str, data: PriceUpdate):
     conn = sqlite3.connect(DB_PATH)
@@ -195,9 +204,11 @@ def get_portfolio(user_id: str):
     cursor.execute("SELECT * FROM portfolio WHERE user_id = ?", (user_id,))
     rows = cursor.fetchall()
     
-    usdjpy = get_usdjpy_rate()
-    portfolio_data = []
+    usdjpy_info = get_usdjpy_rate()
+    usdjpy = usdjpy_info["rate"]
+    usdjpy_time = usdjpy_info["time"]
     
+    portfolio_data = []
     cat_totals = {
         "日本株": {"current": 0.0, "book": 0.0}, 
         "米国株": {"current": 0.0, "book": 0.0}, 
@@ -265,9 +276,66 @@ def get_portfolio(user_id: str):
         "total_assets": total_assets, 
         "total_book": total_book,
         "usdjpy_rate": usdjpy, 
+        "usdjpy_time": usdjpy_time, # 追加
         "category_totals": cat_totals, 
         "portfolio": portfolio_data
     }
+
+# --- 日本株の関連ニュース取得 API ---
+@app.get("/api/{user_id}/news")
+def get_jp_news(user_id: str):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    # 日本株のみ抽出
+    cursor.execute("SELECT name FROM portfolio WHERE user_id = ? AND ticker LIKE '%.T'", (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        return []
+
+    news_list = []
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    for row in rows:
+        company_name = row["name"]
+        # 会社名をURLエンコードしてGoogleニュースのRSSで検索
+        query = urllib.parse.quote(f"{company_name} 株")
+        url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
+        try:
+            res = requests.get(url, headers=headers, timeout=3)
+            if res.status_code == 200:
+                soup = BeautifulSoup(res.text, 'html.parser')
+                items = soup.find_all('item')
+                # 各銘柄につき最新2件を取得
+                for item in items[:2]:
+                    title = item.title.text if item.title else ""
+                    link = item.link.text if item.link else ""
+                    pub_date = item.pubdate.text if item.pubdate else ""
+                    
+                    try:
+                        # ざっくりとした日時変換（ソート用）
+                        dt = datetime.strptime(pub_date.replace("GMT", "+0000").strip(), "%a, %d %b %Y %H:%M:%S %z")
+                        ts = dt.timestamp()
+                        date_str = dt.strftime("%Y/%m/%d %H:%M")
+                    except:
+                        ts = 0
+                        date_str = pub_date
+
+                    news_list.append({
+                        "stock_name": company_name,
+                        "title": title,
+                        "link": link,
+                        "pub_time": date_str,
+                        "timestamp": ts
+                    })
+        except Exception as e:
+            print("News error:", e)
+
+    # 全体のニュースを新しい順にソートして15件返す
+    news_list.sort(key=lambda x: x["timestamp"], reverse=True)
+    return news_list[:15]
 
 @app.post("/api/{user_id}/fund_rule")
 def add_fund_rule(user_id: str, rule: FundRuleCreate):
@@ -374,7 +442,8 @@ def get_history(user_id: str):
     
     first_date_str = trades[0]["trade_date"]
     unique_tickers = list(set([t["ticker"] for t in trades]))
-    usdjpy = get_usdjpy_rate()
+    usdjpy_info = get_usdjpy_rate()
+    usdjpy = usdjpy_info["rate"]
     
     price_histories = {}
     for ticker in unique_tickers:
@@ -439,3 +508,41 @@ def get_history(user_id: str):
 def get_fund_info(ticker: str):
     price = fetch_latest_fund_price(ticker)
     return {"ticker": ticker, "price": price}
+
+# === 管理者機能API ===
+@app.get("/api/admin/users")
+def admin_get_users():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT DISTINCT user_id FROM portfolio")
+    p_users = [r["user_id"] for r in cursor.fetchall()]
+    cursor.execute("SELECT DISTINCT user_id FROM transactions")
+    t_users = [r["user_id"] for r in cursor.fetchall()]
+    cursor.execute("SELECT DISTINCT user_id FROM fund_rules")
+    f_users = [r["user_id"] for r in cursor.fetchall()]
+    
+    all_users = list(set(p_users + t_users + f_users))
+    
+    user_data = []
+    for uid in all_users:
+        cursor.execute("SELECT COUNT(*) as c FROM portfolio WHERE user_id=?", (uid,))
+        p_count = cursor.fetchone()["c"]
+        cursor.execute("SELECT COUNT(*) as c FROM transactions WHERE user_id=?", (uid,))
+        t_count = cursor.fetchone()["c"]
+        user_data.append({"user_id": uid, "portfolio_count": p_count, "tx_count": t_count})
+        
+    conn.close()
+    return user_data
+
+@app.delete("/api/admin/users/{user_id}")
+def admin_delete_user(user_id: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM portfolio WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM fund_rules WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+    return {"message": "Success"}
