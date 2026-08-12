@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>【管理者専用】ユーザー管理パネル</title>
+    <style>
+        body { 
+            font-family: "Helvetica Neue", Arial, sans-serif; 
+            background-color: #F8F6ED; 
+            color: #2F3842; 
+            padding: 40px; 
+            margin: 0;
+        }
+        .container { 
+            max-width: 800px; 
+            margin: 0 auto; 
+            background: #FFFFFF; 
+            padding: 40px; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05); 
+        }
+        h1 { color: #25B2C7; border-bottom: 2px solid #F7F7F8; padding-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; text-align: center; border-bottom: 1px solid #F7F7F8; }
+        th { background: #60C7D5; color: white; }
+        .btn-delete { 
+            background: #F77261; color: white; border: none; padding: 6px 12px; 
+            border-radius: 6px; cursor: pointer; transition: 0.2s; font-weight: bold;
+        }
+        .btn-delete:hover { background: #D56C76; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔒 システム管理者パネル</h1>
+        <p style="color: #596572;">利用を停止した生徒さんのデータを完全に削除できます。（※元には戻せません）</p>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th>会員ID</th>
+                    <th>保有資産数</th>
+                    <th>取引履歴数</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="user-table-body">
+                <tr><td colspan="4">読み込み中...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        async function loadUsers() {
+            const tbody = document.getElementById('user-table-body');
+            try {
+                const res = await fetch('/api/admin/users');
+                const users = await res.json();
+                
+                if (users.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4">登録されているユーザーデータはありません。</td></tr>';
+                    return;
+                }
+                
+                let html = '';
+                users.forEach(u => {
+                    html += `
+                        <tr>
+                            <td style="font-weight:bold;">${u.user_id}</td>
+                            <td>${u.portfolio_count} 件</td>
+                            <td>${u.tx_count} 件</td>
+                            <td>
+                                <button class="btn-delete" onclick="deleteUser('${u.user_id}')">データを全削除</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                tbody.innerHTML = html;
+            } catch (e) {
+                tbody.innerHTML = '<tr><td colspan="4" style="color:red;">エラーが発生しました。</td></tr>';
+            }
+        }
+
+        async function deleteUser(userId) {
+            const code = prompt(`【警告】\nID: ${userId} のすべての資産データ・取引履歴・積立設定を完全に削除します。\n実行する場合は「削除」と入力してください。`);
+            if (code !== "削除") {
+                alert("削除をキャンセルしました。");
+                return;
+            }
+            
+            try {
+                const res = await fetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
+                if (res.ok) {
+                    alert(`ID: ${userId} のデータを完全に削除しました。`);
+                    loadUsers(); // リストを再読み込み
+                }
+            } catch (e) {
+                alert("削除中にエラーが発生しました。");
+            }
+        }
+
+        // ページ読み込み時に実行
+        loadUsers();
+    </script>
+</body>
+</html>
