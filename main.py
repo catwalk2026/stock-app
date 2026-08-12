@@ -23,8 +23,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
 
 # ▼▼▼ ここに取得した2つの鍵を貼り付けてください ▼▼▼
-LINE_CHANNEL_ACCESS_TOKEN = """rlJ1YRFK3hCEYnrfCe5k9kO2gjyX3YkqhfdAvnT28lWoC/9Q6NTtPdBNvGU6jVWunuf7k6NPAg/d2r39X+IxD4mlNjs2bH4krV2B7zWilto5IHSvo7QXkKbIxa0GNvVN2SK9b2AH03Rs/M6VrJBIlwdB04t89/1O/w1cDnyilFU="""
-LINE_CHANNEL_SECRET = """c8caf38acc62174908dcff1f782621f6"""
+LINE_CHANNEL_ACCESS_TOKEN = """ここにチャネルアクセストークンを貼り付ける"""
+LINE_CHANNEL_SECRET = """ここにチャネルシークレットを貼り付ける"""
 # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
@@ -238,14 +238,12 @@ def handle_message(event):
     text = event.message.text.strip()
     line_user_id = event.source.user_id
 
-    # 🌟 修正1: 「会員連携」という言葉が含まれていればOKにする
     if "会員連携" in text:
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="📝 ダッシュボードに表示されている「会員番号（6桁の英数字）」をそのまま送信してください。\n例: AB1234")
         )
         
-    # 🌟 追加: 「ダッシュボード」という言葉が含まれていたら専用URLを作って返す
     elif "ダッシュボード" in text:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -257,7 +255,7 @@ def handle_message(event):
         if row:
             app_user_id = row["app_user_id"]
             # ▼▼▼ ここを実際のアプリのURLに変えてください ▼▼▼
-            app_url = f"https://stock-app-xyif.onrender.com/{app_user_id}"
+            app_url = f"https://あなたのアプリ名.onrender.com/{app_user_id}"
             
             line_bot_api.reply_message(
                 event.reply_token,
@@ -269,7 +267,6 @@ def handle_message(event):
                 TextSendMessage(text="⚠️ まだ会員連携が完了していません。\n「会員連携」ボタンをタップして、会員番号を登録してください！")
             )
 
-    # 6桁の会員番号が送られてきた場合
     elif re.match(r"^[a-zA-Z0-9]{6}$", text):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -282,7 +279,6 @@ def handle_message(event):
             TextSendMessage(text=f"✅ 会員番号「{text}」との紐付けが完了しました！\n今後、保有銘柄や気になる銘柄の新しいニュースが出たら、いち早くお知らせします📉✨")
         )
         
-    # それ以外の場合
     else:
         line_bot_api.reply_message(
             event.reply_token,
@@ -345,22 +341,49 @@ def read_user_dashboard(user_id: str):
         return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
+# 🌟 新機能：国別・日本語対応のスマート検索 API
 @app.get("/api/search_stock")
-def search_stock(q: str):
+def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
-    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&newsCount=0&country=JP"
+    results = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+    # 1. もし「4桁の数字」なら、日本のサイト（みんかぶ等）から正しい日本語名を取得（ETF対応）
+    if q.isdigit() and len(q) == 4 and asset_type in ["JP", "ALL"]:
+        try:
+            res = requests.get(f"https://minkabu.jp/stock/{q}", headers=headers, timeout=3)
+            if res.status_code == 200:
+                soup = BeautifulSoup(res.text, 'html.parser')
+                title = soup.find('title').text
+                # タイトル例: "トヨタ自動車 (7203) : 株価..." -> 最初の部分を取得
+                name = title.split('(')[0].strip()
+                if name:
+                    results.append({"ticker": f"{q}.T", "name": name})
+                    return results # 正確な情報が取れたらここで返す
+        except Exception:
+            pass
+
+    # 2. Yahoo Finance US APIで総合検索（US株や、名称からの検索用）
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=JP"
     try:
         res = requests.get(url, headers=headers, timeout=5)
         data = res.json()
-        results = []
         for quote in data.get("quotes", []):
             ticker = quote.get("symbol", "")
             name = quote.get("shortname", quote.get("longname", ticker))
-            results.append({"ticker": ticker, "name": name})
-        return results
+            
+            is_jp = ticker.endswith(".T")
+            
+            # 引数(asset_type)に合わせて結果を振り分け
+            if asset_type == "JP" and not is_jp: continue
+            if asset_type == "US" and is_jp: continue
+            
+            if not any(r["ticker"] == ticker for r in results):
+                results.append({"ticker": ticker, "name": name})
     except Exception:
-        return []
+        pass
+        
+    return results
 
 @app.post("/api/{user_id}/update_price")
 def update_price(user_id: str, data: PriceUpdate):
@@ -501,23 +524,31 @@ def get_portfolio(user_id: str):
         "portfolio": portfolio_data
     }
 
+# 🌟 新機能：保有株＋気になるリストの両方からニュースを取得
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
+    
+    # 保有銘柄
     cursor.execute("SELECT name FROM portfolio WHERE user_id = ? AND ticker LIKE '%.T' AND quantity > 0", (user_id,))
-    rows = cursor.fetchall()
+    p_names = [r["name"] for r in cursor.fetchall()]
+    
+    # 気になるリスト
+    cursor.execute("SELECT name FROM watchlist WHERE user_id = ? AND ticker LIKE '%.T'", (user_id,))
+    w_names = [r["name"] for r in cursor.fetchall()]
     conn.close()
 
-    if not rows:
+    target_names = list(set(p_names + w_names))
+
+    if not target_names:
         return []
 
     news_list = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
-    for row in rows:
-        company_name = row["name"]
+    for company_name in target_names:
         query = urllib.parse.quote(f"{company_name} 株")
         url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
         try:
@@ -525,7 +556,7 @@ def get_jp_news(user_id: str):
             if res.status_code == 200:
                 root = ET.fromstring(res.text)
                 items = root.findall('.//item')
-                for item in items[:25]:
+                for item in items:
                     title_elem = item.find('title')
                     link_elem = item.find('link')
                     pubdate_elem = item.find('pubDate')
