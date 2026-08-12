@@ -96,9 +96,9 @@
         
         .news-card { background: var(--white); border: 1px solid var(--light-border); padding: 16px 20px; border-radius: 12px; margin-bottom: 16px; display: block; text-decoration: none; transition: 0.2s; }
         .news-card:hover { border-color: var(--turquoise-base); box-shadow: 0 4px 12px rgba(47, 56, 66, 0.05); transform: translateY(-2px); }
-        .news-title { color: var(--text-black); font-weight: bold; font-size: 1.05rem; margin-bottom: 8px; }
-        .news-meta { color: var(--stone); font-size: 0.85rem; display: flex; gap: 12px; }
-        .news-tag { background: var(--ivory-base); padding: 2px 8px; border-radius: 4px; font-weight: bold; color: var(--turquoise-main); }
+        .news-title { color: var(--text-black); font-weight: bold; font-size: 1.05rem; margin-bottom: 8px; line-height: 1.4; }
+        .news-meta { color: var(--stone); font-size: 0.85rem; display: flex; gap: 12px; align-items: center; }
+        .news-tag { background: var(--ivory-base); padding: 2px 8px; border-radius: 4px; font-weight: bold; color: var(--turquoise-main); font-size: 0.8rem; }
     </style>
 </head>
 <body>
@@ -274,10 +274,34 @@
                 </table>
             </div>
 
-            <!-- ニュースタブ -->
+            <!-- ⑤ ニュースタブ（期間指定＆銘柄フィルター付き） -->
             <div id="tab-news" class="tab-content">
                 <h2>保有日本株の関連ニュース</h2>
-                <p style="color: var(--stone); font-size: 0.9rem; margin-bottom: 20px;">※現在保有している日本株に関する最新ニュースを自動で表示します。</p>
+                
+                <!-- ニュース用のフィルターバー -->
+                <div style="background: var(--white); border: 1px solid var(--light-border); padding: 16px 20px; border-radius: 12px; margin-bottom: 24px;">
+                    <!-- 期間指定 -->
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+                        <span style="font-weight:bold; font-size:0.9rem; color:var(--stone);">期間フィルター:</span>
+                        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                            <button class="filter-btn" onclick="filterNews('1W', this)">1週間</button>
+                            <button class="filter-btn" onclick="filterNews('1M', this)">1ヶ月</button>
+                            <button class="filter-btn" onclick="filterNews('3M', this)">3ヶ月</button>
+                            <button class="filter-btn active" onclick="filterNews('ALL', this)">全期間</button>
+                            <div style="display:flex; align-items:center; gap:4px; border-left:1px solid var(--light-border); padding-left:8px; margin-left:4px;">
+                                <input type="date" id="news-start" onchange="filterNews('CUSTOM')" style="padding:4px; border:1px solid var(--ivory-main); border-radius:4px; font-size:0.8rem; outline:none;">
+                                <span style="color:var(--stone);">〜</span>
+                                <input type="date" id="news-end" onchange="filterNews('CUSTOM')" style="padding:4px; border:1px solid var(--ivory-main); border-radius:4px; font-size:0.8rem; outline:none;">
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 保有銘柄ごとの絞り込みボタン置き場 -->
+                    <div id="news-stock-filters" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; border-top:1px dashed var(--light-border); padding-top:10px;">
+                        <span style="font-size:0.85rem; color:var(--stone); font-weight:bold;">銘柄:</span>
+                        <button class="filter-btn active" onclick="filterNewsByStock('ALL', this)">すべて</button>
+                    </div>
+                </div>
+
                 <div id="news-container">
                     <p>読み込み中...</p>
                 </div>
@@ -290,6 +314,9 @@
         let myDoughnutChart = null;
         let myLineChart = null;
         let globalHistoryData = []; 
+        let globalNewsData = []; // 全ニュースデータを保持
+        let currentNewsRange = 'ALL';
+        let currentNewsStock = 'ALL';
 
         const COLOR_TURQUOISE = '#60C7D5';
         const COLOR_TURQUOISE_MAIN = '#25B2C7';
@@ -593,10 +620,10 @@
             }
 
             if (range !== 'CUSTOM' && btnElement) {
-                document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+                document.querySelectorAll('#tab-all .filter-btn').forEach(btn => btn.classList.remove('active'));
                 btnElement.classList.add('active');
             } else if (range === 'CUSTOM') {
-                document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+                document.querySelectorAll('#tab-all .filter-btn').forEach(btn => btn.classList.remove('active'));
             }
 
             let filtered = [...globalHistoryData];
@@ -633,38 +660,113 @@
             myLineChart.update();
         }
 
-        // 修正：ニュースの表示に「➔」アイコンとセキュリティ（rel="noopener"）を追加
+        // ==========================================
+        // ニュース取得 & 期間/銘柄フィルター機能
+        // ==========================================
         async function fetchNews() {
             const container = document.getElementById('news-container');
             container.innerHTML = '<p style="color:var(--stone);">ニュースを取得中...</p>';
             try {
                 const res = await fetch(`/api/${currentUserId}/news`);
-                const data = await res.json();
+                globalNewsData = await res.json();
                 
-                if (data.length === 0) {
-                    container.innerHTML = '<p style="color:var(--stone);">現在保有している日本株の最新ニュースは見つかりませんでした。</p>';
+                if (globalNewsData.length === 0) {
+                    container.innerHTML = '<p style="color:var(--stone);">現在保有している日本株のニュースはありません。</p>';
                     return;
                 }
+
+                // 銘柄ボタン一覧を自動生成
+                const stockFiltersDiv = document.getElementById('news-stock-filters');
+                const uniqueStocks = [...new Set(globalNewsData.map(n => n.stock_name))];
+                let buttonsHtml = `<span style="font-size:0.85rem; color:var(--stone); font-weight:bold;">銘柄:</span>
+                    <button class="filter-btn active" onclick="filterNewsByStock('ALL', this)">すべて (${globalNewsData.length})</button>`;
                 
-                let html = '';
-                data.forEach(news => {
-                    html += `
-                        <a href="${news.link}" target="_blank" rel="noopener noreferrer" class="news-card" style="position: relative; padding-right: 40px; display: block;">
-                            <div class="news-title">${news.title}</div>
-                            <div class="news-meta">
-                                <span class="news-tag">${news.stock_name}</span>
-                                <span>${news.pub_time}</span>
-                            </div>
-                            <div style="position: absolute; right: 20px; top: 50%; transform: translateY(-50%); color: var(--ivory-main); font-size: 1.5rem; font-weight: bold;">
-                                ➔
-                            </div>
-                        </a>
-                    `;
+                uniqueStocks.forEach(name => {
+                    const count = globalNewsData.filter(n => n.stock_name === name).length;
+                    buttonsHtml += `<button class="filter-btn" onclick="filterNewsByStock('${name}', this)">${name} (${count})</button>`;
                 });
-                container.innerHTML = html;
+                stockFiltersDiv.innerHTML = buttonsHtml;
+
+                // 描画
+                renderFilteredNews();
             } catch (e) {
                 container.innerHTML = '<p style="color:red;">ニュースの取得に失敗しました。</p>';
             }
+        }
+
+        function filterNews(range, btnElement = null) {
+            currentNewsRange = range;
+            if (range !== 'CUSTOM' && btnElement) {
+                document.querySelectorAll('#tab-news .filter-btn').forEach(btn => {
+                    if (btn.innerText.includes('週') || btn.innerText.includes('月') || btn.innerText.includes('全期間')) {
+                        btn.classList.remove('active');
+                    }
+                });
+                btnElement.classList.add('active');
+            }
+            renderFilteredNews();
+        }
+
+        function filterNewsByStock(stockName, btnElement) {
+            currentNewsStock = stockName;
+            document.querySelectorAll('#news-stock-filters .filter-btn').forEach(btn => btn.classList.remove('active'));
+            btnElement.classList.add('active');
+            renderFilteredNews();
+        }
+
+        function renderFilteredNews() {
+            const container = document.getElementById('news-container');
+            let filtered = [...globalNewsData];
+
+            // 1. 銘柄絞り込み
+            if (currentNewsStock !== 'ALL') {
+                filtered = filtered.filter(n => n.stock_name === currentNewsStock);
+            }
+
+            // 2. 期間絞り込み
+            const today = new Date();
+            let startDate = null;
+            let endDate = today;
+
+            if (currentNewsRange === '1W') startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7);
+            else if (currentNewsRange === '1M') startDate = new Date(today.getFullYear(), today.getMonth() - 1, today.getDate());
+            else if (currentNewsRange === '3M') startDate = new Date(today.getFullYear(), today.getMonth() - 3, today.getDate());
+            else if (currentNewsRange === 'CUSTOM') {
+                const s = document.getElementById('news-start').value;
+                const e = document.getElementById('news-end').value;
+                if (s) startDate = new Date(s);
+                if (e) endDate = new Date(e);
+            }
+
+            if (startDate) {
+                filtered = filtered.filter(n => {
+                    if (!n.timestamp) return true;
+                    const nTime = n.timestamp * 1000;
+                    return nTime >= startDate.getTime() && nTime <= (endDate.getTime() + 86400000);
+                });
+            }
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<p style="color:var(--stone);">指定した期間・銘柄のニュースは見つかりませんでした。</p>';
+                return;
+            }
+
+            let html = '';
+            filtered.forEach(news => {
+                html += `
+                    <a href="${news.link}" target="_blank" rel="noopener noreferrer" class="news-card" style="position: relative; padding-right: 40px; display: block;">
+                        <div class="news-title">${news.title}</div>
+                        <div class="news-meta">
+                            <span class="news-tag">${news.stock_name}</span>
+                            <span>${news.pub_time}</span>
+                        </div>
+                        <div style="position: absolute; right: 20px; top: 50%; transform: translateY(-50%); color: var(--ivory-main); font-size: 1.5rem; font-weight: bold;">
+                            ➔
+                        </div>
+                    </a>
+                `;
+            });
+            container.innerHTML = html;
         }
     </script>
 </body>
