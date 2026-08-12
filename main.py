@@ -2,7 +2,9 @@ from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import yfinance as yf
-import sqlite3
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta
 import requests
 from bs4 import BeautifulSoup
@@ -23,7 +25,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
 
 # ▼▼▼ ここに取得した2つの鍵を貼り付けてください ▼▼▼
-LINE_CHANNEL_ACCESS_TOKEN = """ここにチャネルアクセストークンを貼り付ける"""
+LINE_CHANNEL_ACCESS_TOKEN = """rlJ1YRFK3hCEYnrfCe5k9kO2gjyX3YkqhfdAvnT28lWoC/9Q6NTtPdBNvGU6jVWunuf7k6NPAg/d2r39X+IxD4mlNjs2bH4krV2B7zWilto5IHSvo7QXkKbIxa0GNvVN2SK9b2AH03Rs/M6VrJBIlwdB04t89/1O/w1cDnyilFU=""
 LINE_CHANNEL_SECRET = """c8caf38acc62174908dcff1f782621f6"""
 # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
@@ -31,7 +33,14 @@ line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 app = FastAPI()
-DB_PATH = "portfolio.db"
+
+# --- データベース接続設定 (Supabase等のPostgreSQL用) ---
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def get_db_connection():
+    if not DATABASE_URL:
+        raise Exception("DATABASE_URLが設定されていません。RenderのEnvironmentに設定してください。")
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 class TradeCreate(BaseModel):
     ticker: str = ""
@@ -61,7 +70,9 @@ class WatchlistCreate(BaseModel):
     name: str
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    if not DATABASE_URL:
+        return
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS portfolio (
@@ -76,7 +87,7 @@ def init_db():
     ''')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id TEXT,
             ticker TEXT,
             type TEXT,
@@ -86,14 +97,14 @@ def init_db():
             reason TEXT
         )
     ''')
-    try:
+    
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='transactions' AND column_name='reason'")
+    if not cursor.fetchone():
         cursor.execute("ALTER TABLE transactions ADD COLUMN reason TEXT")
-    except sqlite3.OperationalError:
-        pass
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fund_rules (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id TEXT,
             ticker TEXT,
             name TEXT,
@@ -135,8 +146,8 @@ init_db()
 # ==========================================
 def check_and_send_news():
     print("ニュースのパトロールを開始します...")
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    if not DATABASE_URL: return
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("SELECT * FROM line_users")
@@ -149,9 +160,9 @@ def check_and_send_news():
         line_user_id = u["line_user_id"]
         app_user_id = u["app_user_id"]
         
-        cursor.execute("SELECT name FROM portfolio WHERE user_id = ? AND ticker LIKE '%.T' AND quantity > 0", (app_user_id,))
+        cursor.execute("SELECT name FROM portfolio WHERE user_id = %s AND ticker LIKE '%%.T' AND quantity > 0", (app_user_id,))
         p_names = [r["name"] for r in cursor.fetchall()]
-        cursor.execute("SELECT name FROM watchlist WHERE user_id = ? AND ticker LIKE '%.T'", (app_user_id,))
+        cursor.execute("SELECT name FROM watchlist WHERE user_id = %s AND ticker LIKE '%%.T'", (app_user_id,))
         w_names = [r["name"] for r in cursor.fetchall()]
         target_names = list(set(p_names + w_names))
         
@@ -178,7 +189,7 @@ def check_and_send_news():
                         except:
                             continue
                         
-                        cursor.execute("SELECT 1 FROM sent_news WHERE line_user_id = ? AND news_link = ?", (line_user_id, link))
+                        cursor.execute("SELECT 1 FROM sent_news WHERE line_user_id = %s AND news_link = %s", (line_user_id, link))
                         if not cursor.fetchone():
                             msg_text = f"📰 【{company_name}】の最新ニュース\n\n{title}\n{link}"
                             new_messages.append((msg_text, link))
@@ -196,7 +207,7 @@ def check_and_send_news():
                 line_bot_api.push_message(line_user_id, send_data)
                 
                 for m in new_messages:
-                    cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (?, ?)", (line_user_id, m[1]))
+                    cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (%s, %s)", (line_user_id, m[1]))
                 conn.commit()
                 print(f"{app_user_id}に {len(new_messages)}件 の新着ニュースを送りました！")
             except Exception as e:
@@ -245,17 +256,17 @@ def handle_message(event):
         )
         
     elif "ダッシュボード" in text:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = ?", (line_user_id,))
+        cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = %s", (line_user_id,))
         row = cursor.fetchone()
         conn.close()
 
         if row:
             app_user_id = row["app_user_id"]
-            # ▼▼▼ ここを実際のアプリのURLに変えてください ▼▼▼
-            app_url = f"https://stock-app-xyif.onrender.com/{app_user_id}"
+            # ▼▼▼ Renderのドメイン等、ご自身の環境に合わせてください ▼▼▼
+            host_url = os.environ.get("RENDER_EXTERNAL_URL", "https://あなたのアプリ名.onrender.com")
+            app_url = f"{host_url.rstrip('/')}/{app_user_id}"
             
             line_bot_api.reply_message(
                 event.reply_token,
@@ -268,9 +279,13 @@ def handle_message(event):
             )
 
     elif re.match(r"^[a-zA-Z0-9]{6}$", text):
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("INSERT OR REPLACE INTO line_users (line_user_id, app_user_id) VALUES (?, ?)", (line_user_id, text))
+        cursor.execute('''
+            INSERT INTO line_users (line_user_id, app_user_id) 
+            VALUES (%s, %s) 
+            ON CONFLICT (line_user_id) DO UPDATE SET app_user_id = EXCLUDED.app_user_id
+        ''', (line_user_id, text))
         conn.commit()
         conn.close()
         
@@ -341,63 +356,74 @@ def read_user_dashboard(user_id: str):
         return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# 🌟 新機能：国別・日本語対応のスマート検索 API
+# 🌟 日本語対応・ETF完全対応の銘柄検索 API
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
     results = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-    # 1. もし「4桁の数字」なら、日本のサイト（みんかぶ等）から正しい日本語名を取得（ETF対応）
-    if q.isdigit() and len(q) == 4 and asset_type in ["JP", "ALL"]:
+    # --- ① 日本株・日本ETFの検索ルート ---
+    if asset_type in ["JP", "ALL"]:
+        if q.isdigit() and len(q) == 4:
+            try:
+                res = requests.get(f"https://minkabu.jp/stock/{q}", headers=headers, timeout=3)
+                if res.status_code == 200:
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    title = soup.find('title').text
+                    name = re.split(r'[\(（]', title)[0].strip()
+                    if name:
+                        return [{"ticker": f"{q}.T", "name": name}]
+            except Exception:
+                pass
+
         try:
-            res = requests.get(f"https://minkabu.jp/stock/{q}", headers=headers, timeout=3)
+            yj_url = f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}"
+            res = requests.get(yj_url, headers=headers, timeout=3)
             if res.status_code == 200:
-                soup = BeautifulSoup(res.text, 'html.parser')
-                title = soup.find('title').text
-                # タイトル例: "トヨタ自動車 (7203) : 株価..." -> 最初の部分を取得
-                name = title.split('(')[0].strip()
-                if name:
-                    results.append({"ticker": f"{q}.T", "name": name})
-                    return results # 正確な情報が取れたらここで返す
+                data = res.json()
+                for item in data.get("results", []):
+                    code = item.get("code", "")
+                    name = item.get("name", "")
+                    if code and name:
+                        ticker = f"{code}.T" if (len(code) == 4 and code.isdigit()) else code
+                        results.append({"ticker": ticker, "name": name})
+                if results and asset_type == "JP":
+                    return results[:8]
         except Exception:
             pass
 
-    # 2. Yahoo Finance US APIで総合検索（US株や、名称からの検索用）
-    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=JP"
-    try:
-        res = requests.get(url, headers=headers, timeout=5)
-        data = res.json()
-        for quote in data.get("quotes", []):
-            ticker = quote.get("symbol", "")
-            name = quote.get("shortname", quote.get("longname", ticker))
+    # --- ② 米国株・グローバル銘柄の検索ルート ---
+    if asset_type in ["US", "ALL"]:
+        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=US"
+        try:
+            res = requests.get(url, headers=headers, timeout=5)
+            data = res.json()
+            for quote in data.get("quotes", []):
+                ticker = quote.get("symbol", "")
+                name = quote.get("shortname", quote.get("longname", ticker))
+                is_jp = ticker.endswith(".T")
+                
+                if asset_type == "US" and is_jp: continue
+                if not any(r["ticker"] == ticker for r in results):
+                    results.append({"ticker": ticker, "name": name})
+        except Exception:
+            pass
             
-            is_jp = ticker.endswith(".T")
-            
-            # 引数(asset_type)に合わせて結果を振り分け
-            if asset_type == "JP" and not is_jp: continue
-            if asset_type == "US" and is_jp: continue
-            
-            if not any(r["ticker"] == ticker for r in results):
-                results.append({"ticker": ticker, "name": name})
-    except Exception:
-        pass
-        
-    return results
+    return results[:8]
 
 @app.post("/api/{user_id}/update_price")
 def update_price(user_id: str, data: PriceUpdate):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE portfolio SET manual_price = ? WHERE user_id = ? AND ticker = ?", (data.current_price, user_id, data.ticker))
+    cursor.execute("UPDATE portfolio SET manual_price = %s WHERE user_id = %s AND ticker = %s", (data.current_price, user_id, data.ticker))
     conn.commit()
     conn.close()
     return {"message": "Success"}
 
 @app.post("/api/{user_id}/trade")
 def record_trade(user_id: str, trade: TradeCreate):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     ticker = trade.ticker.strip() if trade.ticker.strip() else trade.name.strip()
@@ -410,10 +436,10 @@ def record_trade(user_id: str, trade: TradeCreate):
     
     cursor.execute('''
         INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price, reason)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
     ''', (user_id, ticker, trade.trade_type, trade.trade_date, trade.quantity, trade.price, trade.reason))
     
-    cursor.execute("SELECT * FROM portfolio WHERE user_id = ? AND ticker = ?", (user_id, ticker))
+    cursor.execute("SELECT * FROM portfolio WHERE user_id = %s AND ticker = %s", (user_id, ticker))
     current = cursor.fetchone()
     
     if "BUY" in trade.trade_type:
@@ -422,18 +448,18 @@ def record_trade(user_id: str, trade: TradeCreate):
             old_price = current["average_price"]
             new_qty = old_qty + trade.quantity
             new_price = ((old_qty * old_price) + (trade.quantity * trade.price)) / new_qty
-            cursor.execute("UPDATE portfolio SET quantity = ?, average_price = ? WHERE user_id = ? AND ticker = ?", (new_qty, new_price, user_id, ticker))
+            cursor.execute("UPDATE portfolio SET quantity = %s, average_price = %s WHERE user_id = %s AND ticker = %s", (new_qty, new_price, user_id, ticker))
         else:
-            cursor.execute("INSERT INTO portfolio (user_id, ticker, name, quantity, average_price, manual_price) VALUES (?, ?, ?, ?, ?, ?)",
+            cursor.execute("INSERT INTO portfolio (user_id, ticker, name, quantity, average_price, manual_price) VALUES (%s, %s, %s, %s, %s, %s)",
                            (user_id, ticker, name, trade.quantity, trade.price, trade.price))
     
     elif trade.trade_type == "SELL":
         if current:
             new_qty = current["quantity"] - trade.quantity
             if new_qty <= 0:
-                cursor.execute("DELETE FROM portfolio WHERE user_id = ? AND ticker = ?", (user_id, ticker))
+                cursor.execute("DELETE FROM portfolio WHERE user_id = %s AND ticker = %s", (user_id, ticker))
             else:
-                cursor.execute("UPDATE portfolio SET quantity = ? WHERE user_id = ? AND ticker = ?", (new_qty, user_id, ticker))
+                cursor.execute("UPDATE portfolio SET quantity = %s WHERE user_id = %s AND ticker = %s", (new_qty, user_id, ticker))
 
     conn.commit()
     conn.close()
@@ -441,10 +467,9 @@ def record_trade(user_id: str, trade: TradeCreate):
 
 @app.get("/api/{user_id}/portfolio")
 def get_portfolio(user_id: str):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row 
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM portfolio WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT * FROM portfolio WHERE user_id = %s", (user_id,))
     rows = cursor.fetchall()
     
     usdjpy_info = get_usdjpy_rate()
@@ -524,19 +549,15 @@ def get_portfolio(user_id: str):
         "portfolio": portfolio_data
     }
 
-# 🌟 新機能：保有株＋気になるリストの両方からニュースを取得
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 保有銘柄
-    cursor.execute("SELECT name FROM portfolio WHERE user_id = ? AND ticker LIKE '%.T' AND quantity > 0", (user_id,))
+    cursor.execute("SELECT name FROM portfolio WHERE user_id = %s AND ticker LIKE '%%.T' AND quantity > 0", (user_id,))
     p_names = [r["name"] for r in cursor.fetchall()]
     
-    # 気になるリスト
-    cursor.execute("SELECT name FROM watchlist WHERE user_id = ? AND ticker LIKE '%.T'", (user_id,))
+    cursor.execute("SELECT name FROM watchlist WHERE user_id = %s AND ticker LIKE '%%.T'", (user_id,))
     w_names = [r["name"] for r in cursor.fetchall()]
     conn.close()
 
@@ -591,11 +612,11 @@ def get_jp_news(user_id: str):
 
 @app.post("/api/{user_id}/fund_rule")
 def add_fund_rule(user_id: str, rule: FundRuleCreate):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
         INSERT INTO fund_rules (user_id, ticker, name, frequency, monthly_day, amount, start_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
     ''', (user_id, rule.ticker, rule.name, rule.frequency, rule.monthly_day, rule.amount, rule.start_date))
     conn.commit()
     
@@ -620,18 +641,19 @@ def add_fund_rule(user_id: str, rule: FundRuleCreate):
             quantity = (rule.amount / base_price) * 10000.0
             cursor.execute('''
                 INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price, reason)
-                VALUES (?, ?, 'BUY_AUTO', ?, ?, ?, ?)
+                VALUES (%s, %s, 'BUY_AUTO', %s, %s, %s, %s)
             ''', (user_id, rule.ticker, trade_date_str, quantity, base_price, "自動積立"))
         curr += timedelta(days=1)
 
-    cursor.execute("SELECT SUM(quantity) FROM transactions WHERE user_id = ? AND ticker = ?", (user_id, rule.ticker))
-    total_qty = cursor.fetchone()[0] or 0.0
+    cursor.execute("SELECT SUM(quantity) as total_qty FROM transactions WHERE user_id = %s AND ticker = %s", (user_id, rule.ticker))
+    row = cursor.fetchone()
+    total_qty = row["total_qty"] if row and row["total_qty"] is not None else 0.0
 
-    cursor.execute("SELECT * FROM portfolio WHERE user_id = ? AND ticker = ?", (user_id, rule.ticker))
+    cursor.execute("SELECT * FROM portfolio WHERE user_id = %s AND ticker = %s", (user_id, rule.ticker))
     if cursor.fetchone():
-        cursor.execute("UPDATE portfolio SET quantity = ?, average_price = ? WHERE user_id = ? AND ticker = ?", (total_qty, base_price, user_id, rule.ticker))
+        cursor.execute("UPDATE portfolio SET quantity = %s, average_price = %s WHERE user_id = %s AND ticker = %s", (total_qty, base_price, user_id, rule.ticker))
     else:
-        cursor.execute("INSERT INTO portfolio (user_id, ticker, name, quantity, average_price, manual_price) VALUES (?, ?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO portfolio (user_id, ticker, name, quantity, average_price, manual_price) VALUES (%s, %s, %s, %s, %s, %s)",
                        (user_id, rule.ticker, rule.name, total_qty, base_price, base_price))
 
     conn.commit()
@@ -640,10 +662,9 @@ def add_fund_rule(user_id: str, rule: FundRuleCreate):
 
 @app.get("/api/{user_id}/transactions/{category}")
 def get_transactions_by_category(user_id: str, category: str):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT t.*, p.name FROM transactions t LEFT JOIN portfolio p ON t.ticker = p.ticker AND p.user_id = t.user_id WHERE t.user_id = ? ORDER BY t.trade_date DESC", (user_id,))
+    cursor.execute("SELECT t.*, p.name FROM transactions t LEFT JOIN portfolio p ON t.ticker = p.ticker AND p.user_id = t.user_id WHERE t.user_id = %s ORDER BY t.trade_date DESC", (user_id,))
     rows = cursor.fetchall()
     conn.close()
     
@@ -663,31 +684,30 @@ def get_transactions_by_category(user_id: str, category: str):
 
 @app.delete("/api/{user_id}/transaction/{tx_id}")
 def delete_transaction(user_id: str, tx_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM transactions WHERE id = ? AND user_id = ?", (tx_id, user_id))
+    cursor.execute("DELETE FROM transactions WHERE id = %s AND user_id = %s", (tx_id, user_id))
     conn.commit()
     conn.close()
     return {"message": "Success"}
 
 @app.delete("/api/{user_id}/delete_stock/{ticker}")
 def delete_stock_api(user_id: str, ticker: str):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM portfolio WHERE user_id = ? AND ticker = ?", (user_id, ticker))
-    cursor.execute("DELETE FROM transactions WHERE user_id = ? AND ticker = ?", (user_id, ticker))
-    cursor.execute("DELETE FROM fund_rules WHERE user_id = ? AND ticker = ?", (user_id, ticker))
-    cursor.execute("DELETE FROM watchlist WHERE user_id = ? AND ticker = ?", (user_id, ticker))
+    cursor.execute("DELETE FROM portfolio WHERE user_id = %s AND ticker = %s", (user_id, ticker))
+    cursor.execute("DELETE FROM transactions WHERE user_id = %s AND ticker = %s", (user_id, ticker))
+    cursor.execute("DELETE FROM fund_rules WHERE user_id = %s AND ticker = %s", (user_id, ticker))
+    cursor.execute("DELETE FROM watchlist WHERE user_id = %s AND ticker = %s", (user_id, ticker))
     conn.commit()
     conn.close()
     return {"message": "Deleted"}
 
 @app.get("/api/{user_id}/history")
 def get_history(user_id: str):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM transactions WHERE user_id = ? ORDER BY trade_date ASC", (user_id,))
+    cursor.execute("SELECT * FROM transactions WHERE user_id = %s ORDER BY trade_date ASC", (user_id,))
     trades = cursor.fetchall()
     conn.close()
     
@@ -764,10 +784,9 @@ def get_fund_info(ticker: str):
 
 @app.get("/api/{user_id}/watchlist")
 def get_watchlist(user_id: str):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM watchlist WHERE user_id = ? ORDER BY added_date DESC", (user_id,))
+    cursor.execute("SELECT * FROM watchlist WHERE user_id = %s ORDER BY added_date DESC", (user_id,))
     rows = cursor.fetchall()
     conn.close()
 
@@ -796,7 +815,7 @@ def get_watchlist(user_id: str):
 
 @app.post("/api/{user_id}/watchlist")
 def add_watchlist(user_id: str, item: WatchlistCreate):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
     added_date = datetime.now().strftime("%Y-%m-%d")
     
@@ -807,10 +826,10 @@ def add_watchlist(user_id: str, item: WatchlistCreate):
         ticker = ticker.upper()
 
     try:
-        cursor.execute("INSERT INTO watchlist (user_id, ticker, name, added_date) VALUES (?, ?, ?, ?)",
+        cursor.execute("INSERT INTO watchlist (user_id, ticker, name, added_date) VALUES (%s, %s, %s, %s)",
                        (user_id, ticker, item.name, added_date))
         conn.commit()
-    except sqlite3.IntegrityError:
+    except psycopg2.IntegrityError:
         pass 
     finally:
         conn.close()
@@ -818,17 +837,16 @@ def add_watchlist(user_id: str, item: WatchlistCreate):
 
 @app.delete("/api/{user_id}/watchlist/{ticker}")
 def delete_watchlist(user_id: str, ticker: str):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM watchlist WHERE user_id = ? AND ticker = ?", (user_id, ticker))
+    cursor.execute("DELETE FROM watchlist WHERE user_id = %s AND ticker = %s", (user_id, ticker))
     conn.commit()
     conn.close()
     return {"message": "Success"}
 
 @app.get("/api/admin/users")
 def admin_get_users():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("SELECT DISTINCT user_id FROM portfolio")
@@ -842,9 +860,9 @@ def admin_get_users():
     
     user_data = []
     for uid in all_users:
-        cursor.execute("SELECT COUNT(*) as c FROM portfolio WHERE user_id=?", (uid,))
+        cursor.execute("SELECT COUNT(*) as c FROM portfolio WHERE user_id=%s", (uid,))
         p_count = cursor.fetchone()["c"]
-        cursor.execute("SELECT COUNT(*) as c FROM transactions WHERE user_id=?", (uid,))
+        cursor.execute("SELECT COUNT(*) as c FROM transactions WHERE user_id=%s", (uid,))
         t_count = cursor.fetchone()["c"]
         user_data.append({"user_id": uid, "portfolio_count": p_count, "tx_count": t_count})
         
@@ -853,12 +871,12 @@ def admin_get_users():
 
 @app.delete("/api/admin/users/{user_id}")
 def admin_delete_user(user_id: str):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM portfolio WHERE user_id = ?", (user_id,))
-    cursor.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
-    cursor.execute("DELETE FROM fund_rules WHERE user_id = ?", (user_id,))
-    cursor.execute("DELETE FROM watchlist WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM portfolio WHERE user_id = %s", (user_id,))
+    cursor.execute("DELETE FROM transactions WHERE user_id = %s", (user_id,))
+    cursor.execute("DELETE FROM fund_rules WHERE user_id = %s", (user_id,))
+    cursor.execute("DELETE FROM watchlist WHERE user_id = %s", (user_id,))
     conn.commit()
     conn.close()
     return {"message": "Success"}
