@@ -270,7 +270,7 @@ def handle_message(event):
             
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text=f"📊 あなたのダッシュボードはこちらです！\n{app_url}")
+                TextSendMessage(text=f"https://stock-app-xyif.onrender.com\n{app_url}")
             )
         else:
             line_bot_api.reply_message(
