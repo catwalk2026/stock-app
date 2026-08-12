@@ -30,12 +30,8 @@
             line-height: 1.6;
         }
         
-        #login-screen {
-            display: none; height: 100vh; justify-content: center; align-items: center; background: var(--ivory-base);
-        }
-        .login-card {
-            background: var(--white); padding: 50px 60px; border-radius: 16px; box-shadow: 0 4px 24px rgba(47, 56, 66, 0.05); text-align: center;
-        }
+        #login-screen { display: none; height: 100vh; justify-content: center; align-items: center; background: var(--ivory-base); }
+        .login-card { background: var(--white); padding: 50px 60px; border-radius: 16px; box-shadow: 0 4px 24px rgba(47, 56, 66, 0.05); text-align: center; }
         
         #dashboard-screen { display: none; padding: 30px 20px; }
         .container { max-width: 1040px; margin: 0 auto; background: var(--white); padding: 40px; border-radius: 16px; box-shadow: 0 4px 24px rgba(47, 56, 66, 0.04); }
@@ -47,10 +43,12 @@
 
         .header-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; background: var(--white); padding: 24px 30px; border-radius: 12px; border: 1px solid var(--light-border); }
         .total-assets { font-size: 1.8rem; font-weight: bold; color: var(--text-black); }
-        .fx-rate { font-size: 0.95rem; color: var(--ivory-main); font-weight: bold; }
+        .fx-rate { font-size: 0.95rem; color: var(--text-black); font-weight: bold; }
+        /* 取得時間用の小さなテキスト */
+        .fx-time { font-size: 0.75rem; color: var(--stone); font-weight: normal; margin-left: 8px; }
         .user-id-badge { font-size: 0.9rem; background: var(--ivory-base); color: var(--stone); padding: 6px 12px; border-radius: 20px; font-weight: bold; margin-left:15px; }
 
-        .tabs { display: flex; border-bottom: 2px solid var(--light-border); margin-bottom: 35px; gap: 10px; }
+        .tabs { display: flex; border-bottom: 2px solid var(--light-border); margin-bottom: 35px; gap: 10px; overflow-x: auto; white-space: nowrap; }
         .tab-button { padding: 12px 24px; font-weight: bold; cursor: pointer; border: none; background: none; outline: none; font-size: 1rem; color: var(--ivory-main); transition: all 0.3s ease; }
         .tab-button:hover { color: var(--stone); }
         .tab-button.active { color: var(--turquoise-main); border-bottom: 3px solid var(--turquoise-main); }
@@ -96,6 +94,13 @@
         .btn-edit { background: var(--ivory-main); color: var(--white); border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; margin-right: 6px; transition: 0.3s; font-size: 0.85rem; }
         .btn-edit:hover { background: var(--stone); }
         .section-title { margin-top: 50px; border-bottom: 1px solid var(--light-border); padding-bottom: 12px; color: var(--text-black); }
+        
+        /* ニュースカードのデザイン */
+        .news-card { background: var(--white); border: 1px solid var(--light-border); padding: 16px 20px; border-radius: 12px; margin-bottom: 16px; display: block; text-decoration: none; transition: 0.2s; }
+        .news-card:hover { border-color: var(--turquoise-base); box-shadow: 0 4px 12px rgba(47, 56, 66, 0.05); transform: translateY(-2px); }
+        .news-title { color: var(--text-black); font-weight: bold; font-size: 1.05rem; margin-bottom: 8px; }
+        .news-meta { color: var(--stone); font-size: 0.85rem; display: flex; gap: 12px; }
+        .news-tag { background: var(--ivory-base); padding: 2px 8px; border-radius: 4px; font-weight: bold; color: var(--turquoise-main); }
     </style>
 </head>
 <body>
@@ -103,7 +108,6 @@
         <div class="login-card">
             <h1 style="color: var(--turquoise-main); margin-bottom: 10px;">ABCash Portfolio</h1>
             <p style="color: var(--stone); margin-bottom: 30px;">生徒さんの会員番号を入力してください</p>
-            <!-- 修正：プレースホルダーをAB1234など英数字に変更 -->
             <input type="text" id="login-id" placeholder="例: AB1234" maxlength="6" style="padding: 15px; font-size: 1.4rem; text-align: center; border: 2px solid var(--ivory-main); border-radius: 8px; width: 220px; display: block; margin: 0 auto 20px auto; color: var(--text-black); font-weight: bold; letter-spacing: 0.2em;">
             <button onclick="enterDashboard()" class="btn-submit">ダッシュボードを開く</button>
         </div>
@@ -118,7 +122,8 @@
             
             <div class="header-info">
                 <div class="total-assets">総資産額: <span id="total-assets">計算中...</span></div>
-                <div class="fx-rate">米ドル/円: <span id="fx-rate">-</span>円</div>
+                <!-- 修正: 取得時間を追加 -->
+                <div class="fx-rate">米ドル/円: <span id="fx-rate">-</span>円 <span id="fx-time" class="fx-time"></span></div>
             </div>
 
             <div class="tabs">
@@ -126,6 +131,8 @@
                 <button class="tab-button" onclick="switchTab('tab-jp')">日本株</button>
                 <button class="tab-button" onclick="switchTab('tab-us')">米国株</button>
                 <button class="tab-button" onclick="switchTab('tab-fund')">投資信託</button>
+                <!-- 追加: ニュースタブ -->
+                <button class="tab-button" onclick="switchTab('tab-news')">関連ニュース</button>
             </div>
 
             <div id="tab-all" class="tab-content active">
@@ -270,6 +277,16 @@
                     <tbody id="tx-table-fund"></tbody>
                 </table>
             </div>
+
+            <!-- ⑤ 追加：ニュースタブ -->
+            <div id="tab-news" class="tab-content">
+                <h2>保有日本株の関連ニュース</h2>
+                <p style="color: var(--stone); font-size: 0.9rem; margin-bottom: 20px;">※現在保有している日本株に関する最新ニュースを自動で表示します。</p>
+                <div id="news-container">
+                    <p>読み込み中...</p>
+                </div>
+            </div>
+
         </div>
     </div>
 
@@ -290,7 +307,6 @@
         const path = window.location.pathname.replace('/', '');
         let currentUserId = null;
 
-        // 修正：URLパスのチェックを英数字に変更
         if (/^[a-zA-Z0-9]{6}$/.test(path)) {
             currentUserId = path;
             document.getElementById('display-user-id').textContent = currentUserId;
@@ -304,7 +320,6 @@
 
         function enterDashboard() {
             const inputId = document.getElementById('login-id').value;
-            // 修正：入力チェックを英数字に変更、アラート文言も修正
             if (/^[a-zA-Z0-9]{6}$/.test(inputId)) {
                 window.location.href = '/' + inputId;
             } else {
@@ -321,6 +336,7 @@
             if (tabId === 'tab-jp') fetchCategoryTransactions('JP', 'tx-table-jp');
             if (tabId === 'tab-us') fetchCategoryTransactions('US', 'tx-table-us');
             if (tabId === 'tab-fund') fetchCategoryTransactions('FUND', 'tx-table-fund');
+            if (tabId === 'tab-news') fetchNews(); // ニュース取得を実行
         }
 
         function toggleRuleFreq() {
@@ -501,6 +517,7 @@
 
                 document.getElementById('total-assets').textContent = `¥${Math.floor(data.total_assets).toLocaleString()}`;
                 document.getElementById('fx-rate').textContent = data.usdjpy_rate.toFixed(2);
+                document.getElementById('fx-time').textContent = `(${data.usdjpy_time} 時点)`;
 
                 const tJp = document.getElementById('table-jp'); const tUs = document.getElementById('table-us'); const tFund = document.getElementById('table-fund');
                 tJp.innerHTML = ''; tUs.innerHTML = ''; tFund.innerHTML = '';
@@ -528,7 +545,6 @@
                     
                     if (book > 0) {
                         plElem.textContent = `${sign}¥${Math.floor(pl).toLocaleString()} (${sign}${pct.toFixed(2)}%)`;
-                        // 修正：プラスならミントグリーン、マイナスならフラミンゴレッドを直接スタイルで指定
                         plElem.style.color = pl >= 0 ? 'var(--mint-main)' : 'var(--flamingo-main)';
                         plElem.style.fontWeight = "bold";
                     } else {
@@ -619,6 +635,37 @@
                 myLineChart.data.datasets[0].data = filtered.map(h => h.total_assets);
             }
             myLineChart.update();
+        }
+
+        // 追加: ニュース取得処理
+        async function fetchNews() {
+            const container = document.getElementById('news-container');
+            container.innerHTML = '<p style="color:var(--stone);">ニュースを取得中...</p>';
+            try {
+                const res = await fetch(`/api/${currentUserId}/news`);
+                const data = await res.json();
+                
+                if (data.length === 0) {
+                    container.innerHTML = '<p style="color:var(--stone);">現在保有している日本株の最新ニュースは見つかりませんでした。</p>';
+                    return;
+                }
+                
+                let html = '';
+                data.forEach(news => {
+                    html += `
+                        <a href="${news.link}" target="_blank" class="news-card">
+                            <div class="news-title">${news.title}</div>
+                            <div class="news-meta">
+                                <span class="news-tag">${news.stock_name}</span>
+                                <span>${news.pub_time}</span>
+                            </div>
+                        </a>
+                    `;
+                });
+                container.innerHTML = html;
+            } catch (e) {
+                container.innerHTML = '<p style="color:red;">ニュースの取得に失敗しました。</p>';
+            }
         }
     </script>
 </body>
