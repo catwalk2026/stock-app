@@ -38,6 +38,7 @@ def get_db_connection():
     if not DATABASE_URL:
         raise Exception("DATABASE_URLが設定されていません。")
     conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = True
     return conn
 
 class TradeCreate(BaseModel):
@@ -82,9 +83,7 @@ def init_db():
                 average_price REAL,
                 manual_price REAL,
                 PRIMARY KEY (user_id, ticker)
-            )
-        ''')
-        cursor.execute('''
+            );
             CREATE TABLE IF NOT EXISTS transactions (
                 id SERIAL PRIMARY KEY,
                 user_id TEXT,
@@ -94,9 +93,7 @@ def init_db():
                 quantity REAL,
                 price REAL,
                 reason TEXT
-            )
-        ''')
-        cursor.execute('''
+            );
             CREATE TABLE IF NOT EXISTS fund_rules (
                 id SERIAL PRIMARY KEY,
                 user_id TEXT,
@@ -106,34 +103,29 @@ def init_db():
                 monthly_day INTEGER,
                 amount REAL,
                 start_date TEXT
-            )
-        ''')
-        cursor.execute('''
+            );
             CREATE TABLE IF NOT EXISTS watchlist (
                 user_id TEXT,
                 ticker TEXT,
                 name TEXT,
                 added_date TEXT,
                 PRIMARY KEY (user_id, ticker)
-            )
-        ''')
-        cursor.execute('''
+            );
             CREATE TABLE IF NOT EXISTS line_users (
                 line_user_id TEXT PRIMARY KEY,
                 app_user_id TEXT
-            )
-        ''')
-        cursor.execute('''
+            );
             CREATE TABLE IF NOT EXISTS sent_news (
                 line_user_id TEXT,
                 news_link TEXT,
                 PRIMARY KEY (line_user_id, news_link)
-            )
+            );
         ''')
-        conn.commit()
+        cursor.close()
         conn.close()
+        print("✅ データベースの初期化に成功しました")
     except Exception as e:
-        print("DB初期化エラー:", e)
+        print("❌ DB初期化エラー:", e)
 
 init_db()
 
@@ -146,7 +138,6 @@ def check_and_send_news():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
         cursor.execute("SELECT * FROM line_users")
         users = cursor.fetchall()
         
@@ -198,9 +189,9 @@ def check_and_send_news():
                     line_bot_api.push_message(line_user_id, send_data)
                     for m in new_messages:
                         cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (%s, %s) ON CONFLICT DO NOTHING", (line_user_id, m[1]))
-                    conn.commit()
                 except Exception as e:
                     print(f"LINE送信エラー ({app_user_id}):", e)
+        cursor.close()
         conn.close()
     except Exception as e:
         print("パトロール実行エラー:", e)
@@ -249,6 +240,7 @@ def handle_message(event):
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = %s", (line_user_id,))
         row = cursor.fetchone()
+        cursor.close()
         conn.close()
 
         if row:
@@ -272,7 +264,7 @@ def handle_message(event):
             VALUES (%s, %s) 
             ON CONFLICT (line_user_id) DO UPDATE SET app_user_id = EXCLUDED.app_user_id
         ''', (line_user_id, text))
-        conn.commit()
+        cursor.close()
         conn.close()
         
         line_bot_api.reply_message(
@@ -400,7 +392,7 @@ def update_price(user_id: str, data: PriceUpdate):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE portfolio SET manual_price = %s WHERE user_id = %s AND ticker = %s", (data.current_price, user_id, data.ticker))
-    conn.commit()
+    cursor.close()
     conn.close()
     return {"message": "Success"}
 
@@ -444,7 +436,7 @@ def record_trade(user_id: str, trade: TradeCreate):
             else:
                 cursor.execute("UPDATE portfolio SET quantity = %s WHERE user_id = %s AND ticker = %s", (new_qty, user_id, ticker))
 
-    conn.commit()
+    cursor.close()
     conn.close()
     return {"message": "Success"}
 
@@ -454,6 +446,8 @@ def get_portfolio(user_id: str):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT * FROM portfolio WHERE user_id = %s", (user_id,))
     rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
     
     usdjpy_info = get_usdjpy_rate()
     usdjpy = usdjpy_info["rate"]
@@ -522,7 +516,6 @@ def get_portfolio(user_id: str):
         total_book += book_value_jpy
         portfolio_data.append(item)
 
-    conn.close()
     return {
         "total_assets": total_assets, 
         "total_book": total_book,
@@ -542,6 +535,7 @@ def get_jp_news(user_id: str):
     
     cursor.execute("SELECT name FROM watchlist WHERE user_id = %s AND ticker LIKE '%%.T'", (user_id,))
     w_names = [r["name"] for r in cursor.fetchall()]
+    cursor.close()
     conn.close()
 
     target_names = list(set(p_names + w_names))
@@ -599,7 +593,6 @@ def add_fund_rule(user_id: str, rule: FundRuleCreate):
         INSERT INTO fund_rules (user_id, ticker, name, frequency, monthly_day, amount, start_date)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
     ''', (user_id, rule.ticker, rule.name, rule.frequency, rule.monthly_day, rule.amount, rule.start_date))
-    conn.commit()
     
     start_dt = datetime.strptime(rule.start_date, "%Y-%m-%d")
     today = datetime.now()
@@ -637,7 +630,7 @@ def add_fund_rule(user_id: str, rule: FundRuleCreate):
         cursor.execute("INSERT INTO portfolio (user_id, ticker, name, quantity, average_price, manual_price) VALUES (%s, %s, %s, %s, %s, %s)",
                        (user_id, rule.ticker, rule.name, total_qty, base_price, base_price))
 
-    conn.commit()
+    cursor.close()
     conn.close()
     return {"message": "Success"}
 
@@ -647,6 +640,7 @@ def get_transactions_by_category(user_id: str, category: str):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT t.*, p.name FROM transactions t LEFT JOIN portfolio p ON t.ticker = p.ticker AND p.user_id = t.user_id WHERE t.user_id = %s ORDER BY t.trade_date DESC", (user_id,))
     rows = cursor.fetchall()
+    cursor.close()
     conn.close()
     
     result = []
@@ -668,7 +662,7 @@ def delete_transaction(user_id: str, tx_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM transactions WHERE id = %s AND user_id = %s", (tx_id, user_id))
-    conn.commit()
+    cursor.close()
     conn.close()
     return {"message": "Success"}
 
@@ -680,7 +674,7 @@ def delete_stock_api(user_id: str, ticker: str):
     cursor.execute("DELETE FROM transactions WHERE user_id = %s AND ticker = %s", (user_id, ticker))
     cursor.execute("DELETE FROM fund_rules WHERE user_id = %s AND ticker = %s", (user_id, ticker))
     cursor.execute("DELETE FROM watchlist WHERE user_id = %s AND ticker = %s", (user_id, ticker))
-    conn.commit()
+    cursor.close()
     conn.close()
     return {"message": "Deleted"}
 
@@ -690,6 +684,7 @@ def get_history(user_id: str):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT * FROM transactions WHERE user_id = %s ORDER BY trade_date ASC", (user_id,))
     trades = cursor.fetchall()
+    cursor.close()
     conn.close()
     
     if not trades: return []
@@ -769,6 +764,7 @@ def get_watchlist(user_id: str):
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT * FROM watchlist WHERE user_id = %s ORDER BY added_date DESC", (user_id,))
     rows = cursor.fetchall()
+    cursor.close()
     conn.close()
 
     results = []
@@ -809,7 +805,7 @@ def add_watchlist(user_id: str, item: WatchlistCreate):
         VALUES (%s, %s, %s, %s)
         ON CONFLICT (user_id, ticker) DO NOTHING
     ''', (user_id, ticker, item.name, added_date))
-    conn.commit()
+    cursor.close()
     conn.close()
     return {"message": "Added to watchlist"}
 
@@ -818,7 +814,7 @@ def delete_watchlist(user_id: str, ticker: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM watchlist WHERE user_id = %s AND ticker = %s", (user_id, ticker))
-    conn.commit()
+    cursor.close()
     conn.close()
     return {"message": "Success"}
 
@@ -844,6 +840,7 @@ def admin_get_users():
         t_count = cursor.fetchone()["c"]
         user_data.append({"user_id": uid, "portfolio_count": p_count, "tx_count": t_count})
         
+    cursor.close()
     conn.close()
     return user_data
 
@@ -855,6 +852,6 @@ def admin_delete_user(user_id: str):
     cursor.execute("DELETE FROM transactions WHERE user_id = %s", (user_id,))
     cursor.execute("DELETE FROM fund_rules WHERE user_id = %s", (user_id,))
     cursor.execute("DELETE FROM watchlist WHERE user_id = %s", (user_id,))
-    conn.commit()
+    cursor.close()
     conn.close()
     return {"message": "Success"}
