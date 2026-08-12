@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import yfinance as yf
@@ -12,6 +12,19 @@ import math
 import urllib.parse
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
+
+# --- LINE連携用ライブラリ ---
+from linebot import LineBotApi, WebhookHandler
+from linebot.exceptions import InvalidSignatureError
+from linebot.models import MessageEvent, TextMessage, TextSendMessage
+
+# ▼▼▼ ここに取得した2つの鍵を貼り付けてください ▼▼▼
+LINE_CHANNEL_ACCESS_TOKEN = "ここにチャネルアクセストークンを貼り付ける"
+LINE_CHANNEL_SECRET = "c8caf38acc62174908dcff1f782621f6"
+# ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
+line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 app = FastAPI()
 DB_PATH = "portfolio.db"
@@ -86,7 +99,6 @@ def init_db():
             start_date TEXT
         )
     ''')
-    # 追加: 気になるリスト用テーブル
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS watchlist (
             user_id TEXT,
@@ -96,11 +108,58 @@ def init_db():
             PRIMARY KEY (user_id, ticker)
         )
     ''')
+    # 追加: LINEのIDとアプリの会員番号を紐づけるテーブル
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS line_users (
+            line_user_id TEXT PRIMARY KEY,
+            app_user_id TEXT
+        )
+    ''')
     conn.commit()
     conn.close()
 
 init_db()
 
+# ==========================================
+# LINE Bot 用のWebhook受け取り口
+# ==========================================
+@app.post("/callback")
+async def callback(request: Request, x_line_signature: str = Header(None)):
+    body = await request.body()
+    try:
+        handler.handle(body.decode("utf-8"), x_line_signature)
+    except InvalidSignatureError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    return "OK"
+
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    text = event.message.text.strip()
+    line_user_id = event.source.user_id
+
+    # 送られてきたメッセージが6桁の英数字（会員番号）かチェック
+    if re.match(r"^[a-zA-Z0-9]{6}$", text):
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        # LINEユーザーIDと会員番号を紐付けて保存
+        cursor.execute("INSERT OR REPLACE INTO line_users (line_user_id, app_user_id) VALUES (?, ?)", (line_user_id, text))
+        conn.commit()
+        conn.close()
+        
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"✅ 会員番号「{text}」との紐付けが完了しました！\n今後、登録した銘柄の通知や最新ニュースをこのLINEにお届けします📉✨")
+        )
+    else:
+        # 6桁の英数字以外が送られてきた場合
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="📝 通知を受け取るには、ダッシュボードの会員番号（6桁の英数字）を送信してください！\n例: AB1234")
+        )
+
+# ==========================================
+# 既存のAPI・処理 (変更なし)
+# ==========================================
 def get_usdjpy_rate():
     fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
     try:
@@ -154,7 +213,6 @@ def read_user_dashboard(user_id: str):
         return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# 追加: 証券コード・企業名の推測検索API
 @app.get("/api/search_stock")
 def search_stock(q: str):
     if not q: return []
@@ -167,7 +225,6 @@ def search_stock(q: str):
         for quote in data.get("quotes", []):
             ticker = quote.get("symbol", "")
             name = quote.get("shortname", quote.get("longname", ticker))
-            # .Tは日本株、それ以外は米国株等の判定用
             results.append({"ticker": ticker, "name": name})
         return results
     except Exception:
@@ -364,7 +421,7 @@ def get_jp_news(user_id: str):
                         "timestamp": ts
                     })
         except Exception as e:
-            print("News error:", e)
+            pass
 
     news_list.sort(key=lambda x: x["timestamp"], reverse=True)
     return news_list[:300]
@@ -542,7 +599,6 @@ def get_fund_info(ticker: str):
     price = fetch_latest_fund_price(ticker)
     return {"ticker": ticker, "price": price}
 
-# 追加: 気になるリスト用API
 @app.get("/api/{user_id}/watchlist")
 def get_watchlist(user_id: str):
     conn = sqlite3.connect(DB_PATH)
@@ -581,7 +637,6 @@ def add_watchlist(user_id: str, item: WatchlistCreate):
     cursor = conn.cursor()
     added_date = datetime.now().strftime("%Y-%m-%d")
     
-    # 日本株なら.Tをつける処理
     ticker = item.ticker.strip()
     if ticker.isdigit() or (len(ticker) == 4 and ticker[:-1].isdigit()):
         if not ticker.endswith(".T"): ticker += ".T"
@@ -593,7 +648,7 @@ def add_watchlist(user_id: str, item: WatchlistCreate):
                        (user_id, ticker, item.name, added_date))
         conn.commit()
     except sqlite3.IntegrityError:
-        pass # すでに登録済みの場合は無視
+        pass 
     finally:
         conn.close()
     return {"message": "Added to watchlist"}
