@@ -7,3 +7,4 @@ beautifulsoup4
 jpholiday
 line-bot-sdk
 apscheduler
+psycopg2-binary
