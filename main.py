@@ -39,6 +39,10 @@ class PriceUpdate(BaseModel):
     ticker: str
     current_price: float
 
+class WatchlistCreate(BaseModel):
+    ticker: str
+    name: str
+
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -80,6 +84,16 @@ def init_db():
             monthly_day INTEGER,
             amount REAL,
             start_date TEXT
+        )
+    ''')
+    # 追加: 気になるリスト用テーブル
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS watchlist (
+            user_id TEXT,
+            ticker TEXT,
+            name TEXT,
+            added_date TEXT,
+            PRIMARY KEY (user_id, ticker)
         )
     ''')
     conn.commit()
@@ -139,6 +153,25 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id):
         return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
+
+# 追加: 証券コード・企業名の推測検索API
+@app.get("/api/search_stock")
+def search_stock(q: str):
+    if not q: return []
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&newsCount=0&country=JP"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        data = res.json()
+        results = []
+        for quote in data.get("quotes", []):
+            ticker = quote.get("symbol", "")
+            name = quote.get("shortname", quote.get("longname", ticker))
+            # .Tは日本株、それ以外は米国株等の判定用
+            results.append({"ticker": ticker, "name": name})
+        return results
+    except Exception:
+        return []
 
 @app.post("/api/{user_id}/update_price")
 def update_price(user_id: str, data: PriceUpdate):
@@ -279,7 +312,6 @@ def get_portfolio(user_id: str):
         "portfolio": portfolio_data
     }
 
-# --- 日本株の関連ニュース取得 API ---
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
     conn = sqlite3.connect(DB_PATH)
@@ -304,8 +336,7 @@ def get_jp_news(user_id: str):
             if res.status_code == 200:
                 root = ET.fromstring(res.text)
                 items = root.findall('.//item')
-                # 修正：件数制限を撤廃。RSSが提供するすべてのニュース（通常100件弱）を取得する
-                for item in items:
+                for item in items[:25]:
                     title_elem = item.find('title')
                     link_elem = item.find('link')
                     pubdate_elem = item.find('pubDate')
@@ -335,7 +366,6 @@ def get_jp_news(user_id: str):
         except Exception as e:
             print("News error:", e)
 
-    # 全体を新しい順にソート（最大300件まで返すように上限大幅拡張）
     news_list.sort(key=lambda x: x["timestamp"], reverse=True)
     return news_list[:300]
 
@@ -427,6 +457,7 @@ def delete_stock_api(user_id: str, ticker: str):
     cursor.execute("DELETE FROM portfolio WHERE user_id = ? AND ticker = ?", (user_id, ticker))
     cursor.execute("DELETE FROM transactions WHERE user_id = ? AND ticker = ?", (user_id, ticker))
     cursor.execute("DELETE FROM fund_rules WHERE user_id = ? AND ticker = ?", (user_id, ticker))
+    cursor.execute("DELETE FROM watchlist WHERE user_id = ? AND ticker = ?", (user_id, ticker))
     conn.commit()
     conn.close()
     return {"message": "Deleted"}
@@ -511,6 +542,71 @@ def get_fund_info(ticker: str):
     price = fetch_latest_fund_price(ticker)
     return {"ticker": ticker, "price": price}
 
+# 追加: 気になるリスト用API
+@app.get("/api/{user_id}/watchlist")
+def get_watchlist(user_id: str):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM watchlist WHERE user_id = ? ORDER BY added_date DESC", (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    results = []
+    usdjpy = get_usdjpy_rate()["rate"]
+
+    for r in rows:
+        item = dict(r)
+        ticker = item["ticker"]
+        price = 0.0
+        try:
+            search_target = ticker if ticker.endswith(".T") else (f"{ticker}.T" if ticker.isdigit() or (len(ticker)==4 and ticker[:-1].isdigit()) else ticker)
+            stock = yf.Ticker(search_target)
+            hist = stock.history(period="1d")
+            if not hist.empty:
+                val = float(hist['Close'].iloc[-1])
+                if not math.isnan(val):
+                    price = val
+        except:
+            pass
+        
+        item["current_price"] = price
+        item["currency"] = "¥" if ticker.endswith(".T") or ticker.isdigit() else "$"
+        results.append(item)
+    return results
+
+@app.post("/api/{user_id}/watchlist")
+def add_watchlist(user_id: str, item: WatchlistCreate):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    added_date = datetime.now().strftime("%Y-%m-%d")
+    
+    # 日本株なら.Tをつける処理
+    ticker = item.ticker.strip()
+    if ticker.isdigit() or (len(ticker) == 4 and ticker[:-1].isdigit()):
+        if not ticker.endswith(".T"): ticker += ".T"
+    else:
+        ticker = ticker.upper()
+
+    try:
+        cursor.execute("INSERT INTO watchlist (user_id, ticker, name, added_date) VALUES (?, ?, ?, ?)",
+                       (user_id, ticker, item.name, added_date))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        pass # すでに登録済みの場合は無視
+    finally:
+        conn.close()
+    return {"message": "Added to watchlist"}
+
+@app.delete("/api/{user_id}/watchlist/{ticker}")
+def delete_watchlist(user_id: str, ticker: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM watchlist WHERE user_id = ? AND ticker = ?", (user_id, ticker))
+    conn.commit()
+    conn.close()
+    return {"message": "Success"}
+
 @app.get("/api/admin/users")
 def admin_get_users():
     conn = sqlite3.connect(DB_PATH)
@@ -544,6 +640,7 @@ def admin_delete_user(user_id: str):
     cursor.execute("DELETE FROM portfolio WHERE user_id = ?", (user_id,))
     cursor.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
     cursor.execute("DELETE FROM fund_rules WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM watchlist WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
     return {"message": "Success"}
