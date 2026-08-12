@@ -24,23 +24,21 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage, FollowEve
 from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
 
-# ▼▼▼ ここに取得した2つの鍵を貼り付けてください ▼▼▼
 LINE_CHANNEL_ACCESS_TOKEN = "rlJ1YRFK3hCEYnrfCe5k9kO2gjyX3YkqhfdAvnT28lWoC/9Q6NTtPdBNvGU6jVWunuf7k6NPAg/d2r39X+IxD4mlNjs2bH4krV2B7zWilto5IHSvo7QXkKbIxa0GNvVN2SK9b2AH03Rs/M6VrJBIlwdB04t89/1O/w1cDnyilFU="
 LINE_CHANNEL_SECRET = "c8caf38acc62174908dcff1f782621f6"
-# ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 app = FastAPI()
 
-# --- データベース接続設定 (Supabase等のPostgreSQL用) ---
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db_connection():
     if not DATABASE_URL:
-        raise Exception("DATABASE_URLが設定されていません。RenderのEnvironmentに設定してください。")
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        raise Exception("DATABASE_URLが設定されていません。")
+    conn = psycopg2.connect(DATABASE_URL)
+    return conn
 
 class TradeCreate(BaseModel):
     ticker: str = ""
@@ -72,72 +70,70 @@ class WatchlistCreate(BaseModel):
 def init_db():
     if not DATABASE_URL:
         return
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS portfolio (
-            user_id TEXT,
-            ticker TEXT,
-            name TEXT,
-            quantity REAL,
-            average_price REAL,
-            manual_price REAL,
-            PRIMARY KEY (user_id, ticker)
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS transactions (
-            id SERIAL PRIMARY KEY,
-            user_id TEXT,
-            ticker TEXT,
-            type TEXT,
-            trade_date TEXT,
-            quantity REAL,
-            price REAL,
-            reason TEXT
-        )
-    ''')
-    
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='transactions' AND column_name='reason'")
-    if not cursor.fetchone():
-        cursor.execute("ALTER TABLE transactions ADD COLUMN reason TEXT")
-
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS fund_rules (
-            id SERIAL PRIMARY KEY,
-            user_id TEXT,
-            ticker TEXT,
-            name TEXT,
-            frequency TEXT,
-            monthly_day INTEGER,
-            amount REAL,
-            start_date TEXT
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS watchlist (
-            user_id TEXT,
-            ticker TEXT,
-            name TEXT,
-            added_date TEXT,
-            PRIMARY KEY (user_id, ticker)
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS line_users (
-            line_user_id TEXT PRIMARY KEY,
-            app_user_id TEXT
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS sent_news (
-            line_user_id TEXT,
-            news_link TEXT,
-            PRIMARY KEY (line_user_id, news_link)
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS portfolio (
+                user_id TEXT,
+                ticker TEXT,
+                name TEXT,
+                quantity REAL,
+                average_price REAL,
+                manual_price REAL,
+                PRIMARY KEY (user_id, ticker)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                id SERIAL PRIMARY KEY,
+                user_id TEXT,
+                ticker TEXT,
+                type TEXT,
+                trade_date TEXT,
+                quantity REAL,
+                price REAL,
+                reason TEXT
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS fund_rules (
+                id SERIAL PRIMARY KEY,
+                user_id TEXT,
+                ticker TEXT,
+                name TEXT,
+                frequency TEXT,
+                monthly_day INTEGER,
+                amount REAL,
+                start_date TEXT
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS watchlist (
+                user_id TEXT,
+                ticker TEXT,
+                name TEXT,
+                added_date TEXT,
+                PRIMARY KEY (user_id, ticker)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS line_users (
+                line_user_id TEXT PRIMARY KEY,
+                app_user_id TEXT
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS sent_news (
+                line_user_id TEXT,
+                news_link TEXT,
+                PRIMARY KEY (line_user_id, news_link)
+            )
+        ''')
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("DB初期化エラー:", e)
 
 init_db()
 
@@ -147,79 +143,72 @@ init_db()
 def check_and_send_news():
     print("ニュースのパトロールを開始します...")
     if not DATABASE_URL: return
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM line_users")
-    users = cursor.fetchall()
-    
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    yesterday = datetime.now() - timedelta(days=1)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute("SELECT * FROM line_users")
+        users = cursor.fetchall()
+        
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        yesterday = datetime.now() - timedelta(days=1)
 
-    for u in users:
-        line_user_id = u["line_user_id"]
-        app_user_id = u["app_user_id"]
-        
-        cursor.execute("SELECT name FROM portfolio WHERE user_id = %s AND ticker LIKE '%%.T' AND quantity > 0", (app_user_id,))
-        p_names = [r["name"] for r in cursor.fetchall()]
-        cursor.execute("SELECT name FROM watchlist WHERE user_id = %s AND ticker LIKE '%%.T'", (app_user_id,))
-        w_names = [r["name"] for r in cursor.fetchall()]
-        target_names = list(set(p_names + w_names))
-        
-        new_messages = []
-        
-        for company_name in target_names:
-            query = urllib.parse.quote(f"{company_name} 株")
-            url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
-            try:
-                res = requests.get(url, headers=headers, timeout=5)
-                if res.status_code == 200:
-                    root = ET.fromstring(res.text)
-                    items = root.findall('.//item')
-                    
-                    for item in items[:5]:
-                        link = item.find('link').text if item.find('link') is not None else ""
-                        title = item.find('title').text if item.find('title') is not None else ""
-                        pub_date_str = item.find('pubDate').text if item.find('pubDate') is not None else ""
-                        
-                        try:
-                            dt = parsedate_to_datetime(pub_date_str)
-                            if dt.timestamp() < yesterday.timestamp():
-                                continue
-                        except:
-                            continue
-                        
-                        cursor.execute("SELECT 1 FROM sent_news WHERE line_user_id = %s AND news_link = %s", (line_user_id, link))
-                        if not cursor.fetchone():
-                            msg_text = f"📰 【{company_name}】の最新ニュース\n\n{title}\n{link}"
-                            new_messages.append((msg_text, link))
-                            if len(new_messages) >= 5:
-                                break
-            except Exception as e:
-                print("パトロール中のエラー:", e)
+        for u in users:
+            line_user_id = u["line_user_id"]
+            app_user_id = u["app_user_id"]
             
-            if len(new_messages) >= 5:
-                break
-        
-        if new_messages:
-            try:
-                send_data = [TextSendMessage(text=m[0]) for m in new_messages]
-                line_bot_api.push_message(line_user_id, send_data)
-                
-                for m in new_messages:
-                    cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (%s, %s)", (line_user_id, m[1]))
-                conn.commit()
-                print(f"{app_user_id}に {len(new_messages)}件 の新着ニュースを送りました！")
-            except Exception as e:
-                print(f"LINE送信エラー ({app_user_id}):", e)
-
-    conn.close()
+            cursor.execute("SELECT name FROM portfolio WHERE user_id = %s AND ticker LIKE '%%.T' AND quantity > 0", (app_user_id,))
+            p_names = [r["name"] for r in cursor.fetchall()]
+            cursor.execute("SELECT name FROM watchlist WHERE user_id = %s AND ticker LIKE '%%.T'", (app_user_id,))
+            w_names = [r["name"] for r in cursor.fetchall()]
+            target_names = list(set(p_names + w_names))
+            
+            new_messages = []
+            for company_name in target_names:
+                query = urllib.parse.quote(f"{company_name} 株")
+                url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
+                try:
+                    res = requests.get(url, headers=headers, timeout=5)
+                    if res.status_code == 200:
+                        root = ET.fromstring(res.text)
+                        items = root.findall('.//item')
+                        for item in items[:5]:
+                            link = item.find('link').text if item.find('link') is not None else ""
+                            title = item.find('title').text if item.find('title') is not None else ""
+                            pub_date_str = item.find('pubDate').text if item.find('pubDate') is not None else ""
+                            try:
+                                dt = parsedate_to_datetime(pub_date_str)
+                                if dt.timestamp() < yesterday.timestamp():
+                                    continue
+                            except:
+                                continue
+                            
+                            cursor.execute("SELECT 1 FROM sent_news WHERE line_user_id = %s AND news_link = %s", (line_user_id, link))
+                            if not cursor.fetchone():
+                                msg_text = f"📰 【{company_name}】の最新ニュース\n\n{title}\n{link}"
+                                new_messages.append((msg_text, link))
+                                if len(new_messages) >= 5: break
+                except Exception:
+                    pass
+                if len(new_messages) >= 5: break
+            
+            if new_messages:
+                try:
+                    send_data = [TextSendMessage(text=m[0]) for m in new_messages]
+                    line_bot_api.push_message(line_user_id, send_data)
+                    for m in new_messages:
+                        cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (%s, %s) ON CONFLICT DO NOTHING", (line_user_id, m[1]))
+                    conn.commit()
+                except Exception as e:
+                    print(f"LINE送信エラー ({app_user_id}):", e)
+        conn.close()
+    except Exception as e:
+        print("パトロール実行エラー:", e)
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(check_and_send_news, 'interval', minutes=60)
 scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
-
 
 # ==========================================
 # LINE Bot 用のWebhook受け取り口
@@ -257,20 +246,17 @@ def handle_message(event):
         
     elif "ダッシュボード" in text:
         conn = get_db_connection()
-        cursor = conn.cursor()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = %s", (line_user_id,))
         row = cursor.fetchone()
         conn.close()
 
         if row:
             app_user_id = row["app_user_id"]
-            # ▼▼▼ Renderのドメイン等、ご自身の環境に合わせてください ▼▼▼
-            host_url = os.environ.get("RENDER_EXTERNAL_URL", "https://あなたのアプリ名.onrender.com")
-            app_url = f"{host_url.rstrip('/')}/{app_user_id}"
-            
+            app_url = f"https://stock-app-xyif.onrender.com/{app_user_id}"
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text=f"https://stock-app-xyif.onrender.com\n{app_url}")
+                TextSendMessage(text=f"📊 あなたのダッシュボードはこちらです！\n{app_url}")
             )
         else:
             line_bot_api.reply_message(
@@ -356,14 +342,12 @@ def read_user_dashboard(user_id: str):
         return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# 🌟 日本語対応・ETF完全対応の銘柄検索 API
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
     results = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-    # --- ① 日本株・日本ETFの検索ルート ---
     if asset_type in ["JP", "ALL"]:
         if q.isdigit() and len(q) == 4:
             try:
@@ -393,7 +377,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
         except Exception:
             pass
 
-    # --- ② 米国株・グローバル銘柄の検索ルート ---
     if asset_type in ["US", "ALL"]:
         url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=US"
         try:
@@ -424,7 +407,7 @@ def update_price(user_id: str, data: PriceUpdate):
 @app.post("/api/{user_id}/trade")
 def record_trade(user_id: str, trade: TradeCreate):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
     ticker = trade.ticker.strip() if trade.ticker.strip() else trade.name.strip()
     if trade.asset_type == "JP" and not ticker.endswith(".T"):
@@ -468,7 +451,7 @@ def record_trade(user_id: str, trade: TradeCreate):
 @app.get("/api/{user_id}/portfolio")
 def get_portfolio(user_id: str):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT * FROM portfolio WHERE user_id = %s", (user_id,))
     rows = cursor.fetchall()
     
@@ -552,7 +535,7 @@ def get_portfolio(user_id: str):
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
     cursor.execute("SELECT name FROM portfolio WHERE user_id = %s AND ticker LIKE '%%.T' AND quantity > 0", (user_id,))
     p_names = [r["name"] for r in cursor.fetchall()]
@@ -562,9 +545,7 @@ def get_jp_news(user_id: str):
     conn.close()
 
     target_names = list(set(p_names + w_names))
-
-    if not target_names:
-        return []
+    if not target_names: return []
 
     news_list = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -604,7 +585,7 @@ def get_jp_news(user_id: str):
                         "iso_date": iso_date,
                         "timestamp": ts
                     })
-        except Exception as e:
+        except Exception:
             pass
 
     news_list.sort(key=lambda x: x["timestamp"], reverse=True)
@@ -613,7 +594,7 @@ def get_jp_news(user_id: str):
 @app.post("/api/{user_id}/fund_rule")
 def add_fund_rule(user_id: str, rule: FundRuleCreate):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute('''
         INSERT INTO fund_rules (user_id, ticker, name, frequency, monthly_day, amount, start_date)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -663,7 +644,7 @@ def add_fund_rule(user_id: str, rule: FundRuleCreate):
 @app.get("/api/{user_id}/transactions/{category}")
 def get_transactions_by_category(user_id: str, category: str):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT t.*, p.name FROM transactions t LEFT JOIN portfolio p ON t.ticker = p.ticker AND p.user_id = t.user_id WHERE t.user_id = %s ORDER BY t.trade_date DESC", (user_id,))
     rows = cursor.fetchall()
     conn.close()
@@ -706,7 +687,7 @@ def delete_stock_api(user_id: str, ticker: str):
 @app.get("/api/{user_id}/history")
 def get_history(user_id: str):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT * FROM transactions WHERE user_id = %s ORDER BY trade_date ASC", (user_id,))
     trades = cursor.fetchall()
     conn.close()
@@ -785,14 +766,12 @@ def get_fund_info(ticker: str):
 @app.get("/api/{user_id}/watchlist")
 def get_watchlist(user_id: str):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT * FROM watchlist WHERE user_id = %s ORDER BY added_date DESC", (user_id,))
     rows = cursor.fetchall()
     conn.close()
 
     results = []
-    usdjpy = get_usdjpy_rate()["rate"]
-
     for r in rows:
         item = dict(r)
         ticker = item["ticker"]
@@ -825,14 +804,13 @@ def add_watchlist(user_id: str, item: WatchlistCreate):
     else:
         ticker = ticker.upper()
 
-    try:
-        cursor.execute("INSERT INTO watchlist (user_id, ticker, name, added_date) VALUES (%s, %s, %s, %s)",
-                       (user_id, ticker, item.name, added_date))
-        conn.commit()
-    except psycopg2.IntegrityError:
-        pass 
-    finally:
-        conn.close()
+    cursor.execute('''
+        INSERT INTO watchlist (user_id, ticker, name, added_date) 
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (user_id, ticker) DO NOTHING
+    ''', (user_id, ticker, item.name, added_date))
+    conn.commit()
+    conn.close()
     return {"message": "Added to watchlist"}
 
 @app.delete("/api/{user_id}/watchlist/{ticker}")
@@ -847,7 +825,7 @@ def delete_watchlist(user_id: str, ticker: str):
 @app.get("/api/admin/users")
 def admin_get_users():
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
     cursor.execute("SELECT DISTINCT user_id FROM portfolio")
     p_users = [r["user_id"] for r in cursor.fetchall()]
