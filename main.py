@@ -20,9 +20,6 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage, FollowEvent
 
-# --- Gemini API ---
-import google.generativeai as genai
-
 # --- 定期実行（パトロール）用ライブラリ ---
 from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
@@ -36,10 +33,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 app = FastAPI()
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY.strip())
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
 def get_db_connection():
     if not DATABASE_URL:
@@ -48,20 +42,29 @@ def get_db_connection():
     conn.autocommit = True
     return conn
 
-# 🌟 AI解説関数（安定版 'gemini-pro' を使用）
+# 🌟 修正: 2026年現在の最新主力モデル 'gemini-3.5-flash' に変更
 def get_ai_summary(title: str) -> str:
     if not GEMINI_API_KEY:
         return "GEMINI_API_KEYがRenderに設定されていません。"
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={GEMINI_API_KEY}"
+    headers = {'Content-Type': 'application/json'}
+    payload = {
+        "contents": [{
+            "parts": [{"text": f"以下の金融ニュース見出しについて、投資初心者向けに分かりやすく2〜3行で要約し、最後に相場への一般的な影響(ポジティブ/ネガティブ/中立など)を判定してください。\nニュース見出し: {title}"}]
+        }]
+    }
+    
     try:
-        model = genai.GenerativeModel('gemini-pro')
-        prompt = f"以下の金融ニュース見出しについて、投資初心者向けに分かりやすく2〜3行で要約し、最後に相場への一般的な影響(ポジティブ/ネガティブ/中立など)を判定してください。\nニュース見出し: {title}"
-        res = model.generate_content(prompt)
-        if res and res.text:
-            return res.text.strip()
-        return "AIの回答を生成できませんでした。"
+        res = requests.post(url, headers=headers, json=payload, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            return data['candidates'][0]['content']['parts'][0]['text'].strip()
+        else:
+            return f"AI解説の取得失敗 (エラーコード: {res.status_code})"
     except Exception as e:
         print("Gemini API Error Detail:", e)
-        return f"AI解説の取得失敗: {str(e)[:50]}"
+        return "AIの解説取得に一時的に失敗しました。"
 
 class TradeCreate(BaseModel):
     ticker: str = ""
@@ -110,7 +113,6 @@ def init_db():
 
 init_db()
 
-# 🌟 為替レートのマルチ取得（無料API優先、yfinanceバックアップ）
 def get_usdjpy_rate():
     fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
     try:
@@ -329,7 +331,7 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# 🌟 日本株検索のブロック回避（Yahooリファラ偽装 ＆ みんかぶフォールバック）
+# 🌟 日本株検索のブロック回避（Yahooリファラ偽装 ＆ みんかぶフォールバック ＆ 新コード対応）
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
@@ -340,7 +342,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
     }
 
     if asset_type in ["JP", "ALL"]:
-        if q.isdigit() and len(q) == 4:
+        if len(q) == 4 and q.isalnum():
             try:
                 res = requests.get(f"https://minkabu.jp/stock/{q}", headers=headers, timeout=3)
                 if res.status_code == 200:
@@ -356,7 +358,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
                     code = item.get("code", "")
                     name = item.get("name", "")
                     if code and name:
-                        ticker = f"{code}.T" if (len(code) == 4 and code.isdigit()) else code
+                        ticker = f"{code}.T" if (len(code) == 4 and code.isalnum()) else code
                         if not any(r["ticker"] == ticker for r in results):
                             results.append({"ticker": ticker, "name": name})
                 if results and asset_type == "JP": return results[:8]
@@ -368,8 +370,8 @@ def search_stock(q: str, asset_type: str = "ALL"):
                 res = requests.get(minkabu_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
                 if res.status_code == 200:
                     soup = BeautifulSoup(res.text, 'html.parser')
-                    for a in soup.find_all('a', href=re.compile(r'/stock/\d{4}')):
-                        code_match = re.search(r'/stock/(\d{4})', a['href'])
+                    for a in soup.find_all('a', href=re.compile(r'/stock/[a-zA-Z0-9]{4}')):
+                        code_match = re.search(r'/stock/([a-zA-Z0-9]{4})', a['href'])
                         if code_match:
                             code = code_match.group(1)
                             name = a.text.strip()
@@ -425,7 +427,7 @@ def record_trade(user_id: str, trade: TradeCreate):
         else: cursor.execute("UPDATE portfolio SET quantity = %s WHERE user_id = %s AND ticker = %s", (new_qty, user_id, ticker))
     cursor.close(); conn.close(); return {"message": "Success"}
 
-# 🌟 究極の配当金取得ロジック（3段構え ＆ フォールバック完備）
+# 🌟 配当取得ロジック（3段構え）
 @app.get("/api/{user_id}/portfolio")
 def get_portfolio(user_id: str):
     conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -451,27 +453,22 @@ def get_portfolio(user_id: str):
             if scraped > 0: current_price = scraped
         else:
             try:
-                stock_ticker = ticker if not is_jpy else (f"{ticker}.T" if ticker.isdigit() or len(ticker)==4 else ticker)
+                stock_ticker = ticker if not is_jpy else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
                 stock = yf.Ticker(stock_ticker)
                 hist = stock.history(period="1d")
                 if not hist.empty:
                     val = float(hist['Close'].iloc[-1])
                     if not math.isnan(val): current_price = val
                 
-                # 🌟 配当取得ロジック強化
                 info = stock.info
-                # ① まずは1株あたりの配当額(dividendRate)を探す
                 if info and info.get("dividendRate") and current_price > 0:
                     div_yield = (float(info.get("dividendRate")) / current_price) * 100.0
-                # ② なければ利回り(dividendYield)を探す
                 elif info and info.get("dividendYield"):
                     div_yield = float(info["dividendYield"]) * 100.0
                 
-                # ③ それでもダメなら、過去1年間の実際の配当履歴(dividends)を合計して自力で計算する
                 if div_yield == 0.0:
                     divs = stock.dividends
                     if not divs.empty:
-                        # 過去365日分の配当を合計
                         one_year_ago = datetime.now(divs.index.tzinfo) - timedelta(days=365)
                         recent_divs = divs[divs.index >= one_year_ago]
                         total_div = float(recent_divs.sum())
@@ -481,11 +478,10 @@ def get_portfolio(user_id: str):
             except Exception as e: 
                 print(f"配当取得エラー ({ticker}):", e)
             
-        # 取得失敗・無配の場合、市場平均利回りでフォールバック計算
         if div_yield == 0.0 or math.isnan(div_yield):
             if is_jpy: div_yield = 2.5      
             elif not is_fund: div_yield = 1.5 
-            else: div_yield = 0.0 # 投資信託は基本的に再投資のため0%扱い
+            else: div_yield = 0.0 
             
         if is_fund: 
             current_value_jpy = (quantity * current_price) / 10000.0
@@ -609,7 +605,7 @@ def get_history(user_id: str):
     for ticker in list(set([t["ticker"] for t in trades])):
         price_histories[ticker] = {}
         try:
-            df = yf.Ticker(ticker if ticker.endswith(".T") else (f"{ticker}.T" if ticker.isdigit() or len(ticker)==4 else ticker)).history(start=trades[0]["trade_date"])
+            df = yf.Ticker(ticker if ticker.endswith(".T") else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)).history(start=trades[0]["trade_date"])
             for idx, row in df.iterrows():
                 if not math.isnan(row["Close"]): price_histories[ticker][idx.strftime("%Y-%m-%d")] = float(row["Close"])
         except: pass
@@ -641,9 +637,9 @@ def get_watchlist(user_id: str):
     cursor.execute("SELECT * FROM watchlist WHERE user_id = %s ORDER BY added_date DESC", (user_id,))
     rows = cursor.fetchall(); cursor.close(); conn.close()
     for r in rows:
-        r["current_price"] = 0.0; r["currency"] = "¥" if r["ticker"].endswith(".T") or r["ticker"].isdigit() else "$"
+        r["current_price"] = 0.0; r["currency"] = "¥" if r["ticker"].endswith(".T") or (len(r["ticker"])==4 and r["ticker"].isalnum()) else "$"
         try:
-            hist = yf.Ticker(r["ticker"] if r["ticker"].endswith(".T") else (f"{r['ticker']}.T" if r["ticker"].isdigit() else r["ticker"])).history(period="1d")
+            hist = yf.Ticker(r["ticker"] if r["ticker"].endswith(".T") else (f"{r['ticker']}.T" if (len(r['ticker'])==4 and r['ticker'].isalnum()) else r["ticker"])).history(period="1d")
             if not hist.empty and not math.isnan(hist['Close'].iloc[-1]): r["current_price"] = float(hist['Close'].iloc[-1])
         except: pass
     return rows
@@ -651,7 +647,7 @@ def get_watchlist(user_id: str):
 @app.post("/api/{user_id}/watchlist")
 def add_watchlist(user_id: str, item: WatchlistCreate):
     ticker = item.ticker.strip()
-    if ticker.isdigit() or (len(ticker) == 4 and ticker[:-1].isdigit()): ticker = f"{ticker}.T" if not ticker.endswith(".T") else ticker
+    if len(ticker) == 4 and ticker.isalnum(): ticker = f"{ticker}.T" if not ticker.endswith(".T") else ticker
     else: ticker = ticker.upper()
     conn = get_db_connection(); cursor = conn.cursor()
     cursor.execute('INSERT INTO watchlist (user_id, ticker, name, added_date) VALUES (%s, %s, %s, %s) ON CONFLICT (user_id, ticker) DO NOTHING', (user_id, ticker, item.name, datetime.now().strftime("%Y-%m-%d")))
