@@ -23,7 +23,7 @@
         }
 
         body { 
-            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif; 
+            font-family: "Helvetica Neue", Arial, "Hiragino标志 Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif; 
             background-color: var(--ivory-base); 
             color: var(--text-black); 
             margin: 0; 
@@ -41,7 +41,7 @@
         h2 { font-size: 1.3rem; margin-bottom: 24px; }
         h3 { font-size: 1.1rem; color: var(--stone); margin-bottom: 16px; }
 
-        .header-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; background: var(--white); padding: 24px 30px; border-radius: 12px; border: 1px solid var(--light-border); }
+        .header-info { margin-bottom: 40px; background: var(--white); padding: 24px 30px; border-radius: 12px; border: 1px solid var(--light-border); }
         .total-assets { font-size: 1.8rem; font-weight: bold; color: var(--text-black); }
         .fx-rate { font-size: 0.95rem; color: var(--text-black); font-weight: bold; }
         .fx-time { font-size: 0.75rem; color: var(--stone); font-weight: normal; margin-left: 8px; }
@@ -94,8 +94,8 @@
         .btn-edit:hover { background: var(--stone); }
         .section-title { margin-top: 50px; border-bottom: 1px solid var(--light-border); padding-bottom: 12px; color: var(--text-black); }
         
-        .news-card { background: var(--white); border: 1px solid var(--light-border); padding: 16px 20px; border-radius: 12px; margin-bottom: 16px; display: block; text-decoration: none; transition: 0.2s; }
-        .news-card:hover { border-color: var(--turquoise-base); box-shadow: 0 4px 12px rgba(47, 56, 66, 0.05); transform: translateY(-2px); }
+        .news-card { background: var(--white); border: 1px solid var(--light-border); padding: 16px 20px; border-radius: 12px; margin-bottom: 16px; transition: 0.2s; }
+        .news-card:hover { border-color: var(--turquoise-base); box-shadow: 0 4px 12px rgba(47, 56, 66, 0.05); }
         .news-title { color: var(--text-black); font-weight: bold; font-size: 1.05rem; margin-bottom: 8px; line-height: 1.4; }
         .news-meta { color: var(--stone); font-size: 0.85rem; display: flex; gap: 12px; align-items: center; }
         .news-tag { background: var(--ivory-base); padding: 2px 8px; border-radius: 4px; font-weight: bold; color: var(--turquoise-main); font-size: 0.8rem; }
@@ -124,9 +124,25 @@
                 <span class="user-id-badge">ID: <span id="display-user-id"></span></span>
             </h1>
             
-            <div class="header-info">
-                <div class="total-assets">総資産額: <span id="total-assets">計算中...</span></div>
-                <div class="fx-rate">米ドル/円: <span id="fx-rate">-</span>円 <span id="fx-time" class="fx-time"></span></div>
+            <div class="header-info" style="display:block;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <div class="total-assets">総資産額: <span id="total-assets">計算中...</span></div>
+                    <div class="fx-rate">米ドル/円: <span id="fx-rate">-</span>円 <span id="fx-time" class="fx-time"></span></div>
+                </div>
+                
+                <!-- 🌟 追加: プログレスバー & 予想配当金 -->
+                <div class="progress-container">
+                    <div style="display:flex; justify-content:space-between; font-size:0.85rem; color:var(--stone); margin-bottom:5px; font-weight:bold;">
+                        <span>目標: 10,000,000円</span>
+                        <span id="goal-percent">0%</span>
+                    </div>
+                    <div style="width:100%; background:var(--light-border); border-radius:10px; height:12px; overflow:hidden;">
+                        <div id="goal-bar" style="height:100%; background:var(--turquoise-base); width:0%; transition:width 1s ease-out;"></div>
+                    </div>
+                    <div style="font-size:0.85rem; color:var(--stone); margin-top:8px;">
+                        🎁 予想年間配当金（概算）: <span id="est-dividend" style="font-weight:bold; color:var(--accent-orange); font-size:1rem;">¥0</span> / 年
+                    </div>
+                </div>
             </div>
 
             <div class="tabs">
@@ -193,8 +209,6 @@
                 <h2>日本株ポートフォリオ</h2>
                 <div class="add-form">
                     <h3>取引の追加</h3>
-                    
-                    <!-- 🌟 独立した日本株用の検索窓 -->
                     <div class="search-wrapper">
                         <label>🔍 銘柄検索（自動入力）</label>
                         <input type="text" id="jp-search-input" placeholder="例: 7203 または トヨタ" oninput="handleSearchInput(this.value, 'JP')" autocomplete="off" style="width:calc(100% - 30px); padding:8px; margin-top:6px;">
@@ -227,8 +241,6 @@
                 <h2>米国株ポートフォリオ</h2>
                 <div class="add-form">
                     <h3>取引の追加</h3>
-                    
-                    <!-- 🌟 独立した米国株用の検索窓 -->
                     <div class="search-wrapper">
                         <label>🔍 銘柄検索（自動入力）</label>
                         <input type="text" id="us-search-input" placeholder="例: AAPL または Apple" oninput="handleSearchInput(this.value, 'US')" autocomplete="off" style="width:calc(100% - 30px); padding:8px; margin-top:6px;">
@@ -295,7 +307,7 @@
             </div>
 
             <div id="tab-news" class="tab-content">
-                <h2>関連ニュース（保有株・気になるリスト）</h2>
+                <h2>関連ニュース（保有株・気になるリスト・市況）</h2>
                 
                 <div style="background: var(--white); border: 1px solid var(--light-border); padding: 16px 20px; border-radius: 12px; margin-bottom: 24px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
@@ -352,7 +364,7 @@
         let globalHistoryData = []; 
         let globalNewsData = []; 
         let currentPeriodNews = []; 
-        let currentNewsRange = '1M'; // ニュースの初期フィルターを1ヶ月に変更
+        let currentNewsRange = '1M';
         let currentNewsStock = 'ALL';
         let searchTimeout = null; 
 
@@ -597,6 +609,20 @@
                 });
 
                 const catStats = data.category_totals;
+                
+                // --- 🌟 追加: 目標プログレスバー & 配当概算 ---
+                const targetGoal = 10000000; // 目標1000万円
+                const currentPercent = Math.min((data.total_assets / targetGoal) * 100, 100);
+                document.getElementById('goal-bar').style.width = `${currentPercent}%`;
+                document.getElementById('goal-percent').textContent = `${currentPercent.toFixed(1)}%`;
+
+                // 配当利回りの概算（日本株2.5%、米国株1.5%と仮定）
+                const estDivJp = catStats["日本株"].current * 0.025;
+                const estDivUs = catStats["米国株"].current * 0.015;
+                const estDividendTotal = estDivJp + estDivUs;
+                document.getElementById('est-dividend').textContent = `¥${Math.floor(estDividendTotal).toLocaleString()}`;
+                // ----------------------------------------------
+
                 function updateCatUI(idPrefix, current, book) {
                     const pl = current - book;
                     const pct = book > 0 ? (pl / book) * 100 : 0;
@@ -707,10 +733,10 @@
                 globalNewsData = await res.json();
                 
                 if (globalNewsData.length === 0) {
-                    container.innerHTML = '<p style="color:var(--stone);">現在登録されている銘柄のニュースはありません。</p>';
+                    container.innerHTML = '<p style="color:var(--stone);">現在登録されている銘柄や市況のニュースはありません。</p>';
                     return;
                 }
-                filterNews('1M'); // デフォルトを1ヶ月に変更
+                filterNews('1M');
             } catch (e) {
                 container.innerHTML = '<p style="color:red;">ニュースの取得に失敗しました。</p>';
             }
@@ -731,8 +757,6 @@
 
             if (range === '1W') startMs = now.getTime() - (7 * 24 * 60 * 60 * 1000);
             else if (range === '1M') startMs = now.getTime() - (30 * 24 * 60 * 60 * 1000);
-            
-            // "ALL" の場合は startMs は null のまま
 
             currentPeriodNews = globalNewsData.filter(n => {
                 if (!n.timestamp) return true;
@@ -750,7 +774,7 @@
             const stockFiltersDiv = document.getElementById('news-stock-filters');
             const uniqueStocks = [...new Set(globalNewsData.map(n => n.stock_name))];
             
-            let buttonsHtml = `<span style="font-size:0.85rem; color:var(--stone); font-weight:bold;">銘柄:</span>
+            let buttonsHtml = `<span style="font-size:0.85rem; color:var(--stone); font-weight:bold;">銘柄/市況:</span>
                 <button class="filter-btn ${currentNewsStock === 'ALL' ? 'active' : ''}" onclick="filterNewsByStock('ALL', this)">すべて (${currentPeriodNews.length})</button>`;
             
             uniqueStocks.forEach(name => {
@@ -766,6 +790,27 @@
             renderFilteredNews();
         }
 
+        // 🌟 追加: AI要約ボタンを押した時の処理
+        async function fetchAiSummary(btn, title) {
+            const box = btn.nextElementSibling;
+            btn.style.display = 'none'; // ボタンを隠す
+            box.style.display = 'block'; // 解説枠を出す
+            box.innerHTML = '<span style="color:var(--stone); font-weight:bold;">Geminiが分析中... 🤖💭</span>';
+            try {
+                const res = await fetch(`/api/ai_summary?title=${encodeURIComponent(title)}`);
+                const data = await res.json();
+                if (data.summary) {
+                    box.innerHTML = data.summary.replace(/\n/g, '<br>');
+                } else {
+                    box.innerHTML = '<span style="color:red;">解説の取得に失敗しました。</span>';
+                    btn.style.display = 'inline-block';
+                }
+            } catch(e) {
+                box.innerHTML = '<span style="color:red;">エラーが発生しました。</span>';
+                btn.style.display = 'inline-block';
+            }
+        }
+
         function renderFilteredNews() {
             const container = document.getElementById('news-container');
             let finalNews = [...currentPeriodNews];
@@ -775,29 +820,29 @@
             }
 
             if (finalNews.length === 0) {
-                container.innerHTML = '<p style="color:var(--stone);">指定した期間・銘柄のニュースは見つかりませんでした。</p>';
+                container.innerHTML = '<p style="color:var(--stone);">指定した期間のニュースは見つかりませんでした。</p>';
                 return;
             }
 
             let html = '';
             finalNews.forEach(news => {
                 html += `
-                    <a href="${news.link}" target="_blank" rel="noopener noreferrer" class="news-card" style="position: relative; padding-right: 40px; display: block;">
-                        <div class="news-title">${news.title}</div>
-                        <div class="news-meta">
-                            <span class="news-tag">${news.stock_name}</span>
-                            <span>${news.pub_time}</span>
-                        </div>
-                        <div style="position: absolute; right: 20px; top: 50%; transform: translateY(-50%); color: var(--ivory-main); font-size: 1.5rem; font-weight: bold;">
-                            ➔
-                        </div>
-                    </a>
+                    <div class="news-card" style="position: relative; display: block; margin-bottom:16px;">
+                        <a href="${news.link}" target="_blank" style="text-decoration:none; color:inherit;">
+                            <div class="news-title">${news.title}</div>
+                            <div class="news-meta">
+                                <span class="news-tag">${news.stock_name}</span>
+                                <span>${news.pub_time}</span>
+                            </div>
+                        </a>
+                        <button onclick="fetchAiSummary(this, '${news.title.replace(/'/g, "\\'")}')" style="margin-top:10px; background:var(--ivory-base); border:1px solid var(--turquoise-base); color:var(--turquoise-main); padding:4px 12px; border-radius:6px; font-size:0.85rem; cursor:pointer; font-weight:bold;">✨ Geminiに要約してもらう</button>
+                        <div class="ai-summary-box" style="display:none; margin-top:10px; padding:12px; background:#F8F9FA; border-left:4px solid var(--turquoise-base); border-radius:4px; font-size:0.9rem; color:var(--text-black); line-height:1.6;"></div>
+                    </div>
                 `;
             });
             container.innerHTML = html;
         }
 
-        // 🌟 独立した検索機能
         async function handleSearchInput(query, type) {
             clearTimeout(searchTimeout);
             let boxId = '';
@@ -833,12 +878,11 @@
             }, 300);
         }
 
-        // 🌟 クリックされた検索結果を、該当のフォームだけに反映する
         function selectSuggestion(ticker, name, type) {
             if (type === 'JP') {
-                document.getElementById('jp-ticker').value = ticker.replace('.T', ''); // 日本株は裏側で.Tをつけるので見栄えのために消す
+                document.getElementById('jp-ticker').value = ticker.replace('.T', '');
                 document.getElementById('jp-name').value = name;
-                document.getElementById('jp-search-input').value = ''; // 検索窓はリセット
+                document.getElementById('jp-search-input').value = '';
                 document.getElementById('jp-search-suggestions').style.display = 'none';
             } else if (type === 'US') {
                 document.getElementById('us-ticker').value = ticker;
@@ -853,11 +897,13 @@
         }
 
         document.addEventListener('click', function(e) {
-            // 他の場所をクリックした時にサジェストを閉じる
             if (!e.target.closest('.search-wrapper')) {
-                document.getElementById('jp-search-suggestions').style.display = 'none';
-                document.getElementById('us-search-suggestions').style.display = 'none';
-                document.getElementById('watchlist-search-suggestions').style.display = 'none';
+                const jpBox = document.getElementById('jp-search-suggestions');
+                const usBox = document.getElementById('us-search-suggestions');
+                const wBox = document.getElementById('watchlist-search-suggestions');
+                if (jpBox) jpBox.style.display = 'none';
+                if (usBox) usBox.style.display = 'none';
+                if (wBox) wBox.style.display = 'none';
             }
         });
 
