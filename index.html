@@ -130,7 +130,6 @@
                     <div class="fx-rate">米ドル/円: <span id="fx-rate">-</span>円 <span id="fx-time" class="fx-time"></span></div>
                 </div>
                 
-                <!-- 🌟 追加: プログレスバー & 予想配当金 -->
                 <div class="progress-container">
                     <div style="display:flex; justify-content:space-between; font-size:0.85rem; color:var(--stone); margin-bottom:5px; font-weight:bold;">
                         <span>目標: 10,000,000円</span>
@@ -273,6 +272,12 @@
                 <h2>投資信託ポートフォリオ</h2>
                 <div class="rule-box">
                     <h3>自動積立ルール設定</h3>
+                    <!-- 🌟 投信専用検索枠を追加 -->
+                    <div class="search-wrapper">
+                        <label>🔍 ファンド検索（自動入力）</label>
+                        <input type="text" id="rule-search-input" placeholder="例: オルカン または eMAXIS" oninput="handleSearchInput(this.value, 'RULE')" autocomplete="off" style="width:calc(100% - 30px); padding:8px; margin-top:6px;">
+                        <div id="rule-search-suggestions" class="suggestions-box"></div>
+                    </div><br>
                     <div class="form-group"><label>投信コード</label><input type="text" id="rule-ticker" onchange="fetchFundPriceAuto('rule')" placeholder="例: 0331418A"></div>
                     <div class="form-group"><label>ファンド名</label><input type="text" id="rule-name" placeholder="例: eMAXIS Slim 全世界株式"></div>
                     <div class="form-group"><label>積立コース</label><select id="rule-freq" onchange="toggleRuleFreq()"><option value="MONTHLY">毎月コース</option><option value="DAILY">毎日コース</option></select></div>
@@ -284,6 +289,12 @@
                 </div>
                 <div class="add-form">
                     <h3>スポット買付（一括・個別追加）</h3>
+                    <!-- 🌟 投信専用検索枠を追加 -->
+                    <div class="search-wrapper">
+                        <label>🔍 ファンド検索（自動入力）</label>
+                        <input type="text" id="spot-search-input" placeholder="例: S&P500 または eMAXIS" oninput="handleSearchInput(this.value, 'SPOT')" autocomplete="off" style="width:calc(100% - 30px); padding:8px; margin-top:6px;">
+                        <div id="spot-search-suggestions" class="suggestions-box"></div>
+                    </div><br>
                     <div class="form-group"><label>指定形式</label><select id="fund-calc-mode" onchange="toggleCalcMode('fund')"><option value="AMOUNT">金額指定 (円)</option><option value="QTY">口数指定 (口)</option></select></div>
                     <div class="form-group"><label>区分</label><select id="fund-trade-type"><option value="BUY_SPOT">買付</option><option value="SELL">売却</option></select></div>
                     <div class="form-group"><label>取引日</label><input type="date" id="fund-trade-date" class="default-date"></div>
@@ -578,12 +589,6 @@
             });
         }
 
-        async function deleteTx(txId, category) {
-            if (!confirm(`この取引履歴を削除しますか？`)) return;
-            const res = await fetch(`/api/${currentUserId}/transaction/${txId}`, { method: 'DELETE' });
-            if (res.ok) { fetchPortfolio(); fetchCategoryTransactions(category, `tx-table-${category.toLowerCase()}`); }
-        }
-
         async function fetchPortfolio() {
             try {
                 const response = await fetch(`/api/${currentUserId}/portfolio`);
@@ -610,16 +615,13 @@
 
                 const catStats = data.category_totals;
                 
-                // --- 🌟 追加: 目標プログレスバー & 配当概算 ---
-                const targetGoal = 10000000; // 目標1000万円
+                const targetGoal = 10000000;
                 const currentPercent = Math.min((data.total_assets / targetGoal) * 100, 100);
                 document.getElementById('goal-bar').style.width = `${currentPercent}%`;
                 document.getElementById('goal-percent').textContent = `${currentPercent.toFixed(1)}%`;
 
-                // 🌟 修正後（実際の銘柄データから算出された数値を反映）
                 const estDivTotal = data.est_dividend_jpy || 0;
                 document.getElementById('est-dividend').textContent = `¥${Math.floor(estDivTotal).toLocaleString()}`;
-                // ----------------------------------------------
 
                 function updateCatUI(idPrefix, current, book) {
                     const pl = current - book;
@@ -788,11 +790,10 @@
             renderFilteredNews();
         }
 
-        // 🌟 追加: AI要約ボタンを押した時の処理
         async function fetchAiSummary(btn, title) {
             const box = btn.nextElementSibling;
-            btn.style.display = 'none'; // ボタンを隠す
-            box.style.display = 'block'; // 解説枠を出す
+            btn.style.display = 'none'; 
+            box.style.display = 'block'; 
             box.innerHTML = '<span style="color:var(--stone); font-weight:bold;">Geminiが分析中... 🤖💭</span>';
             try {
                 const res = await fetch(`/api/ai_summary?title=${encodeURIComponent(title)}`);
@@ -841,6 +842,7 @@
             container.innerHTML = html;
         }
 
+        // 🌟 修正: 投資信託（RULE/SPOT）検索枠の処理を連動
         async function handleSearchInput(query, type) {
             clearTimeout(searchTimeout);
             let boxId = '';
@@ -849,6 +851,8 @@
             if (type === 'JP') { boxId = 'jp-search-suggestions'; assetParam = 'JP'; }
             if (type === 'US') { boxId = 'us-search-suggestions'; assetParam = 'US'; }
             if (type === 'WATCH') { boxId = 'watchlist-search-suggestions'; assetParam = 'ALL'; }
+            if (type === 'RULE') { boxId = 'rule-search-suggestions'; assetParam = 'FUND'; }
+            if (type === 'SPOT') { boxId = 'spot-search-suggestions'; assetParam = 'FUND'; }
 
             const suggestionsDiv = document.getElementById(boxId);
             if (!query.trim()) {
@@ -876,6 +880,7 @@
             }, 300);
         }
 
+        // 🌟 修正: 投資信託が選ばれたら自動で価格取得へ流す
         function selectSuggestion(ticker, name, type) {
             if (type === 'JP') {
                 document.getElementById('jp-ticker').value = ticker.replace('.T', '');
@@ -891,6 +896,18 @@
                 document.getElementById('watchlist-search').value = name;
                 document.getElementById('watchlist-ticker').value = ticker;
                 document.getElementById('watchlist-search-suggestions').style.display = 'none';
+            } else if (type === 'RULE') {
+                document.getElementById('rule-ticker').value = ticker;
+                document.getElementById('rule-name').value = name;
+                document.getElementById('rule-search-input').value = '';
+                document.getElementById('rule-search-suggestions').style.display = 'none';
+                fetchFundPriceAuto('rule');
+            } else if (type === 'SPOT') {
+                document.getElementById('fund-ticker').value = ticker;
+                document.getElementById('fund-name').value = name;
+                document.getElementById('spot-search-input').value = '';
+                document.getElementById('spot-search-suggestions').style.display = 'none';
+                fetchFundPriceAuto('spot');
             }
         }
 
@@ -899,9 +916,13 @@
                 const jpBox = document.getElementById('jp-search-suggestions');
                 const usBox = document.getElementById('us-search-suggestions');
                 const wBox = document.getElementById('watchlist-search-suggestions');
+                const ruleBox = document.getElementById('rule-search-suggestions');
+                const spotBox = document.getElementById('spot-search-suggestions');
                 if (jpBox) jpBox.style.display = 'none';
                 if (usBox) usBox.style.display = 'none';
                 if (wBox) wBox.style.display = 'none';
+                if (ruleBox) ruleBox.style.display = 'none';
+                if (spotBox) spotBox.style.display = 'none';
             }
         });
 
