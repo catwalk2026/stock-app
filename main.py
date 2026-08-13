@@ -14,6 +14,7 @@ import math
 import urllib.parse
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
+import csv
 
 # --- LINE連携用ライブラリ ---
 from linebot import LineBotApi, WebhookHandler
@@ -35,6 +36,35 @@ app = FastAPI()
 DATABASE_URL = os.environ.get("DATABASE_URL")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
+# ==========================================
+# 🌟 JPX（日本取引所グループ）全上場銘柄データの読み込み
+# ==========================================
+JPX_STOCKS = []
+
+def load_jpx_stocks():
+    global JPX_STOCKS
+    url = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.csv"
+    try:
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            res.encoding = 'shift_jis'
+            lines = res.text.splitlines()
+            reader = csv.reader(lines)
+            next(reader, None) # ヘッダーをスキップ
+            stocks = []
+            for row in reader:
+                if len(row) >= 3:
+                    code = row[1].strip()
+                    name = row[2].strip()
+                    if code and name:
+                        stocks.append({"code": code, "name": name, "ticker": f"{code}.T"})
+            JPX_STOCKS = stocks
+            print(f"✅ JPX全銘柄データの読み込み完了 ({len(JPX_STOCKS)}件)")
+    except Exception as e:
+        print("❌ JPX銘柄データの読み込み失敗:", e)
+
+load_jpx_stocks()
+
 def get_db_connection():
     if not DATABASE_URL:
         raise Exception("DATABASE_URLが設定されていません。")
@@ -42,16 +72,24 @@ def get_db_connection():
     conn.autocommit = True
     return conn
 
-# 🌟 修正: 2026年現在の最新主力モデル 'gemini-3.5-flash' に変更
+# 🌟 Gemini AI（REST API・ハルシネーション対策済み）
 def get_ai_summary(title: str) -> str:
     if not GEMINI_API_KEY:
         return "GEMINI_API_KEYがRenderに設定されていません。"
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={GEMINI_API_KEY}"
     headers = {'Content-Type': 'application/json'}
+    
+    prompt = f"""以下の金融ニュース見出しの文章・テキストに含まれる事実のみに基づいて、投資初心者向けに2〜3行で分かりやすく要約し、最後に相場への一般的な影響(ポジティブ/ネガティブ/中立など)を判定してください。
+
+【厳重注意事項】
+ニュース見出しのテキストに書かれていない独自の情報（企業の過去の履歴や上場・未上場などのステータス）は絶対に推測したり言及したりしないでください。テキストに書かれている事実のみを解説してください。
+
+ニュース見出し: {title}"""
+
     payload = {
         "contents": [{
-            "parts": [{"text": f"以下の金融ニュース見出しについて、投資初心者向けに分かりやすく2〜3行で要約し、最後に相場への一般的な影響(ポジティブ/ネガティブ/中立など)を判定してください。\nニュース見出し: {title}"}]
+            "parts": [{"text": prompt}]
         }]
     }
     
@@ -331,59 +369,25 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# 🌟 日本株検索のブロック回避（Yahooリファラ偽装 ＆ みんかぶフォールバック ＆ 新コード対応）
+# 🌟 JPXメモリ検索 ＆ 投資信託専用ルート追加
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
     results = []
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "https://finance.yahoo.co.jp/"
-    }
+    q_str = q.strip().lower()
 
+    # 日本株（JPX公式データから爆速検索）
     if asset_type in ["JP", "ALL"]:
-        if len(q) == 4 and q.isalnum():
-            try:
-                res = requests.get(f"https://minkabu.jp/stock/{q}", headers=headers, timeout=3)
-                if res.status_code == 200:
-                    name = re.split(r'[\(（]', BeautifulSoup(res.text, 'html.parser').find('title').text)[0].strip()
-                    if name: return [{"ticker": f"{q}.T", "name": name}]
-            except Exception: pass
+        for item in JPX_STOCKS:
+            if q_str in item["code"].lower() or q_str in item["name"].lower():
+                results.append({"ticker": item["ticker"], "name": item["name"]})
+                if len(results) >= 8: break
+        if results and asset_type == "JP": return results[:8]
 
+    # 米国株
+    if asset_type in ["US", "ALL"] and len(results) < 8:
         try:
-            yj_url = f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}"
-            res = requests.get(yj_url, headers=headers, timeout=3)
-            if res.status_code == 200:
-                for item in res.json().get("results", []):
-                    code = item.get("code", "")
-                    name = item.get("name", "")
-                    if code and name:
-                        ticker = f"{code}.T" if (len(code) == 4 and code.isalnum()) else code
-                        if not any(r["ticker"] == ticker for r in results):
-                            results.append({"ticker": ticker, "name": name})
-                if results and asset_type == "JP": return results[:8]
-        except Exception: pass
-        
-        if not results:
-            try:
-                minkabu_url = f"https://minkabu.jp/search?query={urllib.parse.quote(q)}"
-                res = requests.get(minkabu_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
-                if res.status_code == 200:
-                    soup = BeautifulSoup(res.text, 'html.parser')
-                    for a in soup.find_all('a', href=re.compile(r'/stock/[a-zA-Z0-9]{4}')):
-                        code_match = re.search(r'/stock/([a-zA-Z0-9]{4})', a['href'])
-                        if code_match:
-                            code = code_match.group(1)
-                            name = a.text.strip()
-                            if code and name and len(name) < 30:
-                                ticker = f"{code}.T"
-                                if not any(r["ticker"] == ticker for r in results):
-                                    results.append({"ticker": ticker, "name": name})
-                                if len(results) >= 6: break
-            except Exception: pass
-
-    if asset_type in ["US", "ALL"] and not results:
-        try:
+            headers = {"User-Agent": "Mozilla/5.0"}
             res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=US", headers=headers, timeout=3)
             if res.status_code == 200:
                 for quote in res.json().get("quotes", []):
@@ -392,6 +396,22 @@ def search_stock(q: str, asset_type: str = "ALL"):
                     if asset_type == "US" and ticker.endswith(".T"): continue
                     if not any(r["ticker"] == ticker for r in results):
                         results.append({"ticker": ticker, "name": name})
+        except Exception: pass
+
+    # 投資信託（みんかぶ投信検索 - 投信タブで専用稼働）
+    if asset_type == "FUND" or (asset_type == "ALL" and len(results) < 8):
+        try:
+            res = requests.get(f"https://itf.minkabu.jp/search/fund?word={urllib.parse.quote(q)}", headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
+            if res.status_code == 200:
+                soup = BeautifulSoup(res.text, 'html.parser')
+                for a in soup.find_all('a', href=re.compile(r'^/fund/[0-9A-Z]{8}$')):
+                    code_match = re.search(r'/fund/([0-9A-Z]{8})', a['href'])
+                    if code_match:
+                        code = code_match.group(1)
+                        name = a.text.strip()
+                        if code and name and not any(r["ticker"] == code for r in results):
+                            results.append({"ticker": code, "name": name})
+                        if len(results) >= 8: break
         except Exception: pass
 
     return results[:8]
@@ -410,7 +430,7 @@ def record_trade(user_id: str, trade: TradeCreate):
     elif trade.asset_type == "US": ticker = ticker.upper()
     name = trade.name.strip() if trade.name.strip() else ticker
     
-    cursor.execute('INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price, reason) VALUES (%s, %s, %s, %s, %s, %s, %s)', (user_id, ticker, trade.trade_type, trade.trade_date, trade.quantity, trade.price, trade.reason))
+    cursor.execute('INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price, reason) VALUES (%s, %s, %s, %s, %s, %s, %s)', (user_id, ticker, trade.trade_type, trade.trade_date, trade.quantity, price, trade.reason))
     cursor.execute("SELECT * FROM portfolio WHERE user_id = %s AND ticker = %s", (user_id, ticker))
     current = cursor.fetchone()
     
@@ -427,7 +447,6 @@ def record_trade(user_id: str, trade: TradeCreate):
         else: cursor.execute("UPDATE portfolio SET quantity = %s WHERE user_id = %s AND ticker = %s", (new_qty, user_id, ticker))
     cursor.close(); conn.close(); return {"message": "Success"}
 
-# 🌟 配当取得ロジック（3段構え）
 @app.get("/api/{user_id}/portfolio")
 def get_portfolio(user_id: str):
     conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
