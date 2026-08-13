@@ -369,14 +369,14 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# 🌟 修正: 投資信託の検索ロジックをYahooサジェスト＆みんかぶ総合検索に強化
+# 🌟 修正: 投資信託の「3段構え」無敵検索ルート！
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
     results = []
     q_str = q.strip().lower()
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36",
         "Referer": "https://finance.yahoo.co.jp/"
     }
 
@@ -401,38 +401,60 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         results.append({"ticker": ticker, "name": name})
         except Exception: pass
 
-    # 🌟 投資信託
+    # 🌟 投資信託（強化版）
     if asset_type == "FUND" or (asset_type == "ALL" and len(results) < 8):
-        # ① Yahoo Finance 検索（投信にも対応）
-        try:
-            yj_url = f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}"
-            res = requests.get(yj_url, headers=headers, timeout=3)
-            if res.status_code == 200:
-                for item in res.json().get("results", []):
-                    code = item.get("code", "")
-                    name = item.get("name", "")
-                    # 投資信託のコードは8桁の英数字
-                    if code and name and len(code) == 8 and code.isalnum():
-                        if not any(r["ticker"] == code for r in results):
-                            results.append({"ticker": code, "name": name})
-        except Exception: pass
+        
+        # ① ダイレクトアタック: 入力が「ちょうど8桁の英数字」なら直接ページを取得（最も確実）
+        if len(q_str) == 8 and q_str.isalnum():
+            try:
+                fund_url = f"https://itf.minkabu.jp/fund/{q_str.upper()}"
+                res = requests.get(fund_url, headers=headers, timeout=3)
+                if res.status_code == 200:
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    name = ""
+                    h1 = soup.find('h1')
+                    if h1: name = h1.get_text(strip=True)
+                    if not name:
+                        title_elem = soup.find('title')
+                        if title_elem: name = title_elem.text.split('|')[0].split('-')[0].strip()
+                    if name:
+                        results.append({"ticker": q_str.upper(), "name": name})
+            except Exception: pass
 
-        # ② みんかぶ総合検索（フォールバック）
+        # ② みんかぶ投信の検索ページ
+        if not results:
+            try:
+                search_url = f"https://itf.minkabu.jp/search/fund?word={urllib.parse.quote(q)}"
+                res = requests.get(search_url, headers=headers, timeout=3)
+                if res.status_code == 200:
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    for a in soup.find_all('a', href=True):
+                        match = re.search(r'/fund/([0-9A-Za-z]{8})(?:$|\?)', a['href'])
+                        if match:
+                            code = match.group(1).upper()
+                            name = a.get_text(separator=" ", strip=True)
+                            if name and len(name) > 3 and len(name) < 80 and "詳細" not in name and "チャート" not in name:
+                                if not any(r["ticker"] == code for r in results):
+                                    results.append({"ticker": code, "name": name})
+                            if len(results) >= 8: break
+            except Exception: pass
+
+        # ③ みんかぶ総合検索（フォールバック）
         if not results:
             try:
                 minkabu_url = f"https://minkabu.jp/search?query={urllib.parse.quote(q)}"
-                res = requests.get(minkabu_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
+                res = requests.get(minkabu_url, headers=headers, timeout=3)
                 if res.status_code == 200:
                     soup = BeautifulSoup(res.text, 'html.parser')
-                    # 投信のURLは /fund/0331418A のような形式
-                    for a in soup.find_all('a', href=re.compile(r'/fund/[0-9A-Za-z]{8}')):
-                        code_match = re.search(r'/fund/([0-9A-Za-z]{8})', a['href'])
-                        if code_match:
-                            code = code_match.group(1).upper()
-                            name = a.text.strip()
-                            if code and name and len(name) < 40 and not any(r["ticker"] == code for r in results):
-                                results.append({"ticker": code, "name": name})
-                        if len(results) >= 8: break
+                    for a in soup.find_all('a', href=True):
+                        match = re.search(r'/fund/([0-9A-Za-z]{8})(?:$|\?)', a['href'])
+                        if match:
+                            code = match.group(1).upper()
+                            name = a.get_text(separator=" ", strip=True)
+                            if name and len(name) > 3 and len(name) < 80 and "詳細" not in name:
+                                if not any(r["ticker"] == code for r in results):
+                                    results.append({"ticker": code, "name": name})
+                            if len(results) >= 8: break
             except Exception: pass
 
     return results[:8]
