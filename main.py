@@ -48,7 +48,7 @@ def get_db_connection():
     conn.autocommit = True
     return conn
 
-# 🌟 修正: 404エラー対策のため、安定版の 'gemini-pro' に変更
+# 🌟 AI解説関数（安定版 'gemini-pro' を使用）
 def get_ai_summary(title: str) -> str:
     if not GEMINI_API_KEY:
         return "GEMINI_API_KEYがRenderに設定されていません。"
@@ -110,6 +110,7 @@ def init_db():
 
 init_db()
 
+# 🌟 為替レートのマルチ取得（無料API優先、yfinanceバックアップ）
 def get_usdjpy_rate():
     fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
     try:
@@ -328,12 +329,11 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# 🌟 修正: Yahoo検索のブロック回避用ヘッダーを追加
+# 🌟 日本株検索のブロック回避（Yahooリファラ偽装 ＆ みんかぶフォールバック）
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
     results = []
-    # RefererをYahoo公式に偽装してブロックを回避する
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Referer": "https://finance.yahoo.co.jp/"
@@ -362,7 +362,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
                 if results and asset_type == "JP": return results[:8]
         except Exception: pass
         
-        # YahooがダメならみんかぶのWeb検索結果からスクレイピング（フォールバック）
         if not results:
             try:
                 minkabu_url = f"https://minkabu.jp/search?query={urllib.parse.quote(q)}"
@@ -426,6 +425,7 @@ def record_trade(user_id: str, trade: TradeCreate):
         else: cursor.execute("UPDATE portfolio SET quantity = %s WHERE user_id = %s AND ticker = %s", (new_qty, user_id, ticker))
     cursor.close(); conn.close(); return {"message": "Success"}
 
+# 🌟 究極の配当金取得ロジック（3段構え ＆ フォールバック完備）
 @app.get("/api/{user_id}/portfolio")
 def get_portfolio(user_id: str):
     conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -451,23 +451,41 @@ def get_portfolio(user_id: str):
             if scraped > 0: current_price = scraped
         else:
             try:
-                stock = yf.Ticker(ticker if not is_jpy else (f"{ticker}.T" if ticker.isdigit() or len(ticker)==4 else ticker))
+                stock_ticker = ticker if not is_jpy else (f"{ticker}.T" if ticker.isdigit() or len(ticker)==4 else ticker)
+                stock = yf.Ticker(stock_ticker)
                 hist = stock.history(period="1d")
                 if not hist.empty:
                     val = float(hist['Close'].iloc[-1])
                     if not math.isnan(val): current_price = val
                 
+                # 🌟 配当取得ロジック強化
                 info = stock.info
-                if info and "dividendYield" in info and info["dividendYield"]:
-                    div_yield = float(info["dividendYield"])
-                    if div_yield > 0 and div_yield < 1.0: 
-                        div_yield = div_yield * 100.0
-            except: pass
+                # ① まずは1株あたりの配当額(dividendRate)を探す
+                if info and info.get("dividendRate") and current_price > 0:
+                    div_yield = (float(info.get("dividendRate")) / current_price) * 100.0
+                # ② なければ利回り(dividendYield)を探す
+                elif info and info.get("dividendYield"):
+                    div_yield = float(info["dividendYield"]) * 100.0
+                
+                # ③ それでもダメなら、過去1年間の実際の配当履歴(dividends)を合計して自力で計算する
+                if div_yield == 0.0:
+                    divs = stock.dividends
+                    if not divs.empty:
+                        # 過去365日分の配当を合計
+                        one_year_ago = datetime.now(divs.index.tzinfo) - timedelta(days=365)
+                        recent_divs = divs[divs.index >= one_year_ago]
+                        total_div = float(recent_divs.sum())
+                        if total_div > 0 and current_price > 0:
+                            div_yield = (total_div / current_price) * 100.0
+
+            except Exception as e: 
+                print(f"配当取得エラー ({ticker}):", e)
             
-        # 🌟 修正: 取得失敗・無配の場合、市場平均利回りでフォールバック計算
-        if div_yield == 0.0:
-            if is_jpy: div_yield = 2.5      # 日本株の平均利回り
-            elif not is_fund: div_yield = 1.5 # 米国株の平均利回り
+        # 取得失敗・無配の場合、市場平均利回りでフォールバック計算
+        if div_yield == 0.0 or math.isnan(div_yield):
+            if is_jpy: div_yield = 2.5      
+            elif not is_fund: div_yield = 1.5 
+            else: div_yield = 0.0 # 投資信託は基本的に再投資のため0%扱い
             
         if is_fund: 
             current_value_jpy = (quantity * current_price) / 10000.0
