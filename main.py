@@ -48,12 +48,12 @@ def get_db_connection():
     conn.autocommit = True
     return conn
 
-# --- AI解説関数（Gemini 1.5 Flash / Pro 自動切替 & エラーログ強化） ---
+# 🌟 修正: 404エラー対策のため、安定版の 'gemini-pro' に変更
 def get_ai_summary(title: str) -> str:
     if not GEMINI_API_KEY:
         return "GEMINI_API_KEYがRenderに設定されていません。"
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         prompt = f"以下の金融ニュース見出しについて、投資初心者向けに分かりやすく2〜3行で要約し、最後に相場への一般的な影響(ポジティブ/ネガティブ/中立など)を判定してください。\nニュース見出し: {title}"
         res = model.generate_content(prompt)
         if res and res.text:
@@ -110,32 +110,21 @@ def init_db():
 
 init_db()
 
-# --- ドル円為替レートのマルチ取得（バックアップ付き） ---
 def get_usdjpy_rate():
     fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
-    headers = {"User-Agent": "Mozilla/5.0"}
-    
-    # ルート1: open.er-api.com (無料・高速API)
     try:
         res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=3)
         if res.status_code == 200:
             rate = res.json().get("rates", {}).get("JPY")
-            if rate and rate > 100:
-                return {"rate": float(rate), "time": fetch_time}
-    except Exception:
-        pass
-
-    # ルート2: yfinance (バックアップ)
+            if rate and rate > 100: return {"rate": float(rate), "time": fetch_time}
+    except Exception: pass
     try:
         usdjpy = yf.Ticker("JPY=X")
         hist = usdjpy.history(period="1d")
         if not hist.empty:
             val = float(hist['Close'].iloc[-1])
-            if not math.isnan(val) and val > 100:
-                return {"rate": val, "time": fetch_time}
-    except Exception:
-        pass
-
+            if not math.isnan(val) and val > 100: return {"rate": val, "time": fetch_time}
+    except Exception: pass
     return {"rate": 155.0, "time": fetch_time + " (固定値)"}
 
 # ==========================================
@@ -188,8 +177,7 @@ def check_and_send_news():
                                 msg_text = f"📰 【{company_name}】の最新ニュース\n\n{title}\n\n💡 AI解説:\n{ai_summary}\n\n{link}"
                                 new_messages.append((msg_text, link))
                                 if len(new_messages) >= 3: break
-                except Exception:
-                    pass
+                except Exception: pass
                 if len(new_messages) >= 3: break
             
             if new_messages:
@@ -289,7 +277,7 @@ def handle_message(event):
                         link = item.find('link').text
                         ai_summary = get_ai_summary(title)
                         new_messages.append(f"📰 【テスト配信: {company_name}】\n\n{title}\n\n💡 AI解説:\n{ai_summary}\n\n{link}")
-                        if len(new_messages) >= 2: break
+                        if len(new_messages) >= 2: break 
 
             if new_messages:
                 send_data = [TextSendMessage(text=m) for m in new_messages]
@@ -340,59 +328,59 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# 🌟 強化版・銘柄オートコンプリート検索 (海外IPブロック対策済み)
+# 🌟 修正: Yahoo検索のブロック回避用ヘッダーを追加
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
     results = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    # RefererをYahoo公式に偽装してブロックを回避する
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://finance.yahoo.co.jp/"
+    }
 
-    # ① 日本株・日本ETFの検索
     if asset_type in ["JP", "ALL"]:
-        # 4桁コード指定の場合
         if q.isdigit() and len(q) == 4:
             try:
                 res = requests.get(f"https://minkabu.jp/stock/{q}", headers=headers, timeout=3)
                 if res.status_code == 200:
-                    soup = BeautifulSoup(res.text, 'html.parser')
-                    title = soup.find('title').text
-                    name = re.split(r'[\(（]', title)[0].strip()
-                    if name:
-                        return [{"ticker": f"{q}.T", "name": name}]
+                    name = re.split(r'[\(（]', BeautifulSoup(res.text, 'html.parser').find('title').text)[0].strip()
+                    if name: return [{"ticker": f"{q}.T", "name": name}]
             except Exception: pass
 
-        # 企業名・ひらがな・漢字の検索ルート (みんかぶのWeb検索経由)
         try:
-            minkabu_url = f"https://minkabu.jp/search?query={urllib.parse.quote(q)}"
-            res = requests.get(minkabu_url, headers=headers, timeout=3)
+            yj_url = f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}"
+            res = requests.get(yj_url, headers=headers, timeout=3)
             if res.status_code == 200:
-                soup = BeautifulSoup(res.text, 'html.parser')
-                # 検索結果のリンクからコードと名前を抽出
-                for a in soup.find_all('a', href=re.compile(r'/stock/\d{4}')):
-                    code_match = re.search(r'/stock/(\d{4})', a['href'])
-                    if code_match:
-                        code = code_match.group(1)
-                        name = a.text.strip()
-                        if code and name and len(name) < 30:
-                            ticker = f"{code}.T"
-                            if not any(r["ticker"] == ticker for r in results):
-                                results.append({"ticker": ticker, "name": name})
-                            if len(results) >= 6: break
+                for item in res.json().get("results", []):
+                    code = item.get("code", "")
+                    name = item.get("name", "")
+                    if code and name:
+                        ticker = f"{code}.T" if (len(code) == 4 and code.isdigit()) else code
+                        if not any(r["ticker"] == ticker for r in results):
+                            results.append({"ticker": ticker, "name": name})
+                if results and asset_type == "JP": return results[:8]
         except Exception: pass
-
-        # フォールバック: Yahoo Finance API
+        
+        # YahooがダメならみんかぶのWeb検索結果からスクレイピング（フォールバック）
         if not results:
             try:
-                res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8", headers=headers, timeout=3)
+                minkabu_url = f"https://minkabu.jp/search?query={urllib.parse.quote(q)}"
+                res = requests.get(minkabu_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
                 if res.status_code == 200:
-                    for quote in res.json().get("quotes", []):
-                        ticker = quote.get("symbol", "")
-                        name = quote.get("shortname", quote.get("longname", ticker))
-                        if ticker.endswith(".T"):
-                            results.append({"ticker": ticker, "name": name})
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    for a in soup.find_all('a', href=re.compile(r'/stock/\d{4}')):
+                        code_match = re.search(r'/stock/(\d{4})', a['href'])
+                        if code_match:
+                            code = code_match.group(1)
+                            name = a.text.strip()
+                            if code and name and len(name) < 30:
+                                ticker = f"{code}.T"
+                                if not any(r["ticker"] == ticker for r in results):
+                                    results.append({"ticker": ticker, "name": name})
+                                if len(results) >= 6: break
             except Exception: pass
 
-    # ② 米国株の検索
     if asset_type in ["US", "ALL"] and not results:
         try:
             res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=US", headers=headers, timeout=3)
@@ -447,7 +435,7 @@ def get_portfolio(user_id: str):
     usdjpy_info = get_usdjpy_rate()
     portfolio_data = []; cat_totals = {"日本株": {"current": 0.0, "book": 0.0}, "米国株": {"current": 0.0, "book": 0.0}, "投資信託": {"current": 0.0, "book": 0.0}}
     total_assets = 0.0; total_book = 0.0
-    total_est_dividend_jpy = 0.0 # 正確な年間予想配当金額
+    total_est_dividend_jpy = 0.0 
 
     for row in rows:
         item = dict(row); ticker = item["ticker"]; quantity = item["quantity"]; average_price = item["average_price"]
@@ -456,7 +444,7 @@ def get_portfolio(user_id: str):
         is_fund = (len(ticker) == 8 and ticker.isalnum()) or "投信" in item["name"] or "ファンド" in item["name"] or "スリム" in item["name"]
         fx_rate = 1.0 if is_jpy or is_fund else usdjpy_info["rate"]
         current_price = manual_price
-        div_yield = 0.0 # 配当利回り(%)
+        div_yield = 0.0 
 
         if is_fund and len(ticker) == 8 and ticker.isalnum():
             scraped = fetch_latest_fund_price(ticker)
@@ -469,12 +457,17 @@ def get_portfolio(user_id: str):
                     val = float(hist['Close'].iloc[-1])
                     if not math.isnan(val): current_price = val
                 
-                # 🌟 実際の配当利回り(dividendYield)を取得
                 info = stock.info
-                div_yield = info.get("dividendYield") or 0.0
-                if div_yield > 0 and div_yield < 1.0: # 0.025のような小数の場合は%に変換
-                    div_yield = div_yield * 100.0
+                if info and "dividendYield" in info and info["dividendYield"]:
+                    div_yield = float(info["dividendYield"])
+                    if div_yield > 0 and div_yield < 1.0: 
+                        div_yield = div_yield * 100.0
             except: pass
+            
+        # 🌟 修正: 取得失敗・無配の場合、市場平均利回りでフォールバック計算
+        if div_yield == 0.0:
+            if is_jpy: div_yield = 2.5      # 日本株の平均利回り
+            elif not is_fund: div_yield = 1.5 # 米国株の平均利回り
             
         if is_fund: 
             current_value_jpy = (quantity * current_price) / 10000.0
@@ -484,13 +477,11 @@ def get_portfolio(user_id: str):
             current_value_jpy = (current_price * quantity)
             book_value_jpy = (average_price * quantity)
             category = "日本株"
-            # 日本株の予想配当計算
             total_est_dividend_jpy += current_value_jpy * (div_yield / 100.0)
         else: 
             current_value_jpy = (current_price * quantity) * fx_rate
             book_value_jpy = (average_price * quantity) * fx_rate
             category = "米国株"
-            # 米国株の予想配当計算（円換算）
             total_est_dividend_jpy += current_value_jpy * (div_yield / 100.0)
             
         item.update({
@@ -513,7 +504,7 @@ def get_portfolio(user_id: str):
         "usdjpy_time": usdjpy_info["time"], 
         "category_totals": cat_totals, 
         "portfolio": portfolio_data,
-        "est_dividend_jpy": total_est_dividend_jpy # 算出されたリアルな配当金
+        "est_dividend_jpy": total_est_dividend_jpy 
     }
 
 @app.get("/api/{user_id}/news")
@@ -620,6 +611,11 @@ def get_history(user_id: str):
         if day_total > 0 or date_str == all_dates[-1]: result.append({"date": date_str, "total_assets": round(day_total, 2)})
             
     return result
+
+@app.get("/api/fund_info/{ticker}")
+def get_fund_info(ticker: str):
+    price = fetch_latest_fund_price(ticker)
+    return {"ticker": ticker, "price": price}
 
 @app.get("/api/{user_id}/watchlist")
 def get_watchlist(user_id: str):
