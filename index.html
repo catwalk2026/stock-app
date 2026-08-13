@@ -616,11 +616,9 @@
                 document.getElementById('goal-bar').style.width = `${currentPercent}%`;
                 document.getElementById('goal-percent').textContent = `${currentPercent.toFixed(1)}%`;
 
-                // 配当利回りの概算（日本株2.5%、米国株1.5%と仮定）
-                const estDivJp = catStats["日本株"].current * 0.025;
-                const estDivUs = catStats["米国株"].current * 0.015;
-                const estDividendTotal = estDivJp + estDivUs;
-                document.getElementById('est-dividend').textContent = `¥${Math.floor(estDividendTotal).toLocaleString()}`;
+                // 🌟 修正後（実際の銘柄データから算出された数値を反映）
+                const estDivTotal = data.est_dividend_jpy || 0;
+                document.getElementById('est-dividend').textContent = `¥${Math.floor(estDivTotal).toLocaleString()}`;
                 // ----------------------------------------------
 
                 function updateCatUI(idPrefix, current, book) {
