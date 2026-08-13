@@ -369,14 +369,18 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# 🌟 JPXメモリ検索 ＆ 投資信託専用ルート追加
+# 🌟 修正: 投資信託の検索ロジックをYahooサジェスト＆みんかぶ総合検索に強化
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
     results = []
     q_str = q.strip().lower()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://finance.yahoo.co.jp/"
+    }
 
-    # 日本株（JPX公式データから爆速検索）
+    # 日本株
     if asset_type in ["JP", "ALL"]:
         for item in JPX_STOCKS:
             if q_str in item["code"].lower() or q_str in item["name"].lower():
@@ -387,7 +391,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
     # 米国株
     if asset_type in ["US", "ALL"] and len(results) < 8:
         try:
-            headers = {"User-Agent": "Mozilla/5.0"}
             res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=US", headers=headers, timeout=3)
             if res.status_code == 200:
                 for quote in res.json().get("quotes", []):
@@ -398,21 +401,39 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         results.append({"ticker": ticker, "name": name})
         except Exception: pass
 
-    # 投資信託（みんかぶ投信検索 - 投信タブで専用稼働）
+    # 🌟 投資信託
     if asset_type == "FUND" or (asset_type == "ALL" and len(results) < 8):
+        # ① Yahoo Finance 検索（投信にも対応）
         try:
-            res = requests.get(f"https://itf.minkabu.jp/search/fund?word={urllib.parse.quote(q)}", headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
+            yj_url = f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}"
+            res = requests.get(yj_url, headers=headers, timeout=3)
             if res.status_code == 200:
-                soup = BeautifulSoup(res.text, 'html.parser')
-                for a in soup.find_all('a', href=re.compile(r'^/fund/[0-9A-Z]{8}$')):
-                    code_match = re.search(r'/fund/([0-9A-Z]{8})', a['href'])
-                    if code_match:
-                        code = code_match.group(1)
-                        name = a.text.strip()
-                        if code and name and not any(r["ticker"] == code for r in results):
+                for item in res.json().get("results", []):
+                    code = item.get("code", "")
+                    name = item.get("name", "")
+                    # 投資信託のコードは8桁の英数字
+                    if code and name and len(code) == 8 and code.isalnum():
+                        if not any(r["ticker"] == code for r in results):
                             results.append({"ticker": code, "name": name})
-                        if len(results) >= 8: break
         except Exception: pass
+
+        # ② みんかぶ総合検索（フォールバック）
+        if not results:
+            try:
+                minkabu_url = f"https://minkabu.jp/search?query={urllib.parse.quote(q)}"
+                res = requests.get(minkabu_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
+                if res.status_code == 200:
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    # 投信のURLは /fund/0331418A のような形式
+                    for a in soup.find_all('a', href=re.compile(r'/fund/[0-9A-Za-z]{8}')):
+                        code_match = re.search(r'/fund/([0-9A-Za-z]{8})', a['href'])
+                        if code_match:
+                            code = code_match.group(1).upper()
+                            name = a.text.strip()
+                            if code and name and len(name) < 40 and not any(r["ticker"] == code for r in results):
+                                results.append({"ticker": code, "name": name})
+                        if len(results) >= 8: break
+            except Exception: pass
 
     return results[:8]
 
@@ -430,7 +451,7 @@ def record_trade(user_id: str, trade: TradeCreate):
     elif trade.asset_type == "US": ticker = ticker.upper()
     name = trade.name.strip() if trade.name.strip() else ticker
     
-    cursor.execute('INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price, reason) VALUES (%s, %s, %s, %s, %s, %s, %s)', (user_id, ticker, trade.trade_type, trade.trade_date, trade.quantity, price, trade.reason))
+    cursor.execute('INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price, reason) VALUES (%s, %s, %s, %s, %s, %s, %s)', (user_id, ticker, trade.trade_type, trade.trade_date, trade.quantity, trade.price, trade.reason))
     cursor.execute("SELECT * FROM portfolio WHERE user_id = %s AND ticker = %s", (user_id, ticker))
     current = cursor.fetchone()
     
