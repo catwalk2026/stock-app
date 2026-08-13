@@ -272,6 +272,59 @@ def handle_message(event):
             TextSendMessage(text=f"✅ 会員番号「{text}」との紐付けが完了しました！\n今後、保有銘柄や気になる銘柄の新しいニュースが出たら、いち早くお知らせします📉✨")
         )
         
+    elif text == "ニューステスト":
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="🚀 ニューステスト隊が出動しました！最新ニュースを探してきます...🏃💨")
+        )
+
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = %s", (line_user_id,))
+            row = cursor.fetchone()
+            
+            if not row:
+                line_bot_api.push_message(line_user_id, TextSendMessage(text="⚠️ 先に会員連携を済ませてください！"))
+                cursor.close(); conn.close()
+                return
+
+            app_user_id = row["app_user_id"]
+            cursor.execute("SELECT name FROM portfolio WHERE user_id = %s AND ticker LIKE '%%.T'", (app_user_id,))
+            p_names = [r["name"] for r in cursor.fetchall()]
+            cursor.execute("SELECT name FROM watchlist WHERE user_id = %s AND ticker LIKE '%%.T'", (app_user_id,))
+            w_names = [r["name"] for r in cursor.fetchall()]
+            cursor.close(); conn.close()
+
+            target_names = list(set(p_names + w_names))
+            if not target_names:
+                line_bot_api.push_message(line_user_id, TextSendMessage(text="⚠️ 日本株やETFが登録されていません。ダッシュボードから何か登録して再度テストしてください！"))
+                return
+
+            headers = {"User-Agent": "Mozilla/5.0"}
+            new_messages = []
+            for company_name in target_names:
+                query = urllib.parse.quote(f"{company_name} 株")
+                url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
+                res = requests.get(url, headers=headers, timeout=5)
+                if res.status_code == 200:
+                    root = ET.fromstring(res.text)
+                    items = root.findall('.//item')
+                    if items:
+                        item = items[0] 
+                        title = item.find('title').text
+                        link = item.find('link').text
+                        new_messages.append(f"📰 【テスト配信: {company_name}】\n\n{title}\n{link}")
+                        if len(new_messages) >= 3: break 
+
+            if new_messages:
+                send_data = [TextSendMessage(text=m) for m in new_messages]
+                line_bot_api.push_message(line_user_id, send_data)
+            else:
+                line_bot_api.push_message(line_user_id, TextSendMessage(text="😢 ニュースが見つかりませんでした。"))
+        except Exception as e:
+            print("テストエラー:", e)
+
     else:
         line_bot_api.reply_message(
             event.reply_token,
