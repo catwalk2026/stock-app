@@ -294,8 +294,11 @@ def handle_message(event):
                 cursor.close(); conn.close(); return
 
             app_user_id = row["app_user_id"]
+            
+            # 🌟 修正箇所: fetchall() を正しく cursor.fetchall() に修正
             cursor.execute("SELECT name FROM portfolio WHERE user_id = %s AND ticker LIKE '%%.T'", (app_user_id,))
-            p_names = [r["name"] for r infetchall()]
+            p_names = [r["name"] for r in cursor.fetchall()]
+            
             cursor.execute("SELECT name FROM watchlist WHERE user_id = %s AND ticker LIKE '%%.T'", (app_user_id,))
             w_names = [r["name"] for r in cursor.fetchall()]
             cursor.close(); conn.close()
@@ -346,12 +349,10 @@ def get_next_business_day(dt: datetime) -> datetime:
     while not is_business_day(curr): curr += timedelta(days=1)
     return curr
 
-# 🌟 修正: 投資信託の価格取得を「Yahoo」と「みんかぶ」の2重スクレイピング＆正規表現に強化！
 def fetch_latest_fund_price(ticker: str) -> float:
     ticker = ticker.strip()
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36"}
     
-    # ルート1: Yahoo!ファイナンスから取得
     try:
         y_url = f"https://finance.yahoo.co.jp/quote/{ticker}"
         res = requests.get(y_url, headers=headers, timeout=5)
@@ -360,25 +361,21 @@ def fetch_latest_fund_price(ticker: str) -> float:
             idx = html.find("基準価額")
             if idx != -1:
                 sub = html[idx:idx+300]
-                # HTMLタグの間に挟まれた「10,000」のような数字を無理やり引っこ抜く
                 nums = re.findall(r'>([1-9][0-9]*,[0-9]{3}|[1-9][0-9]{3,})<', sub)
                 if nums: return float(nums[0].replace(',', ''))
     except Exception as e:
         print("Yahoo fund price fetch error:", e)
 
-    # ルート2: みんかぶ投信から取得（バックアップ）
     try:
         m_url = f"https://itf.minkabu.jp/fund/{ticker}"
         res = requests.get(m_url, headers=headers, timeout=5)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
-            # 従来のstock_price
             price_elem = soup.find(class_='stock_price')
             if price_elem:
                 num = re.sub(r'[^\d.]', '', price_elem.text)
                 if num and float(num) > 100: return float(num)
             
-            # ページ内の「基準価額」という文字の周辺から抽出
             html = res.text
             idx = html.find("基準価額")
             if idx != -1:
@@ -401,7 +398,6 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# 🌟 JPXメモリ検索 ＆ 投資信託の8桁ダイレクト検索対応
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
@@ -412,7 +408,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
         "Referer": "https://finance.yahoo.co.jp/"
     }
 
-    # 日本株
     if asset_type in ["JP", "ALL"]:
         for item in JPX_STOCKS:
             if q_str in item["code"].lower() or q_str in item["name"].lower():
@@ -420,7 +415,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
                 if len(results) >= 8: break
         if results and asset_type == "JP": return results[:8]
 
-    # 米国株
     if asset_type in ["US", "ALL"] and len(results) < 8:
         try:
             res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=US", headers=headers, timeout=3)
@@ -433,10 +427,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         results.append({"ticker": ticker, "name": name})
         except Exception: pass
 
-    # 🌟 投資信託
     if asset_type == "FUND" or (asset_type == "ALL" and len(results) < 8):
-        
-        # ① 8桁のコード直打ち対応！
         if len(q_str) == 8 and q_str.isalnum():
             try:
                 fund_url = f"https://itf.minkabu.jp/fund/{q_str.upper()}"
@@ -453,7 +444,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         results.append({"ticker": q_str.upper(), "name": name})
             except Exception: pass
 
-        # ② Yahoo Finance 検索
         if not results:
             try:
                 yj_url = f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}"
@@ -467,7 +457,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
                                 results.append({"ticker": code, "name": name})
             except Exception: pass
 
-        # ③ みんかぶ総合検索
         if not results:
             try:
                 minkabu_url = f"https://minkabu.jp/search?query={urllib.parse.quote(q)}"
