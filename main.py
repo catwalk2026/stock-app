@@ -295,7 +295,6 @@ def handle_message(event):
 
             app_user_id = row["app_user_id"]
             
-            # 🌟 修正箇所: fetchall() を正しく cursor.fetchall() に修正
             cursor.execute("SELECT name FROM portfolio WHERE user_id = %s AND ticker LIKE '%%.T'", (app_user_id,))
             p_names = [r["name"] for r in cursor.fetchall()]
             
@@ -349,10 +348,28 @@ def get_next_business_day(dt: datetime) -> datetime:
     while not is_business_day(curr): curr += timedelta(days=1)
     return curr
 
+# 🌟 修正: 投資信託の価格取得を「どんな構造変更にも耐える」最強の正規表現ロジックに強化！
 def fetch_latest_fund_price(ticker: str) -> float:
-    ticker = ticker.strip()
+    ticker = ticker.strip().upper()
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36"}
     
+    # 1. みんかぶ投信から「基準価額」という文字の近くの数字を強制抽出
+    try:
+        m_url = f"https://itf.minkabu.jp/fund/{ticker}"
+        res = requests.get(m_url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            html = res.text
+            idx = html.find("基準価額")
+            if idx != -1:
+                sub = html[idx:idx+300]
+                text_only = re.sub(r'<[^>]+>', '', sub) # HTMLタグを全部消す
+                # 10,000円 のような数字を抽出
+                nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})\s*円', text_only)
+                if nums: return float(nums[0].replace(',', ''))
+    except Exception as e:
+        print("Minkabu fund price fetch error:", e)
+
+    # 2. Yahoo!ファイナンス（バックアップ）から抽出
     try:
         y_url = f"https://finance.yahoo.co.jp/quote/{ticker}"
         res = requests.get(y_url, headers=headers, timeout=5)
@@ -361,29 +378,11 @@ def fetch_latest_fund_price(ticker: str) -> float:
             idx = html.find("基準価額")
             if idx != -1:
                 sub = html[idx:idx+300]
-                nums = re.findall(r'>([1-9][0-9]*,[0-9]{3}|[1-9][0-9]{3,})<', sub)
+                text_only = re.sub(r'<[^>]+>', '', sub)
+                nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', text_only.replace("基準価額", ""))
                 if nums: return float(nums[0].replace(',', ''))
     except Exception as e:
         print("Yahoo fund price fetch error:", e)
-
-    try:
-        m_url = f"https://itf.minkabu.jp/fund/{ticker}"
-        res = requests.get(m_url, headers=headers, timeout=5)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, 'html.parser')
-            price_elem = soup.find(class_='stock_price')
-            if price_elem:
-                num = re.sub(r'[^\d.]', '', price_elem.text)
-                if num and float(num) > 100: return float(num)
-            
-            html = res.text
-            idx = html.find("基準価額")
-            if idx != -1:
-                sub = html[idx:idx+300]
-                nums = re.findall(r'([1-9][0-9]*,[0-9]{3}|[1-9][0-9]{3,})円', sub)
-                if nums: return float(nums[0].replace(',', ''))
-    except Exception as e:
-        print("Minkabu fund price fetch error:", e)
 
     return 0.0
 
