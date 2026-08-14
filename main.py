@@ -66,7 +66,6 @@ def load_jpx_stocks():
 
 load_jpx_stocks()
 
-# 証券コードを1つずつ再確認した完全版リスト！
 POPULAR_FUNDS = [
     {"ticker": "0331418A", "name": "eMAXIS Slim 全世界株式(オール・カントリー)", "keywords": ["オルカン", "emaxis", "slim", "all", "全世界", "カントリー", "三菱ufj"]},
     {"ticker": "03311187", "name": "eMAXIS Slim 米国株式(S&P500)", "keywords": ["emaxis", "slim", "s&p500", "sp500", "米国", "アメリカ"]},
@@ -164,17 +163,16 @@ def get_usdjpy_rate():
         old = cursor.fetchone()
         rate = old["price"] if old else 155.0; fetch_time = "前回取得値"
         
-    cursor.execute('''INSERT INTO asset_cache (ticker, price, div_yield, last_updated) VALUES ('USDJPY', %s, 0.0, %s) ON CONFLICT (ticker) DO UPDATE SET price = EXCLUDED.price, last_updated = EXCLUDED.last_updated''', (rate, today_str))
+    cursor.execute('''INSERT INTO asset_cache (ticker, price, div_yield, last_updated) VALUES ('USDJPY', %s, 0.0, %s) ON CONFLICT (ticker) DO UPDATE SET price = EXCLUDED.price, div_yield = EXCLUDED.div_yield, last_updated = EXCLUDED.last_updated''', (rate, today_str))
     cursor.close(); conn.close()
     return {"rate": rate, "time": fetch_time}
 
 # ==========================================
-# 🌟 価格取得の完全堅牢化 ＆ キャッシュ強制リセット
+# 🌟 価格取得の完全高精度化（ピンポイント抽出）
 # ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    # 🌟 修正ポイント: 不正なキャッシュ(21707等)を無視するため、キーに -v2 をつけて強制リセット！
-    today_str = datetime.now().strftime("%Y-%m-%d-v2")
+    today_str = datetime.now().strftime("%Y-%m-%d-v3")
     
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -187,32 +185,54 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
         
     price = 0.0
     div_yield = 0.0
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     
     if is_fund and len(ticker) == 8 and ticker.isalnum():
-        # 🌟 修正ポイント: 特定のHTMLクラスからピンポイントで抜き出して、他ファンドの数字を拾うのを防ぐ！
-        
-        # 1. みんかぶ投信 (クラス指定)
+        # 1. Yahoo!ファイナンス (メインコンテンツをピンポイント解析)
         try:
-            res = requests.get(f"https://itf.minkabu.jp/fund/{ticker}", headers=headers, timeout=5)
+            res = requests.get(f"https://finance.yahoo.co.jp/quote/{ticker}", headers=headers, timeout=5)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.text, 'html.parser')
-                price_elem = soup.find('div', class_='stock_price')
-                if price_elem:
-                    nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', price_elem.text)
-                    if nums: price = float(nums[0].replace(',', ''))
+                main_tag = soup.find('main') or soup.find('div', id='root') or soup
+                text = main_tag.get_text()
+                idx = text.find("基準価額")
+                if idx != -1:
+                    sub = text[idx:idx+200]
+                    nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', sub)
+                    if nums:
+                        val = float(nums[0].replace(',', ''))
+                        if val > 100: price = val
         except: pass
 
-        # 2. 日経新聞 (構造が安定していて確実)
+        # 2. みんかぶ投信 (コンテンツエリア解析)
+        if price == 0.0:
+            try:
+                res = requests.get(f"https://itf.minkabu.jp/fund/{ticker}", headers=headers, timeout=5)
+                if res.status_code == 200:
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    content = soup.find('div', id='content') or soup.find('main') or soup
+                    text = content.get_text()
+                    idx = text.find("基準価額")
+                    if idx != -1:
+                        sub = text[idx:idx+200]
+                        nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', sub)
+                        if nums:
+                            val = float(nums[0].replace(',', ''))
+                            if val > 100: price = val
+            except: pass
+
+        # 3. 日経新聞 (構造安定型)
         if price == 0.0:
             try:
                 res = requests.get(f"https://www.nikkei.com/nkd/fund/?fcode={ticker}", headers=headers, timeout=5)
                 if res.status_code == 200:
                     soup = BeautifulSoup(res.text, 'html.parser')
-                    price_elem = soup.find('dd', class_='m-stockPriceElm_value')
-                    if price_elem:
-                        nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', price_elem.text)
-                        if nums: price = float(nums[0].replace(',', ''))
+                    dd = soup.find('dd', class_=re.compile(r'.*value.*'))
+                    if dd:
+                        nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', dd.text)
+                        if nums:
+                            val = float(nums[0].replace(',', ''))
+                            if val > 100: price = val
             except: pass
 
         div_yield = 0.0
@@ -233,7 +253,6 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     if div_yield == 0.0 or math.isnan(div_yield):
         div_yield = 2.5 if is_jpy else (1.5 if not is_fund else 0.0)
     
-    # 古いキャッシュがあればフォールバック
     if price == 0.0 and row: price = row["price"] 
 
     if price > 0:
@@ -325,6 +344,9 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
+# ==========================================
+# 🌟 日本株サジェストの完全二重化（JPX＋Yahoo）
+# ==========================================
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
@@ -332,13 +354,34 @@ def search_stock(q: str, asset_type: str = "ALL"):
     q_str = q.strip().lower()
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36"}
 
+    # 1. 日本株検索 (JPXメモリ ＋ Yahooリアルタイムサジェストの二重化)
     if asset_type in ["JP", "ALL"]:
-        for item in JPX_STOCKS:
-            if q_str in item["code"].lower() or q_str in item["name"].lower():
-                results.append({"ticker": item["ticker"], "name": item["name"]})
-                if len(results) >= 8: break
+        # ① JPXリストからの検索
+        if JPX_STOCKS:
+            for item in JPX_STOCKS:
+                if q_str in item["code"].lower() or q_str in item["name"].lower():
+                    results.append({"ticker": item["ticker"], "name": item["name"]})
+                    if len(results) >= 8: break
+        
+        # ② JPXが空または不十分な場合、Yahoo Japan サジェスト API を叩く
+        if len(results) < 8:
+            try:
+                yj_url = f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}"
+                res = requests.get(yj_url, headers=headers, timeout=3)
+                if res.status_code == 200:
+                    for item in res.json().get("results", []):
+                        code = item.get("code", "")
+                        name = item.get("name", "")
+                        if code and name and (code.endswith(".T") or (len(code) == 4 and code.isalnum())):
+                            ticker = code if code.endswith(".T") else f"{code}.T"
+                            if not any(r["ticker"] == ticker for r in results):
+                                results.append({"ticker": ticker, "name": name})
+                        if len(results) >= 8: break
+            except: pass
+
         if results and asset_type == "JP": return results[:8]
 
+    # 2. 米国株検索
     if asset_type in ["US", "ALL"] and len(results) < 8:
         try:
             res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=US", headers=headers, timeout=5)
@@ -350,6 +393,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
                     if not any(r["ticker"] == ticker for r in results): results.append({"ticker": ticker, "name": name})
         except: pass
 
+    # 3. 投資信託検索
     if asset_type in ["FUND", "ALL"] and len(results) < 8:
         if len(q_str) == 8 and q_str.isalnum():
             try:
