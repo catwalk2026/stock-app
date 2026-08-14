@@ -75,6 +75,9 @@
         .form-group input, .form-group select { padding: 10px 14px; border: 1px solid var(--ivory-main); border-radius: 8px; color: var(--text-black); font-size: 0.95rem; outline: none; transition: border-color 0.3s; background-color: var(--white); }
         .form-group input:focus, .form-group select:focus { border-color: var(--turquoise-base); }
 
+        /* ロックされた状態の入力欄 */
+        .input-locked { background-color: #F0F2F5 !important; color: #8C96A0 !important; cursor: not-allowed; border-color: #E2E8ED !important; }
+
         .btn-submit { padding: 12px 28px; background: var(--turquoise-base); color: var(--white); border: none; border-radius: 30px; cursor: pointer; font-weight: bold; margin-top: 20px; transition: all 0.3s ease; font-size: 1rem; letter-spacing: 0.05em; display: inline-block;}
         .btn-submit:hover { background: var(--turquoise-main); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(37, 178, 199, 0.2); }
 
@@ -271,7 +274,6 @@
             <div id="tab-fund" class="tab-content">
                 <h2>投資信託ポートフォリオ</h2>
                 
-                <!-- 🌟 投資信託のサブタブ（積立・スポット切り替え） -->
                 <div style="display:flex; gap:10px; margin-bottom:20px;">
                     <button id="btn-fund-rule" class="filter-btn active" style="padding:10px 20px; font-size:1rem;" onclick="toggleFundForm('rule')">自動積立ルールを設定</button>
                     <button id="btn-fund-spot" class="filter-btn" style="padding:10px 20px; font-size:1rem;" onclick="toggleFundForm('spot')">スポット買付（一括購入）</button>
@@ -289,7 +291,18 @@
                     <div class="form-group"><label>積立コース</label><select id="rule-freq" onchange="toggleRuleFreq()"><option value="MONTHLY">毎月コース</option><option value="DAILY">毎日コース</option></select></div>
                     <div class="form-group" id="rule-day-group"><label>積立日 (毎月)</label><select id="rule-day"><option value="1">1日</option><option value="5">5日</option><option value="10">10日</option><option value="15">15日</option><option value="20">20日</option><option value="25">25日</option></select></div>
                     <div class="form-group"><label>積立金額 (円)</label><input type="number" id="rule-amount" placeholder="30000"></div>
-                    <div class="form-group"><label>基準価額 (自動反映)</label><input type="number" id="rule-avg-price" placeholder="例: 28459"></div>
+                    
+                    <!-- 🌟 修正ポイント: 自動反映/手入力の切り替えチェックボックスを追加 -->
+                    <div class="form-group">
+                        <label style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>基準価額 (1万口)</span>
+                            <label style="font-size:0.75rem; font-weight:normal; display:flex; align-items:center; gap:4px; cursor:pointer; color:var(--text-black);">
+                                <input type="checkbox" id="rule-price-manual-check" onchange="toggleManualPrice('rule')"> 手入力(過去分等)
+                            </label>
+                        </label>
+                        <input type="number" id="rule-avg-price" class="input-locked" readonly placeholder="例: 28459">
+                    </div>
+
                     <div class="form-group"><label>開始日</label><input type="date" id="rule-start-date" class="default-date"></div>
                     <button type="button" class="btn-submit" onclick="submitFundRule()">積立を開始する</button>
                 </div>
@@ -306,7 +319,18 @@
                     <div class="form-group"><label>取引日</label><input type="date" id="fund-trade-date" class="default-date"></div>
                     <div class="form-group"><label>投信コード</label><input type="text" id="fund-ticker" onchange="fetchFundPriceAuto('spot')" placeholder="例: 0331418A"></div>
                     <div class="form-group"><label>ファンド名</label><input type="text" id="fund-name" placeholder="例: eMAXIS Slim S&P500"></div>
-                    <div class="form-group"><label>基準価額 (自動反映)</label><input type="number" id="fund-price" oninput="calculateQty('fund')" placeholder="例: 28459"></div>
+
+                    <!-- 🌟 修正ポイント: 自動反映/手入力の切り替えチェックボックスを追加 -->
+                    <div class="form-group">
+                        <label style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>基準価額 (1万口)</span>
+                            <label style="font-size:0.75rem; font-weight:normal; display:flex; align-items:center; gap:4px; cursor:pointer; color:var(--text-black);">
+                                <input type="checkbox" id="spot-price-manual-check" onchange="toggleManualPrice('spot')"> 手入力(過去分等)
+                            </label>
+                        </label>
+                        <input type="number" id="fund-price" oninput="calculateQty('fund')" class="input-locked" readonly placeholder="例: 28459">
+                    </div>
+
                     <div class="form-group" id="fund-amount-group"><label>買付金額 (円)</label><input type="number" id="fund-amount" oninput="calculateQty('fund')" placeholder="例: 30000"></div>
                     <div class="form-group"><label>買付口数 (口)</label><input type="number" id="fund-qty" placeholder="例: 35138"></div>
                     <div class="form-group"><label>取引理由（任意）</label><input type="text" id="fund-reason" placeholder="例: 余剰資金の投資"></div>
@@ -431,7 +455,6 @@
             if (tabId === 'tab-watchlist') fetchWatchlist();
         }
 
-        // 🌟 投資信託のサブタブ切り替え機能
         function toggleFundForm(type) {
             document.getElementById('btn-fund-rule').classList.remove('active');
             document.getElementById('btn-fund-spot').classList.remove('active');
@@ -481,7 +504,28 @@
             }
         }
 
+        // 🌟 自動/手入力の切り替えロジックを追加
+        function toggleManualPrice(type) {
+            const isManual = document.getElementById(`${type}-price-manual-check`).checked;
+            const inputId = type === 'rule' ? 'rule-avg-price' : 'fund-price';
+            const inputElem = document.getElementById(inputId);
+
+            if (isManual) {
+                inputElem.readOnly = false;
+                inputElem.classList.remove('input-locked');
+                inputElem.focus();
+            } else {
+                inputElem.readOnly = true;
+                inputElem.classList.add('input-locked');
+                fetchFundPriceAuto(type); // チェックを外したら、もう一度最新価格を自動取得して上書き
+            }
+        }
+
         async function fetchFundPriceAuto(type) {
+            // もし「手入力」にチェックが入っていたら、自動取得（上書き）はしない
+            const isManual = document.getElementById(`${type}-price-manual-check`).checked;
+            if (isManual) return;
+
             const ticker = (type === 'rule' ? document.getElementById('rule-ticker') : document.getElementById('fund-ticker')).value.trim();
             if (ticker.length === 8) {
                 try {
