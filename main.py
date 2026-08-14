@@ -66,7 +66,7 @@ def load_jpx_stocks():
 
 load_jpx_stocks()
 
-# 💡 証券コードを1つずつ再確認した完全版リスト！
+# 証券コードを1つずつ再確認した完全版リスト！
 POPULAR_FUNDS = [
     {"ticker": "0331418A", "name": "eMAXIS Slim 全世界株式(オール・カントリー)", "keywords": ["オルカン", "emaxis", "slim", "all", "全世界", "カントリー", "三菱ufj"]},
     {"ticker": "03311187", "name": "eMAXIS Slim 米国株式(S&P500)", "keywords": ["emaxis", "slim", "s&p500", "sp500", "米国", "アメリカ"]},
@@ -168,40 +168,54 @@ def get_usdjpy_rate():
     cursor.close(); conn.close()
     return {"rate": rate, "time": fetch_time}
 
+# ==========================================
+# 🌟 価格取得の完全堅牢化 ＆ キャッシュ強制リセット
+# ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
-    ticker = ticker.strip().upper(); today_str = datetime.now().strftime("%Y-%m-%d")
-    conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+    ticker = ticker.strip().upper()
+    # 🌟 修正ポイント: 不正なキャッシュ(21707等)を無視するため、キーに -v2 をつけて強制リセット！
+    today_str = datetime.now().strftime("%Y-%m-%d-v2")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT price, div_yield, last_updated FROM asset_cache WHERE ticker = %s", (ticker,))
     row = cursor.fetchone()
+    
     if row and row["last_updated"] == today_str and row["price"] > 0:
-        cursor.close(); conn.close(); return row["price"], row["div_yield"]
+        cursor.close(); conn.close()
+        return row["price"], row["div_yield"]
         
-    price = 0.0; div_yield = 0.0
+    price = 0.0
+    div_yield = 0.0
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36"}
     
     if is_fund and len(ticker) == 8 and ticker.isalnum():
+        # 🌟 修正ポイント: 特定のHTMLクラスからピンポイントで抜き出して、他ファンドの数字を拾うのを防ぐ！
+        
+        # 1. みんかぶ投信 (クラス指定)
         try:
             res = requests.get(f"https://itf.minkabu.jp/fund/{ticker}", headers=headers, timeout=5)
             if res.status_code == 200:
-                idx = res.text.find("基準価額")
-                if idx != -1:
-                    nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})\s*円', re.sub(r'<[^>]+>', '', res.text[idx:idx+300]))
+                soup = BeautifulSoup(res.text, 'html.parser')
+                price_elem = soup.find('div', class_='stock_price')
+                if price_elem:
+                    nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', price_elem.text)
                     if nums: price = float(nums[0].replace(',', ''))
         except: pass
-        if price == 0.0:
-            try:
-                res = requests.get(f"https://finance.yahoo.co.jp/quote/{ticker}", headers=headers, timeout=5)
-                if res.status_code == 200:
-                    match = re.search(r'基準価額[^0-9]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', re.sub(r'<[^>]+>', '', res.text))
-                    if match: price = float(match.group(1).replace(',', ''))
-            except: pass
+
+        # 2. 日経新聞 (構造が安定していて確実)
         if price == 0.0:
             try:
                 res = requests.get(f"https://www.nikkei.com/nkd/fund/?fcode={ticker}", headers=headers, timeout=5)
                 if res.status_code == 200:
-                    match = re.search(r'基準価額[^0-9]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', re.sub(r'<[^>]+>', '', res.text))
-                    if match: price = float(match.group(1).replace(',', ''))
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    price_elem = soup.find('dd', class_='m-stockPriceElm_value')
+                    if price_elem:
+                        nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', price_elem.text)
+                        if nums: price = float(nums[0].replace(',', ''))
             except: pass
+
+        div_yield = 0.0
 
     else:
         try:
@@ -218,6 +232,8 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
 
     if div_yield == 0.0 or math.isnan(div_yield):
         div_yield = 2.5 if is_jpy else (1.5 if not is_fund else 0.0)
+    
+    # 古いキャッシュがあればフォールバック
     if price == 0.0 and row: price = row["price"] 
 
     if price > 0:
@@ -334,9 +350,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
                     if not any(r["ticker"] == ticker for r in results): results.append({"ticker": ticker, "name": name})
         except: pass
 
-    # 🌟 投資信託の最強検索（内蔵キャッシュ ＋ APIのハイブリッド）
     if asset_type in ["FUND", "ALL"] and len(results) < 8:
-        # ① 8桁直打ち対応
         if len(q_str) == 8 and q_str.isalnum():
             try:
                 res = requests.get(f"https://itf.minkabu.jp/fund/{q_str.upper()}", headers=headers, timeout=3)
@@ -346,7 +360,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
                     if name: results.append({"ticker": q_str.upper(), "name": unicodedata.normalize('NFKC', name)})
             except: pass
 
-        # ② 超高速！人気ファンドの内部キャッシュから検索（スペース対応）
         search_terms = q_str.replace(" ", " ").split()
         for fund in POPULAR_FUNDS:
             fund_text = fund["name"].lower() + " " + " ".join(fund["keywords"])
@@ -355,7 +368,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
                     results.append({"ticker": fund["ticker"], "name": fund["name"]})
                     if len(results) >= 8: break
                     
-        # ③ Yahoo Finance API (スペースを除去して検索精度アップ)
         if len(results) < 8:
             q_yahoo = q.replace(" ", "").replace(" ", "")
             try:
@@ -369,7 +381,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         if len(results) >= 8: break
             except: pass
 
-        # ④ みんかぶ投信専用検索 (バックアップ)
         if len(results) < 8:
             try:
                 res = requests.get(f"https://itf.minkabu.jp/search/fund?word={urllib.parse.quote(q)}", headers=headers, timeout=3)
