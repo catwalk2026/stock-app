@@ -72,7 +72,6 @@ def get_db_connection():
     conn.autocommit = True
     return conn
 
-# 🌟 Gemini AI（REST API・ハルシネーション対策済み）
 def get_ai_summary(title: str) -> str:
     if not GEMINI_API_KEY:
         return "GEMINI_API_KEYがRenderに設定されていません。"
@@ -143,6 +142,9 @@ def init_db():
             CREATE TABLE IF NOT EXISTS watchlist (user_id TEXT, ticker TEXT, name TEXT, added_date TEXT, PRIMARY KEY (user_id, ticker));
             CREATE TABLE IF NOT EXISTS line_users (line_user_id TEXT PRIMARY KEY, app_user_id TEXT);
             CREATE TABLE IF NOT EXISTS sent_news (line_user_id TEXT, news_link TEXT, PRIMARY KEY (line_user_id, news_link));
+            
+            -- 🌟 新規追加: 価格と配当利回りを1日1回だけ保存するキャッシュテーブル
+            CREATE TABLE IF NOT EXISTS asset_cache (ticker TEXT PRIMARY KEY, price REAL, div_yield REAL, last_updated TEXT);
         ''')
         cursor.close()
         conn.close()
@@ -151,22 +153,153 @@ def init_db():
 
 init_db()
 
+# 🌟 為替レートもキャッシュ化（通信エラー防止）
 def get_usdjpy_rate():
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute("SELECT price FROM asset_cache WHERE ticker = 'USDJPY' AND last_updated = %s", (today_str,))
+    row = cursor.fetchone()
+    
+    if row and row["price"] > 100:
+        cursor.close(); conn.close()
+        return {"rate": row["price"], "time": f"{today_str} (取得済)"}
+        
     fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
+    rate = 0.0
     try:
         res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=3)
         if res.status_code == 200:
-            rate = res.json().get("rates", {}).get("JPY")
-            if rate and rate > 100: return {"rate": float(rate), "time": fetch_time}
-    except Exception: pass
-    try:
-        usdjpy = yf.Ticker("JPY=X")
-        hist = usdjpy.history(period="1d")
-        if not hist.empty:
-            val = float(hist['Close'].iloc[-1])
-            if not math.isnan(val) and val > 100: return {"rate": val, "time": fetch_time}
-    except Exception: pass
-    return {"rate": 155.0, "time": fetch_time + " (固定値)"}
+            val = res.json().get("rates", {}).get("JPY")
+            if val and val > 100: rate = float(val)
+    except: pass
+    
+    if rate == 0.0:
+        try:
+            usdjpy = yf.Ticker("JPY=X")
+            hist = usdjpy.history(period="1d")
+            if not hist.empty:
+                val = float(hist['Close'].iloc[-1])
+                if not math.isnan(val) and val > 100: rate = val
+        except: pass
+        
+    if rate == 0.0:
+        cursor.execute("SELECT price FROM asset_cache WHERE ticker = 'USDJPY'")
+        old_row = cursor.fetchone()
+        rate = old_row["price"] if old_row else 155.0
+        fetch_time = "前回取得値"
+        
+    cursor.execute('''
+        INSERT INTO asset_cache (ticker, price, div_yield, last_updated) 
+        VALUES ('USDJPY', %s, 0.0, %s) 
+        ON CONFLICT (ticker) DO UPDATE SET price = EXCLUDED.price, last_updated = EXCLUDED.last_updated
+    ''', (rate, today_str))
+    cursor.close(); conn.close()
+    
+    return {"rate": rate, "time": fetch_time}
+
+# ==========================================
+# 🌟 資産データのオンデマンド・キャッシュ取得（新設）
+# ==========================================
+def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
+    ticker = ticker.strip().upper()
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    # 1. DBから今日のキャッシュを確認
+    cursor.execute("SELECT price, div_yield, last_updated FROM asset_cache WHERE ticker = %s", (ticker,))
+    row = cursor.fetchone()
+    
+    if row and row["last_updated"] == today_str and row["price"] > 0:
+        cursor.close(); conn.close()
+        return row["price"], row["div_yield"]
+        
+    # 2. キャッシュがない or 古い場合は外部から取得
+    price = 0.0
+    div_yield = 0.0
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    
+    if is_fund and len(ticker) == 8 and ticker.isalnum():
+        # 投信: みんかぶ → Yahoo → 日経 の3段スクレイピング
+        try:
+            m_url = f"https://itf.minkabu.jp/fund/{ticker}"
+            res = requests.get(m_url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                html = res.text
+                idx = html.find("基準価額")
+                if idx != -1:
+                    text_only = re.sub(r'<[^>]+>', '', html[idx:idx+300])
+                    nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})\s*円', text_only)
+                    if nums: price = float(nums[0].replace(',', ''))
+        except: pass
+
+        if price == 0.0:
+            try:
+                y_url = f"https://finance.yahoo.co.jp/quote/{ticker}"
+                res = requests.get(y_url, headers=headers, timeout=5)
+                if res.status_code == 200:
+                    text_only = re.sub(r'<[^>]+>', '', res.text)
+                    match = re.search(r'基準価額[^0-9]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', text_only)
+                    if match: price = float(match.group(1).replace(',', ''))
+            except: pass
+
+        if price == 0.0:
+            try:
+                n_url = f"https://www.nikkei.com/nkd/fund/?fcode={ticker}"
+                res = requests.get(n_url, headers=headers, timeout=5)
+                if res.status_code == 200:
+                    text_only = re.sub(r'<[^>]+>', '', res.text)
+                    match = re.search(r'基準価額[^0-9]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', text_only)
+                    if match: price = float(match.group(1).replace(',', ''))
+            except: pass
+            
+        div_yield = 0.0 # 投信は基本再投資のため0
+
+    else:
+        # 株: yfinanceからの取得
+        try:
+            stock_ticker = ticker if not is_jpy else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
+            stock = yf.Ticker(stock_ticker)
+            hist = stock.history(period="1d")
+            if not hist.empty:
+                val = float(hist['Close'].iloc[-1])
+                if not math.isnan(val): price = val
+            
+            info = stock.info
+            if info and info.get("dividendRate") and price > 0:
+                div_yield = (float(info.get("dividendRate")) / price) * 100.0
+            elif info and info.get("dividendYield"):
+                div_yield = float(info["dividendYield"]) * 100.0
+            
+            if div_yield == 0.0:
+                divs = stock.dividends
+                if not divs.empty:
+                    one_year_ago = datetime.now(divs.index.tzinfo) - timedelta(days=365)
+                    recent_divs = divs[divs.index >= one_year_ago]
+                    total_div = float(recent_divs.sum())
+                    if total_div > 0 and price > 0:
+                        div_yield = (total_div / price) * 100.0
+        except: pass
+
+    # 取得失敗時のフォールバック処理
+    if div_yield == 0.0 or math.isnan(div_yield):
+        if is_jpy: div_yield = 2.5
+        elif not is_fund: div_yield = 1.5
+        else: div_yield = 0.0
+        
+    if price == 0.0 and row:
+        price = row["price"] # 取得失敗時は前日のキャッシュを使い回す
+
+    # 3. 取得した結果をDBに保存（キャッシュ更新）
+    if price > 0:
+        cursor.execute('''
+            INSERT INTO asset_cache (ticker, price, div_yield, last_updated) 
+            VALUES (%s, %s, %s, %s) 
+            ON CONFLICT (ticker) DO UPDATE SET price = EXCLUDED.price, div_yield = EXCLUDED.div_yield, last_updated = EXCLUDED.last_updated
+        ''', (ticker, price, div_yield, today_str))
+        
+    cursor.close(); conn.close()
+    return price, div_yield
 
 # ==========================================
 # ニュースのパトロールとPush送信機能
@@ -348,51 +481,6 @@ def get_next_business_day(dt: datetime) -> datetime:
     while not is_business_day(curr): curr += timedelta(days=1)
     return curr
 
-# 🌟 修正: 「基準価額」を執念で抜き取る最強の3ルートスクレイピング！
-def fetch_latest_fund_price(ticker: str) -> float:
-    ticker = ticker.strip().upper()
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36"}
-    
-    # 1. Yahoo Finance (日本)
-    try:
-        url = f"https://finance.yahoo.co.jp/quote/{ticker}"
-        res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code == 200:
-            # HTMLタグを全て消してプレーンテキストにする
-            text = re.sub(r'<[^>]+>', '', res.text)
-            # 「基準価額」の直後にある数字(カンマ付き)を探す
-            match = re.search(r'基準価額[^0-9]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', text)
-            if match:
-                return float(match.group(1).replace(',', ''))
-    except Exception as e:
-        print("Yahoo fund price fetch error:", e)
-
-    # 2. みんかぶ投信
-    try:
-        url = f"https://itf.minkabu.jp/fund/{ticker}"
-        res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code == 200:
-            text = re.sub(r'<[^>]+>', '', res.text)
-            match = re.search(r'基準価額[^0-9]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', text)
-            if match:
-                return float(match.group(1).replace(',', ''))
-    except Exception as e:
-        print("Minkabu fund price fetch error:", e)
-
-    # 3. 日経新聞 (Nikkei) - さらなるバックアップ
-    try:
-        url = f"https://www.nikkei.com/nkd/fund/?fcode={ticker}"
-        res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code == 200:
-            text = re.sub(r'<[^>]+>', '', res.text)
-            match = re.search(r'基準価額[^0-9]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', text)
-            if match:
-                return float(match.group(1).replace(',', ''))
-    except Exception as e:
-        print("Nikkei fund price fetch error:", e)
-
-    return 0.0
-
 @app.get("/")
 def read_root(): return FileResponse("index.html")
 
@@ -512,6 +600,7 @@ def record_trade(user_id: str, trade: TradeCreate):
         else: cursor.execute("UPDATE portfolio SET quantity = %s WHERE user_id = %s AND ticker = %s", (new_qty, user_id, ticker))
     cursor.close(); conn.close(); return {"message": "Success"}
 
+# 🌟 大幅修正: キャッシュを使った爆速ポートフォリオ取得！
 @app.get("/api/{user_id}/portfolio")
 def get_portfolio(user_id: str):
     conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -529,43 +618,14 @@ def get_portfolio(user_id: str):
         is_jpy = ticker.endswith(".T")
         is_fund = (len(ticker) == 8 and ticker.isalnum()) or "投信" in item["name"] or "ファンド" in item["name"] or "スリム" in item["name"]
         fx_rate = 1.0 if is_jpy or is_fund else usdjpy_info["rate"]
+        
+        # ★ キャッシュから価格と配当利回りを取得
+        fetched_price, div_yield = get_asset_data(ticker, is_jpy, is_fund)
+        
+        # マニュアル価格が設定されていなければ、取得した価格を反映
         current_price = manual_price
-        div_yield = 0.0 
-
-        if is_fund and len(ticker) == 8 and ticker.isalnum():
-            scraped = fetch_latest_fund_price(ticker)
-            if scraped > 0: current_price = scraped
-        else:
-            try:
-                stock_ticker = ticker if not is_jpy else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
-                stock = yf.Ticker(stock_ticker)
-                hist = stock.history(period="1d")
-                if not hist.empty:
-                    val = float(hist['Close'].iloc[-1])
-                    if not math.isnan(val): current_price = val
-                
-                info = stock.info
-                if info and info.get("dividendRate") and current_price > 0:
-                    div_yield = (float(info.get("dividendRate")) / current_price) * 100.0
-                elif info and info.get("dividendYield"):
-                    div_yield = float(info["dividendYield"]) * 100.0
-                
-                if div_yield == 0.0:
-                    divs = stock.dividends
-                    if not divs.empty:
-                        one_year_ago = datetime.now(divs.index.tzinfo) - timedelta(days=365)
-                        recent_divs = divs[divs.index >= one_year_ago]
-                        total_div = float(recent_divs.sum())
-                        if total_div > 0 and current_price > 0:
-                            div_yield = (total_div / current_price) * 100.0
-
-            except Exception as e: 
-                print(f"配当取得エラー ({ticker}):", e)
-            
-        if div_yield == 0.0 or math.isnan(div_yield):
-            if is_jpy: div_yield = 2.5      
-            elif not is_fund: div_yield = 1.5 
-            else: div_yield = 0.0 
+        if item.get("manual_price") is None and fetched_price > 0:
+            current_price = fetched_price
             
         if is_fund: 
             current_value_jpy = (quantity * current_price) / 10000.0
@@ -640,7 +700,9 @@ def add_fund_rule(user_id: str, rule: FundRuleCreate):
     conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute('INSERT INTO fund_rules (user_id, ticker, name, frequency, monthly_day, amount, start_date) VALUES (%s, %s, %s, %s, %s, %s, %s)', (user_id, rule.ticker, rule.name, rule.frequency, rule.monthly_day, rule.amount, rule.start_date))
     curr = datetime.strptime(rule.start_date, "%Y-%m-%d"); today = datetime.now()
-    base_price = rule.avg_price if rule.avg_price > 0 else (fetch_latest_fund_price(rule.ticker) or 10000.0)
+    
+    fetched_price, _ = get_asset_data(rule.ticker, False, True)
+    base_price = rule.avg_price if rule.avg_price > 0 else (fetched_price or 10000.0)
 
     while curr <= today:
         actual_date = curr if rule.frequency == "DAILY" and is_business_day(curr) else (get_next_business_day(curr) if rule.frequency == "MONTHLY" and curr.day == rule.monthly_day else None)
@@ -710,9 +772,10 @@ def get_history(user_id: str):
             
     return result
 
+# 🌟 検索から選ばれた直後の自動価格取得もキャッシュを利用
 @app.get("/api/fund_info/{ticker}")
 def get_fund_info(ticker: str):
-    price = fetch_latest_fund_price(ticker)
+    price, _ = get_asset_data(ticker, False, True)
     return {"ticker": ticker, "price": price}
 
 @app.get("/api/{user_id}/watchlist")
@@ -721,11 +784,9 @@ def get_watchlist(user_id: str):
     cursor.execute("SELECT * FROM watchlist WHERE user_id = %s ORDER BY added_date DESC", (user_id,))
     rows = cursor.fetchall(); cursor.close(); conn.close()
     for r in rows:
-        r["current_price"] = 0.0; r["currency"] = "¥" if r["ticker"].endswith(".T") or (len(r["ticker"])==4 and r["ticker"].isalnum()) else "$"
-        try:
-            hist = yf.Ticker(r["ticker"] if r["ticker"].endswith(".T") else (f"{r['ticker']}.T" if (len(r['ticker'])==4 and r['ticker'].isalnum()) else r["ticker"])).history(period="1d")
-            if not hist.empty and not math.isnan(hist['Close'].iloc[-1]): r["current_price"] = float(hist['Close'].iloc[-1])
-        except: pass
+        price, _ = get_asset_data(r["ticker"], r["ticker"].endswith(".T") or (len(r["ticker"])==4 and r["ticker"].isalnum()), False)
+        r["current_price"] = price
+        r["currency"] = "¥" if r["ticker"].endswith(".T") or (len(r["ticker"])==4 and r["ticker"].isalnum()) else "$"
     return rows
 
 @app.post("/api/{user_id}/watchlist")
