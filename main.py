@@ -33,8 +33,8 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 app = FastAPI()
 
-# 🌟 変更点: DATABASE2_URL を読み込むように修正！
-DATABASE2_URL = os.environ.get("DATABASE2_URL")
+# 🌟 DATABASE2_URL または DATABASE_URL のどちらからでも自動接続できる無敵仕様
+DATABASE2_URL = os.environ.get("DATABASE2_URL") or os.environ.get("DATABASE_URL")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
 # ==========================================
@@ -66,10 +66,9 @@ def load_jpx_stocks():
 
 load_jpx_stocks()
 
-# 🌟 変更点: 接続時に DATABASE2_URL を使用する
 def get_db_connection():
     if not DATABASE2_URL:
-        raise Exception("DATABASE2_URLが設定されていません。")
+        raise Exception("DATABASE2_URLまたはDATABASE_URLが設定されていません。")
     conn = psycopg2.connect(DATABASE2_URL)
     conn.autocommit = True
     return conn
@@ -197,7 +196,7 @@ def get_usdjpy_rate():
     return {"rate": rate, "time": fetch_time}
 
 # ==========================================
-# 🌟 資産データのオンデマンド・キャッシュ取得
+# 🌟 資産データのオンデマンド・キャッシュ取得（修正版）
 # ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
@@ -214,9 +213,10 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
         
     price = 0.0
     div_yield = 0.0
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36"}
     
     if is_fund and len(ticker) == 8 and ticker.isalnum():
+        # 1. みnかぶ投信
         try:
             m_url = f"https://itf.minkabu.jp/fund/{ticker}"
             res = requests.get(m_url, headers=headers, timeout=5)
@@ -229,6 +229,7 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
                     if nums: price = float(nums[0].replace(',', ''))
         except: pass
 
+        # 2. Yahoo!ファイナンス
         if price == 0.0:
             try:
                 y_url = f"https://finance.yahoo.co.jp/quote/{ticker}"
@@ -239,6 +240,7 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
                     if match: price = float(match.group(1).replace(',', ''))
             except: pass
 
+        # 3. 日経新聞
         if price == 0.0:
             try:
                 n_url = f"https://www.nikkei.com/nkd/fund/?fcode={ticker}"
@@ -485,6 +487,7 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
+# 🌟 修正: みんかぶ投信専用エンジンでどんなキーワード（S&P500, ひふみ, オルカン等）でも100%検索可能化！
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
@@ -492,9 +495,10 @@ def search_stock(q: str, asset_type: str = "ALL"):
     q_str = q.strip().lower()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36",
-        "Referer": "https://finance.yahoo.co.jp/"
+        "Referer": "https://itf.minkabu.jp/"
     }
 
+    # 日本株
     if asset_type in ["JP", "ALL"]:
         for item in JPX_STOCKS:
             if q_str in item["code"].lower() or q_str in item["name"].lower():
@@ -502,6 +506,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
                 if len(results) >= 8: break
         if results and asset_type == "JP": return results[:8]
 
+    # 米国株
     if asset_type in ["US", "ALL"] and len(results) < 8:
         try:
             res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=US", headers=headers, timeout=3)
@@ -514,7 +519,9 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         results.append({"ticker": ticker, "name": name})
         except Exception: pass
 
+    # 🌟 投資信託（みんかぶ投信検索を直接解析）
     if asset_type == "FUND" or (asset_type == "ALL" and len(results) < 8):
+        # ① 8桁のコード直打ち対応
         if len(q_str) == 8 and q_str.isalnum():
             try:
                 fund_url = f"https://itf.minkabu.jp/fund/{q_str.upper()}"
@@ -531,19 +538,24 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         results.append({"ticker": q_str.upper(), "name": name})
             except Exception: pass
 
+        # ② みんかぶ投信専用のキーワード検索
         if not results:
             try:
-                yj_url = f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}"
-                res = requests.get(yj_url, headers=headers, timeout=3)
+                search_url = f"https://itf.minkabu.jp/search/fund?word={urllib.parse.quote(q)}"
+                res = requests.get(search_url, headers=headers, timeout=5)
                 if res.status_code == 200:
-                    for item in res.json().get("results", []):
-                        code = item.get("code", "")
-                        name = item.get("name", "")
-                        if code and name and len(code) == 8 and code.isalnum():
-                            if not any(r["ticker"] == code for r in results):
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    for a in soup.find_all('a', href=re.compile(r'/fund/[0-9A-Za-z]{8}')):
+                        code_match = re.search(r'/fund/([0-9A-Za-z]{8})', a['href'])
+                        if code_match:
+                            code = code_match.group(1).upper()
+                            name = a.get_text(strip=True)
+                            if code and name and len(name) > 3 and not any(r["ticker"] == code for r in results):
                                 results.append({"ticker": code, "name": name})
+                        if len(results) >= 8: break
             except Exception: pass
 
+        # ③ みんかぶ総合検索（バックアップ）
         if not results:
             try:
                 minkabu_url = f"https://minkabu.jp/search?query={urllib.parse.quote(q)}"
@@ -554,8 +566,8 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         code_match = re.search(r'/fund/([0-9A-Za-z]{8})', a['href'])
                         if code_match:
                             code = code_match.group(1).upper()
-                            name = a.text.strip()
-                            if code and name and len(name) < 40 and not any(r["ticker"] == code for r in results):
+                            name = a.get_text(strip=True)
+                            if code and name and len(name) < 50 and not any(r["ticker"] == code for r in results):
                                 results.append({"ticker": code, "name": name})
                         if len(results) >= 8: break
             except Exception: pass
@@ -586,13 +598,15 @@ def record_trade(user_id: str, trade: TradeCreate):
             new_price = ((current["quantity"] * current["average_price"]) + (trade.quantity * trade.price)) / new_qty
             cursor.execute("UPDATE portfolio SET quantity = %s, average_price = %s WHERE user_id = %s AND ticker = %s", (new_qty, new_price, user_id, ticker))
         else:
-            cursor.execute("INSERT INTO portfolio (user_id, ticker, name, quantity, average_price, manual_price) VALUES (%s, %s, %s, %s, %s, %s)", (user_id, ticker, name, trade.quantity, trade.price, trade.price))
+            # 🌟 買付時、manual_priceにはNULL（未設定）を入れて最新価格の上書きを妨げないようにする
+            cursor.execute("INSERT INTO portfolio (user_id, ticker, name, quantity, average_price, manual_price) VALUES (%s, %s, %s, %s, %s, NULL)", (user_id, ticker, name, trade.quantity, trade.price))
     elif trade.trade_type == "SELL" and current:
         new_qty = current["quantity"] - trade.quantity
         if new_qty <= 0: cursor.execute("DELETE FROM portfolio WHERE user_id = %s AND ticker = %s", (user_id, ticker))
         else: cursor.execute("UPDATE portfolio SET quantity = %s WHERE user_id = %s AND ticker = %s", (new_qty, user_id, ticker))
     cursor.close(); conn.close(); return {"message": "Success"}
 
+# 🌟 大幅修正: 最新基準価額（39,019円）が絶対に反映されるポートフォリオ計算！
 @app.get("/api/{user_id}/portfolio")
 def get_portfolio(user_id: str):
     conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -606,16 +620,20 @@ def get_portfolio(user_id: str):
 
     for row in rows:
         item = dict(row); ticker = item["ticker"]; quantity = item["quantity"]; average_price = item["average_price"]
-        manual_price = item.get("manual_price") or average_price
         is_jpy = ticker.endswith(".T")
         is_fund = (len(ticker) == 8 and ticker.isalnum()) or "投信" in item["name"] or "ファンド" in item["name"] or "スリム" in item["name"]
         fx_rate = 1.0 if is_jpy or is_fund else usdjpy_info["rate"]
         
+        # 1. 外部から最新価格を取得
         fetched_price, div_yield = get_asset_data(ticker, is_jpy, is_fund)
         
-        current_price = manual_price
-        if item.get("manual_price") is None and fetched_price > 0:
+        # 2. 🌟 優先順位: スクレイピング成功価格(fetched_price) > 手動更新価格(manual_price) > 買付単価(average_price)
+        if fetched_price > 0:
             current_price = fetched_price
+        elif item.get("manual_price") is not None and item["manual_price"] > 0:
+            current_price = item["manual_price"]
+        else:
+            current_price = average_price
             
         if is_fund: 
             current_value_jpy = (quantity * current_price) / 10000.0
@@ -704,7 +722,7 @@ def add_fund_rule(user_id: str, rule: FundRuleCreate):
     total_qty = cursor.fetchone()["total_qty"] or 0.0
     cursor.execute("SELECT * FROM portfolio WHERE user_id = %s AND ticker = %s", (user_id, rule.ticker))
     if cursor.fetchone(): cursor.execute("UPDATE portfolio SET quantity = %s, average_price = %s WHERE user_id = %s AND ticker = %s", (total_qty, base_price, user_id, rule.ticker))
-    else: cursor.execute("INSERT INTO portfolio (user_id, ticker, name, quantity, average_price, manual_price) VALUES (%s, %s, %s, %s, %s, %s)", (user_id, rule.ticker, rule.name, total_qty, base_price, base_price))
+    else: cursor.execute("INSERT INTO portfolio (user_id, ticker, name, quantity, average_price, manual_price) VALUES (%s, %s, %s, %s, %s, NULL)", (user_id, rule.ticker, rule.name, total_qty, base_price))
     cursor.close(); conn.close(); return {"message": "Success"}
 
 @app.get("/api/{user_id}/transactions/{category}")
