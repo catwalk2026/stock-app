@@ -33,7 +33,8 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 app = FastAPI()
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+# 🌟 変更点: DATABASE2_URL を読み込むように修正！
+DATABASE2_URL = os.environ.get("DATABASE2_URL")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
 # ==========================================
@@ -65,10 +66,11 @@ def load_jpx_stocks():
 
 load_jpx_stocks()
 
+# 🌟 変更点: 接続時に DATABASE2_URL を使用する
 def get_db_connection():
-    if not DATABASE_URL:
-        raise Exception("DATABASE_URLが設定されていません。")
-    conn = psycopg2.connect(DATABASE_URL)
+    if not DATABASE2_URL:
+        raise Exception("DATABASE2_URLが設定されていません。")
+    conn = psycopg2.connect(DATABASE2_URL)
     conn.autocommit = True
     return conn
 
@@ -131,7 +133,7 @@ class WatchlistCreate(BaseModel):
     name: str
 
 def init_db():
-    if not DATABASE_URL: return
+    if not DATABASE2_URL: return
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -142,8 +144,6 @@ def init_db():
             CREATE TABLE IF NOT EXISTS watchlist (user_id TEXT, ticker TEXT, name TEXT, added_date TEXT, PRIMARY KEY (user_id, ticker));
             CREATE TABLE IF NOT EXISTS line_users (line_user_id TEXT PRIMARY KEY, app_user_id TEXT);
             CREATE TABLE IF NOT EXISTS sent_news (line_user_id TEXT, news_link TEXT, PRIMARY KEY (line_user_id, news_link));
-            
-            -- 🌟 新規追加: 価格と配当利回りを1日1回だけ保存するキャッシュテーブル
             CREATE TABLE IF NOT EXISTS asset_cache (ticker TEXT PRIMARY KEY, price REAL, div_yield REAL, last_updated TEXT);
         ''')
         cursor.close()
@@ -153,7 +153,6 @@ def init_db():
 
 init_db()
 
-# 🌟 為替レートもキャッシュ化（通信エラー防止）
 def get_usdjpy_rate():
     today_str = datetime.now().strftime("%Y-%m-%d")
     conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -198,7 +197,7 @@ def get_usdjpy_rate():
     return {"rate": rate, "time": fetch_time}
 
 # ==========================================
-# 🌟 資産データのオンデマンド・キャッシュ取得（新設）
+# 🌟 資産データのオンデマンド・キャッシュ取得
 # ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
@@ -206,7 +205,6 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
-    # 1. DBから今日のキャッシュを確認
     cursor.execute("SELECT price, div_yield, last_updated FROM asset_cache WHERE ticker = %s", (ticker,))
     row = cursor.fetchone()
     
@@ -214,13 +212,11 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
         cursor.close(); conn.close()
         return row["price"], row["div_yield"]
         
-    # 2. キャッシュがない or 古い場合は外部から取得
     price = 0.0
     div_yield = 0.0
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     
     if is_fund and len(ticker) == 8 and ticker.isalnum():
-        # 投信: みんかぶ → Yahoo → 日経 の3段スクレイピング
         try:
             m_url = f"https://itf.minkabu.jp/fund/{ticker}"
             res = requests.get(m_url, headers=headers, timeout=5)
@@ -253,10 +249,9 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
                     if match: price = float(match.group(1).replace(',', ''))
             except: pass
             
-        div_yield = 0.0 # 投信は基本再投資のため0
+        div_yield = 0.0
 
     else:
-        # 株: yfinanceからの取得
         try:
             stock_ticker = ticker if not is_jpy else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
             stock = yf.Ticker(stock_ticker)
@@ -281,16 +276,14 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
                         div_yield = (total_div / price) * 100.0
         except: pass
 
-    # 取得失敗時のフォールバック処理
     if div_yield == 0.0 or math.isnan(div_yield):
         if is_jpy: div_yield = 2.5
         elif not is_fund: div_yield = 1.5
         else: div_yield = 0.0
         
     if price == 0.0 and row:
-        price = row["price"] # 取得失敗時は前日のキャッシュを使い回す
+        price = row["price"] 
 
-    # 3. 取得した結果をDBに保存（キャッシュ更新）
     if price > 0:
         cursor.execute('''
             INSERT INTO asset_cache (ticker, price, div_yield, last_updated) 
@@ -305,7 +298,7 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
 # ニュースのパトロールとPush送信機能
 # ==========================================
 def check_and_send_news():
-    if not DATABASE_URL: return
+    if not DATABASE2_URL: return
     try:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -600,7 +593,6 @@ def record_trade(user_id: str, trade: TradeCreate):
         else: cursor.execute("UPDATE portfolio SET quantity = %s WHERE user_id = %s AND ticker = %s", (new_qty, user_id, ticker))
     cursor.close(); conn.close(); return {"message": "Success"}
 
-# 🌟 大幅修正: キャッシュを使った爆速ポートフォリオ取得！
 @app.get("/api/{user_id}/portfolio")
 def get_portfolio(user_id: str):
     conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -619,10 +611,8 @@ def get_portfolio(user_id: str):
         is_fund = (len(ticker) == 8 and ticker.isalnum()) or "投信" in item["name"] or "ファンド" in item["name"] or "スリム" in item["name"]
         fx_rate = 1.0 if is_jpy or is_fund else usdjpy_info["rate"]
         
-        # ★ キャッシュから価格と配当利回りを取得
         fetched_price, div_yield = get_asset_data(ticker, is_jpy, is_fund)
         
-        # マニュアル価格が設定されていなければ、取得した価格を反映
         current_price = manual_price
         if item.get("manual_price") is None and fetched_price > 0:
             current_price = fetched_price
@@ -772,7 +762,6 @@ def get_history(user_id: str):
             
     return result
 
-# 🌟 検索から選ばれた直後の自動価格取得もキャッシュを利用
 @app.get("/api/fund_info/{ticker}")
 def get_fund_info(ticker: str):
     price, _ = get_asset_data(ticker, False, True)
