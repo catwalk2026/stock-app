@@ -32,16 +32,18 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 app = FastAPI()
 
-# 🌟 無敵化: どっちの名前でも繋がるように
 DATABASE2_URL = os.environ.get("DATABASE2_URL") or os.environ.get("DATABASE_URL")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
+# ==========================================
+# 🌟 JPX（日本株）と 人気投信（王道ファンド）
+# ==========================================
 JPX_STOCKS = []
 def load_jpx_stocks():
     global JPX_STOCKS
     url = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.csv"
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             res.encoding = 'shift_jis'
@@ -56,7 +58,6 @@ def load_jpx_stocks():
 
 load_jpx_stocks()
 
-# 完全修正済みの王道ファンド15選
 POPULAR_FUNDS = [
     {"ticker": "0331418A", "name": "eMAXIS Slim 全世界株式(オール・カントリー)", "keywords": ["オルカン", "emaxis", "slim", "all", "全世界", "カントリー"]},
     {"ticker": "03311187", "name": "eMAXIS Slim 米国株式(S&P500)", "keywords": ["emaxis", "slim", "s&p500", "sp500", "米国"]},
@@ -126,7 +127,6 @@ def get_usdjpy_rate():
             hist = yf.Ticker("JPY=X").history(period="1d")
             if not hist.empty and not math.isnan(hist['Close'].iloc[-1]) and hist['Close'].iloc[-1] > 100: rate = float(hist['Close'].iloc[-1])
         except: pass
-    
     if rate == 0.0:
         rate = 155.0; fetch_time = "代替値"
         try:
@@ -143,10 +143,12 @@ def get_usdjpy_rate():
     except: pass
     return {"rate": rate, "time": fetch_time}
 
-# 🌟 最強ピンポイント抽出＆DB完全無敵化
+# ==========================================
+# 🌟 Google Finance対応！無敵のスクレイピングロジック
+# ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d-v5") # 強制リフレッシュ
+    today_str = datetime.now().strftime("%Y-%m-%d-v6") # キャッシュ強制クリア
     price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
 
     try:
@@ -161,18 +163,35 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
     
     if is_fund and len(ticker) == 8 and ticker.isalnum():
-        # 1. Yahoo Finance (完全ピンポイント)
+        # 🌟 1. Google Finance (Renderからアクセスしてもブロックされない！)
         try:
-            res = requests.get(f"https://finance.yahoo.co.jp/quote/{ticker}", headers=headers, timeout=5)
+            res = requests.get(f"https://www.google.com/finance/quote/{ticker}:MUTF_JP", headers=headers, timeout=5)
             if res.status_code == 200:
-                text = re.sub(r'<[^>]+>', '', res.text)
-                match = re.search(r'基準価額[^0-9]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', text)
+                match = re.search(r'class="YMlKec fxKbKc"[^>]*>([^<]+)</div>', res.text)
                 if match:
-                    val = float(match.group(1).replace(',', ''))
+                    val = float(match.group(1).replace(',', '').replace('¥', '').strip())
                     if val > 100: price = val
+                # Googleの予備抽出ロジック
+                if price == 0.0:
+                    match2 = re.search(r'data-last-price="([0-9.]+)"', res.text)
+                    if match2:
+                        val = float(match2.group(1))
+                        if val > 100: price = val
         except: pass
 
-        # 2. Nikkei (バックアップ)
+        # 2. Yahoo Finance Japan (Googleで失敗した時のバックアップ)
+        if price == 0.0:
+            try:
+                res = requests.get(f"https://finance.yahoo.co.jp/quote/{ticker}", headers=headers, timeout=5)
+                if res.status_code == 200:
+                    text = re.sub(r'<[^>]+>', '', res.text)
+                    match = re.search(r'基準価額[^0-9]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', text)
+                    if match:
+                        val = float(match.group(1).replace(',', ''))
+                        if val > 100: price = val
+            except: pass
+
+        # 3. Nikkei (バックアップのバックアップ)
         if price == 0.0:
             try:
                 res = requests.get(f"https://www.nikkei.com/nkd/fund/?fcode={ticker}", headers=headers, timeout=5)
@@ -255,13 +274,15 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="Error")
 
-# 🌟 日本株バックアップ検索（Yahoo）を強化
+# ==========================================
+# 🌟 日本株バックアップ検索（Yahoo US）を完全復元
+# ==========================================
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
     results = []
     q_str = q.strip().lower()
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
 
     if asset_type in ["JP", "ALL"]:
         for item in JPX_STOCKS:
@@ -269,6 +290,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
                 results.append({"ticker": item["ticker"], "name": item["name"]})
                 if len(results) >= 8: break
         
+        # バックアップ① Yahoo Japan (弾かれる可能性あり)
         if len(results) < 8:
             try:
                 res = requests.get(f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}", headers=headers, timeout=3)
@@ -280,6 +302,21 @@ def search_stock(q: str, asset_type: str = "ALL"):
                             if not any(r["ticker"] == ticker for r in results): results.append({"ticker": ticker, "name": name})
                         if len(results) >= 8: break
             except: pass
+
+        # 🌟 バックアップ② Yahoo US (弾かれない最強ルート・復活！)
+        if len(results) < 8:
+            try:
+                res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=JP", headers=headers, timeout=3)
+                if res.status_code == 200:
+                    for quote in res.json().get("quotes", []):
+                        code = quote.get("symbol", "")
+                        name = quote.get("shortname", quote.get("longname", code))
+                        if code.endswith(".T"):
+                            if not any(r["ticker"] == code for r in results):
+                                results.append({"ticker": code, "name": name})
+                        if len(results) >= 8: break
+            except: pass
+
         if results and asset_type == "JP": return results[:8]
 
     if asset_type in ["US", "ALL"] and len(results) < 8:
