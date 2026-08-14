@@ -270,9 +270,15 @@
 
             <div id="tab-fund" class="tab-content">
                 <h2>投資信託ポートフォリオ</h2>
-                <div class="rule-box">
+                
+                <!-- 🌟 投資信託のサブタブ（積立・スポット切り替え） -->
+                <div style="display:flex; gap:10px; margin-bottom:20px;">
+                    <button id="btn-fund-rule" class="filter-btn active" style="padding:10px 20px; font-size:1rem;" onclick="toggleFundForm('rule')">自動積立ルールを設定</button>
+                    <button id="btn-fund-spot" class="filter-btn" style="padding:10px 20px; font-size:1rem;" onclick="toggleFundForm('spot')">スポット買付（一括購入）</button>
+                </div>
+
+                <div id="fund-form-rule" class="rule-box" style="display:block;">
                     <h3>自動積立ルール設定</h3>
-                    <!-- 🌟 投信専用検索枠を追加 -->
                     <div class="search-wrapper">
                         <label>🔍 ファンド検索（自動入力）</label>
                         <input type="text" id="rule-search-input" placeholder="例: オルカン または eMAXIS" oninput="handleSearchInput(this.value, 'RULE')" autocomplete="off" style="width:calc(100% - 30px); padding:8px; margin-top:6px;">
@@ -283,16 +289,16 @@
                     <div class="form-group"><label>積立コース</label><select id="rule-freq" onchange="toggleRuleFreq()"><option value="MONTHLY">毎月コース</option><option value="DAILY">毎日コース</option></select></div>
                     <div class="form-group" id="rule-day-group"><label>積立日 (毎月)</label><select id="rule-day"><option value="1">1日</option><option value="5">5日</option><option value="10">10日</option><option value="15">15日</option><option value="20">20日</option><option value="25">25日</option></select></div>
                     <div class="form-group"><label>積立金額 (円)</label><input type="number" id="rule-amount" placeholder="30000"></div>
-                    <div class="form-group"><label>取得基準価額</label><input type="number" id="rule-avg-price" placeholder="例: 28459"></div>
+                    <div class="form-group"><label>基準価額 (自動反映)</label><input type="number" id="rule-avg-price" placeholder="例: 28459"></div>
                     <div class="form-group"><label>開始日</label><input type="date" id="rule-start-date" class="default-date"></div>
                     <button type="button" class="btn-submit" onclick="submitFundRule()">積立を開始する</button>
                 </div>
-                <div class="add-form">
+
+                <div id="fund-form-spot" class="add-form" style="display:none;">
                     <h3>スポット買付（一括・個別追加）</h3>
-                    <!-- 🌟 投信専用検索枠を追加 -->
                     <div class="search-wrapper">
                         <label>🔍 ファンド検索（自動入力）</label>
-                        <input type="text" id="spot-search-input" placeholder="例: S&P500 または eMAXIS" oninput="handleSearchInput(this.value, 'SPOT')" autocomplete="off" style="width:calc(100% - 30px); padding:8px; margin-top:6px;">
+                        <input type="text" id="spot-search-input" placeholder="例: S&P500 または 0331418A" oninput="handleSearchInput(this.value, 'SPOT')" autocomplete="off" style="width:calc(100% - 30px); padding:8px; margin-top:6px;">
                         <div id="spot-search-suggestions" class="suggestions-box"></div>
                     </div><br>
                     <div class="form-group"><label>指定形式</label><select id="fund-calc-mode" onchange="toggleCalcMode('fund')"><option value="AMOUNT">金額指定 (円)</option><option value="QTY">口数指定 (口)</option></select></div>
@@ -300,12 +306,13 @@
                     <div class="form-group"><label>取引日</label><input type="date" id="fund-trade-date" class="default-date"></div>
                     <div class="form-group"><label>投信コード</label><input type="text" id="fund-ticker" onchange="fetchFundPriceAuto('spot')" placeholder="例: 0331418A"></div>
                     <div class="form-group"><label>ファンド名</label><input type="text" id="fund-name" placeholder="例: eMAXIS Slim S&P500"></div>
-                    <div class="form-group"><label>基準価額 (1万口)</label><input type="number" id="fund-price" oninput="calculateQty('fund')" placeholder="例: 28459"></div>
+                    <div class="form-group"><label>基準価額 (自動反映)</label><input type="number" id="fund-price" oninput="calculateQty('fund')" placeholder="例: 28459"></div>
                     <div class="form-group" id="fund-amount-group"><label>買付金額 (円)</label><input type="number" id="fund-amount" oninput="calculateQty('fund')" placeholder="例: 30000"></div>
                     <div class="form-group"><label>買付口数 (口)</label><input type="number" id="fund-qty" placeholder="例: 35138"></div>
                     <div class="form-group"><label>取引理由（任意）</label><input type="text" id="fund-reason" placeholder="例: 余剰資金の投資"></div>
                     <button type="button" class="btn-submit" onclick="submitStockTrade('FUND')">買付を記録する</button>
                 </div>
+
                 <table>
                     <thead><tr><th>ファンド名</th><th>保有口数</th><th>平均取得価額</th><th>現在基準価額</th><th>評価額 (円)</th><th>損益 (円)</th><th>操作</th></tr></thead>
                     <tbody id="table-fund"></tbody>
@@ -424,6 +431,17 @@
             if (tabId === 'tab-watchlist') fetchWatchlist();
         }
 
+        // 🌟 投資信託のサブタブ切り替え機能
+        function toggleFundForm(type) {
+            document.getElementById('btn-fund-rule').classList.remove('active');
+            document.getElementById('btn-fund-spot').classList.remove('active');
+            document.getElementById('fund-form-rule').style.display = 'none';
+            document.getElementById('fund-form-spot').style.display = 'none';
+
+            document.getElementById('btn-fund-' + type).classList.add('active');
+            document.getElementById('fund-form-' + type).style.display = 'block';
+        }
+
         function toggleRuleFreq() {
             const freq = document.getElementById('rule-freq').value;
             document.getElementById('rule-day-group').style.display = freq === 'MONTHLY' ? 'inline-block' : 'none';
@@ -471,8 +489,12 @@
                     if (res.ok) {
                         const data = await res.json();
                         if (data.price > 0) {
-                            if (type === 'rule') document.getElementById('rule-avg-price').value = data.price;
-                            else { document.getElementById('fund-price').value = data.price; calculateQty('fund'); }
+                            if (type === 'rule') {
+                                document.getElementById('rule-avg-price').value = data.price;
+                            } else { 
+                                document.getElementById('fund-price').value = data.price; 
+                                calculateQty('fund'); 
+                            }
                         }
                     }
                 } catch(e) {}
@@ -842,7 +864,6 @@
             container.innerHTML = html;
         }
 
-        // 🌟 修正: 投資信託（RULE/SPOT）検索枠の処理を連動
         async function handleSearchInput(query, type) {
             clearTimeout(searchTimeout);
             let boxId = '';
@@ -880,7 +901,6 @@
             }, 300);
         }
 
-        // 🌟 修正: 投資信託が選ばれたら自動で価格取得へ流す
         function selectSuggestion(ticker, name, type) {
             if (type === 'JP') {
                 document.getElementById('jp-ticker').value = ticker.replace('.T', '');
