@@ -15,7 +15,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 import csv
-import unicodedata  # 🌟追加: 全角文字を綺麗な半角に変換する魔法のライブラリ
+import unicodedata
 
 # --- LINE連携用ライブラリ ---
 from linebot import LineBotApi, WebhookHandler
@@ -38,7 +38,7 @@ DATABASE2_URL = os.environ.get("DATABASE2_URL") or os.environ.get("DATABASE_URL"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
 # ==========================================
-# 🌟 JPX（日本取引所グループ）全上場銘柄データの読み込み
+# 🌟 JPX（日本株）と 人気投信（王道17選）のキャッシュデータ
 # ==========================================
 JPX_STOCKS = []
 
@@ -51,7 +51,7 @@ def load_jpx_stocks():
             res.encoding = 'shift_jis'
             lines = res.text.splitlines()
             reader = csv.reader(lines)
-            next(reader, None) # ヘッダーをスキップ
+            next(reader, None)
             stocks = []
             for row in reader:
                 if len(row) >= 3:
@@ -65,6 +65,27 @@ def load_jpx_stocks():
         print("❌ JPX銘柄データの読み込み失敗:", e)
 
 load_jpx_stocks()
+
+# 💡 ユーザーさんのアイデアを実装！「王道ファンド」をプログラムに内蔵して爆速化！
+POPULAR_FUNDS = [
+    {"ticker": "0331418A", "name": "eMAXIS Slim 全世界株式(オール・カントリー)", "keywords": ["オルカン", "emaxis", "slim", "all", "全世界", "カントリー", "三菱ufj"]},
+    {"ticker": "03311187", "name": "eMAXIS Slim 米国株式(S&P500)", "keywords": ["emaxis", "slim", "s&p500", "sp500", "米国", "アメリカ"]},
+    {"ticker": "8931119C", "name": "SBI・V・S&P500インデックス・ファンド", "keywords": ["sbi", "v", "s&p", "sp500", "バンガード"]},
+    {"ticker": "89312217", "name": "SBI・V・全米株式インデックス・ファンド", "keywords": ["sbi", "v", "全米", "vti", "バンガード"]},
+    {"ticker": "9B311181", "name": "楽天・全米株式インデックス・ファンド(楽天・VTI)", "keywords": ["楽天", "全米", "vti", "バンガード"]},
+    {"ticker": "4731A159", "name": "楽天・全世界株式インデックス・ファンド(楽天・VT)", "keywords": ["楽天", "全世界", "vt", "オルカン", "バンガード"]},
+    {"ticker": "04313182", "name": "たわらノーロード 先進国株式", "keywords": ["たわら", "ノーロード", "先進国"]},
+    {"ticker": "0431419B", "name": "たわらノーロード 全世界株式", "keywords": ["たわら", "ノーロード", "全世界", "オルカン"]},
+    {"ticker": "29311172", "name": "ニッセイ外国株式インデックスファンド", "keywords": ["ニッセイ", "外国", "インデックス"]},
+    {"ticker": "2931413B", "name": "ニッセイ日経225インデックスファンド", "keywords": ["ニッセイ", "日経"]},
+    {"ticker": "0A312122", "name": "ひふみプラス", "keywords": ["ひふみ", "プラス", "レオス"]},
+    {"ticker": "0A31116A", "name": "ひふみ年金", "keywords": ["ひふみ", "年金", "レオス"]},
+    {"ticker": "0A31119A", "name": "ひふみワールド+", "keywords": ["ひふみ", "ワールド", "レオス"]},
+    {"ticker": "03312178", "name": "eMAXIS Slim 先進国株式インデックス", "keywords": ["emaxis", "slim", "先進国"]},
+    {"ticker": "03311155", "name": "eMAXIS Slim 国内株式(TOPIX)", "keywords": ["emaxis", "slim", "国内", "topix", "トピックス"]},
+    {"ticker": "03312152", "name": "eMAXIS Slim 国内株式(日経平均)", "keywords": ["emaxis", "slim", "国内", "日経"]},
+    {"ticker": "03311172", "name": "eMAXIS Slim バランス(8資産均等型)", "keywords": ["emaxis", "slim", "バランス", "8資産"]},
+]
 
 def get_db_connection():
     if not DATABASE2_URL:
@@ -81,61 +102,33 @@ def get_ai_summary(title: str) -> str:
     headers = {'Content-Type': 'application/json'}
     
     prompt = f"""以下の金融ニュース見出しの文章・テキストに含まれる事実のみに基づいて、投資初心者向けに2〜3行で分かりやすく要約し、最後に相場への一般的な影響(ポジティブ/ネガティブ/中立など)を判定してください。
-
-【厳重注意事項】
-ニュース見出しのテキストに書かれていない独自の情報（企業の過去の履歴や上場・未上場などのステータス）は絶対に推測したり言及したりしないでください。テキストに書かれている事実のみを解説してください。
-
+【厳重注意事項】独自の情報は推測せず、テキストに書かれている事実のみを解説してください。
 ニュース見出し: {title}"""
 
-    payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }]
-    }
-    
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=10)
         if res.status_code == 200:
-            data = res.json()
-            return data['candidates'][0]['content']['parts'][0]['text'].strip()
-        else:
-            return f"AI解説の取得失敗 (エラーコード: {res.status_code})"
-    except Exception as e:
-        print("Gemini API Error Detail:", e)
-        return "AIの解説取得に一時的に失敗しました。"
+            return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+        else: return f"AI解説の取得失敗 (エラー: {res.status_code})"
+    except Exception: return "AIの解説取得に一時的に失敗しました。"
 
 class TradeCreate(BaseModel):
-    ticker: str = ""
-    name: str
-    trade_type: str
-    asset_type: str
-    trade_date: str
-    quantity: float
-    price: float
-    reason: str = ""
+    ticker: str = ""; name: str; trade_type: str; asset_type: str; trade_date: str; quantity: float; price: float; reason: str = ""
 
 class FundRuleCreate(BaseModel):
-    ticker: str
-    name: str
-    frequency: str
-    monthly_day: int = 1
-    amount: float
-    avg_price: float = 10000.0
-    start_date: str
+    ticker: str; name: str; frequency: str; monthly_day: int = 1; amount: float; avg_price: float = 10000.0; start_date: str
 
 class PriceUpdate(BaseModel):
-    ticker: str
-    current_price: float
+    ticker: str; current_price: float
 
 class WatchlistCreate(BaseModel):
-    ticker: str
-    name: str
+    ticker: str; name: str
 
 def init_db():
     if not DATABASE2_URL: return
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = get_db_connection(); cursor = conn.cursor()
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS portfolio (user_id TEXT, ticker TEXT, name TEXT, quantity REAL, average_price REAL, manual_price REAL, PRIMARY KEY (user_id, ticker));
             CREATE TABLE IF NOT EXISTS transactions (id SERIAL PRIMARY KEY, user_id TEXT, ticker TEXT, type TEXT, trade_date TEXT, quantity REAL, price REAL, reason TEXT);
@@ -145,10 +138,8 @@ def init_db():
             CREATE TABLE IF NOT EXISTS sent_news (line_user_id TEXT, news_link TEXT, PRIMARY KEY (line_user_id, news_link));
             CREATE TABLE IF NOT EXISTS asset_cache (ticker TEXT PRIMARY KEY, price REAL, div_yield REAL, last_updated TEXT);
         ''')
-        cursor.close()
-        conn.close()
-    except Exception as e:
-        print("DB Init Error:", e)
+        cursor.close(); conn.close()
+    except Exception as e: print("DB Init Error:", e)
 
 init_db()
 
@@ -157,135 +148,82 @@ def get_usdjpy_rate():
     conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT price FROM asset_cache WHERE ticker = 'USDJPY' AND last_updated = %s", (today_str,))
     row = cursor.fetchone()
-    
     if row and row["price"] > 100:
-        cursor.close(); conn.close()
-        return {"rate": row["price"], "time": f"{today_str} (取得済)"}
+        cursor.close(); conn.close(); return {"rate": row["price"], "time": f"{today_str} (取得済)"}
         
-    fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
-    rate = 0.0
+    rate = 0.0; fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
     try:
         res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=3)
-        if res.status_code == 200:
-            val = res.json().get("rates", {}).get("JPY")
-            if val and val > 100: rate = float(val)
+        if res.status_code == 200 and res.json().get("rates", {}).get("JPY", 0) > 100: rate = float(res.json()["rates"]["JPY"])
     except: pass
-    
     if rate == 0.0:
         try:
-            usdjpy = yf.Ticker("JPY=X")
-            hist = usdjpy.history(period="1d")
-            if not hist.empty:
-                val = float(hist['Close'].iloc[-1])
-                if not math.isnan(val) and val > 100: rate = val
+            hist = yf.Ticker("JPY=X").history(period="1d")
+            if not hist.empty and not math.isnan(hist['Close'].iloc[-1]) and hist['Close'].iloc[-1] > 100: rate = float(hist['Close'].iloc[-1])
         except: pass
-        
     if rate == 0.0:
         cursor.execute("SELECT price FROM asset_cache WHERE ticker = 'USDJPY'")
-        old_row = cursor.fetchone()
-        rate = old_row["price"] if old_row else 155.0
-        fetch_time = "前回取得値"
+        old = cursor.fetchone()
+        rate = old["price"] if old else 155.0; fetch_time = "前回取得値"
         
-    cursor.execute('''
-        INSERT INTO asset_cache (ticker, price, div_yield, last_updated) 
-        VALUES ('USDJPY', %s, 0.0, %s) 
-        ON CONFLICT (ticker) DO UPDATE SET price = EXCLUDED.price, last_updated = EXCLUDED.last_updated
-    ''', (rate, today_str))
+    cursor.execute('''INSERT INTO asset_cache (ticker, price, div_yield, last_updated) VALUES ('USDJPY', %s, 0.0, %s) ON CONFLICT (ticker) DO UPDATE SET price = EXCLUDED.price, last_updated = EXCLUDED.last_updated''', (rate, today_str))
     cursor.close(); conn.close()
-    
     return {"rate": rate, "time": fetch_time}
 
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
-    ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    ticker = ticker.strip().upper(); today_str = datetime.now().strftime("%Y-%m-%d")
+    conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT price, div_yield, last_updated FROM asset_cache WHERE ticker = %s", (ticker,))
     row = cursor.fetchone()
-    
     if row and row["last_updated"] == today_str and row["price"] > 0:
-        cursor.close(); conn.close()
-        return row["price"], row["div_yield"]
+        cursor.close(); conn.close(); return row["price"], row["div_yield"]
         
-    price = 0.0
-    div_yield = 0.0
+    price = 0.0; div_yield = 0.0
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36"}
     
     if is_fund and len(ticker) == 8 and ticker.isalnum():
         try:
-            m_url = f"https://itf.minkabu.jp/fund/{ticker}"
-            res = requests.get(m_url, headers=headers, timeout=5)
+            res = requests.get(f"https://itf.minkabu.jp/fund/{ticker}", headers=headers, timeout=5)
             if res.status_code == 200:
-                html = res.text
-                idx = html.find("基準価額")
+                idx = res.text.find("基準価額")
                 if idx != -1:
-                    text_only = re.sub(r'<[^>]+>', '', html[idx:idx+300])
-                    nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})\s*円', text_only)
+                    nums = re.findall(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})\s*円', re.sub(r'<[^>]+>', '', res.text[idx:idx+300]))
                     if nums: price = float(nums[0].replace(',', ''))
         except: pass
-
         if price == 0.0:
             try:
-                y_url = f"https://finance.yahoo.co.jp/quote/{ticker}"
-                res = requests.get(y_url, headers=headers, timeout=5)
+                res = requests.get(f"https://finance.yahoo.co.jp/quote/{ticker}", headers=headers, timeout=5)
                 if res.status_code == 200:
-                    text_only = re.sub(r'<[^>]+>', '', res.text)
-                    match = re.search(r'基準価額[^0-9]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', text_only)
+                    match = re.search(r'基準価額[^0-9]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', re.sub(r'<[^>]+>', '', res.text))
                     if match: price = float(match.group(1).replace(',', ''))
             except: pass
-
         if price == 0.0:
             try:
-                n_url = f"https://www.nikkei.com/nkd/fund/?fcode={ticker}"
-                res = requests.get(n_url, headers=headers, timeout=5)
+                res = requests.get(f"https://www.nikkei.com/nkd/fund/?fcode={ticker}", headers=headers, timeout=5)
                 if res.status_code == 200:
-                    text_only = re.sub(r'<[^>]+>', '', res.text)
-                    match = re.search(r'基準価額[^0-9]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', text_only)
+                    match = re.search(r'基準価額[^0-9]*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', re.sub(r'<[^>]+>', '', res.text))
                     if match: price = float(match.group(1).replace(',', ''))
             except: pass
-            
-        div_yield = 0.0
 
     else:
         try:
             stock_ticker = ticker if not is_jpy else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
-            stock = yf.Ticker(stock_ticker)
-            hist = stock.history(period="1d")
-            if not hist.empty:
-                val = float(hist['Close'].iloc[-1])
-                if not math.isnan(val): price = val
-            
+            stock = yf.Ticker(stock_ticker); hist = stock.history(period="1d")
+            if not hist.empty and not math.isnan(hist['Close'].iloc[-1]): price = float(hist['Close'].iloc[-1])
             info = stock.info
-            if info and info.get("dividendRate") and price > 0:
-                div_yield = (float(info.get("dividendRate")) / price) * 100.0
-            elif info and info.get("dividendYield"):
-                div_yield = float(info["dividendYield"]) * 100.0
-            
-            if div_yield == 0.0:
-                divs = stock.dividends
-                if not divs.empty:
-                    one_year_ago = datetime.now(divs.index.tzinfo) - timedelta(days=365)
-                    recent_divs = divs[divs.index >= one_year_ago]
-                    total_div = float(recent_divs.sum())
-                    if total_div > 0 and price > 0:
-                        div_yield = (total_div / price) * 100.0
+            if info and info.get("dividendRate") and price > 0: div_yield = (float(info.get("dividendRate")) / price) * 100.0
+            elif info and info.get("dividendYield"): div_yield = float(info["dividendYield"]) * 100.0
+            if div_yield == 0.0 and not stock.dividends.empty:
+                recent_divs = stock.dividends[stock.dividends.index >= (datetime.now(stock.dividends.index.tzinfo) - timedelta(days=365))]
+                if float(recent_divs.sum()) > 0 and price > 0: div_yield = (float(recent_divs.sum()) / price) * 100.0
         except: pass
 
     if div_yield == 0.0 or math.isnan(div_yield):
-        if is_jpy: div_yield = 2.5
-        elif not is_fund: div_yield = 1.5
-        else: div_yield = 0.0
-        
-    if price == 0.0 and row:
-        price = row["price"] 
+        div_yield = 2.5 if is_jpy else (1.5 if not is_fund else 0.0)
+    if price == 0.0 and row: price = row["price"] 
 
     if price > 0:
-        cursor.execute('''
-            INSERT INTO asset_cache (ticker, price, div_yield, last_updated) 
-            VALUES (%s, %s, %s, %s) 
-            ON CONFLICT (ticker) DO UPDATE SET price = EXCLUDED.price, div_yield = EXCLUDED.div_yield, last_updated = EXCLUDED.last_updated
-        ''', (ticker, price, div_yield, today_str))
+        cursor.execute('''INSERT INTO asset_cache (ticker, price, div_yield, last_updated) VALUES (%s, %s, %s, %s) ON CONFLICT (ticker) DO UPDATE SET price = EXCLUDED.price, div_yield = EXCLUDED.div_yield, last_updated = EXCLUDED.last_updated''', (ticker, price, div_yield, today_str))
         
     cursor.close(); conn.close()
     return price, div_yield
@@ -293,76 +231,45 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
 def check_and_send_news():
     if not DATABASE2_URL: return
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("SELECT * FROM line_users")
-        users = cursor.fetchall()
-        
-        headers = {"User-Agent": "Mozilla/5.0"}
-        yesterday = datetime.now() - timedelta(days=1)
-        market_targets = ["日経平均", "S&P500", "為替 ドル円"]
-
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT * FROM line_users"); users = cursor.fetchall()
+        headers = {"User-Agent": "Mozilla/5.0"}; yesterday = datetime.now() - timedelta(days=1)
         for u in users:
-            line_user_id = u["line_user_id"]
-            app_user_id = u["app_user_id"]
-            
+            line_user_id = u["line_user_id"]; app_user_id = u["app_user_id"]
             cursor.execute("SELECT name FROM portfolio WHERE user_id = %s AND ticker LIKE '%%.T' AND quantity > 0", (app_user_id,))
             p_names = [r["name"] for r in cursor.fetchall()]
             cursor.execute("SELECT name FROM watchlist WHERE user_id = %s AND ticker LIKE '%%.T'", (app_user_id,))
-            w_names = [r["name"] for r in cursor.fetchall()]
-            
-            target_names = list(set(p_names + w_names + market_targets))
-            new_messages = []
-            
+            target_names = list(set(p_names + [r["name"] for r in cursor.fetchall()] + ["日経平均", "S&P500", "為替 ドル円"]))
+            new_msgs = []
             for company_name in target_names:
-                query = urllib.parse.quote(f"{company_name} 株")
-                url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
                 try:
-                    res = requests.get(url, headers=headers, timeout=5)
+                    res = requests.get(f"https://news.google.com/rss/search?q={urllib.parse.quote(company_name + ' 株')}&hl=ja&gl=JP&ceid=JP:ja", headers=headers, timeout=5)
                     if res.status_code == 200:
-                        root = ET.fromstring(res.text)
-                        items = root.findall('.//item')
-                        for item in items[:5]:
-                            link = item.find('link').text if item.find('link') is not None else ""
-                            title = item.find('title').text if item.find('title') is not None else ""
-                            pub_date_str = item.find('pubDate').text if item.find('pubDate') is not None else ""
-                            try:
-                                dt = parsedate_to_datetime(pub_date_str)
-                                if dt.timestamp() < yesterday.timestamp(): continue
-                            except: continue
-                            
+                        for item in ET.fromstring(res.text).findall('.//item')[:5]:
+                            link = item.find('link').text; title = item.find('title').text
+                            if parsedate_to_datetime(item.find('pubDate').text).timestamp() < yesterday.timestamp(): continue
                             cursor.execute("SELECT 1 FROM sent_news WHERE line_user_id = %s AND news_link = %s", (line_user_id, link))
                             if not cursor.fetchone():
-                                ai_summary = get_ai_summary(title)
-                                msg_text = f"📰 【{company_name}】の最新ニュース\n\n{title}\n\n💡 AI解説:\n{ai_summary}\n\n{link}"
-                                new_messages.append((msg_text, link))
-                                if len(new_messages) >= 3: break
-                except Exception: pass
-                if len(new_messages) >= 3: break
-            
-            if new_messages:
+                                new_msgs.append((f"📰 【{company_name}】の最新ニュース\n\n{title}\n\n💡 AI解説:\n{get_ai_summary(title)}\n\n{link}", link))
+                                if len(new_msgs) >= 3: break
+                except: pass
+                if len(new_msgs) >= 3: break
+            if new_msgs:
                 try:
-                    send_data = [TextSendMessage(text=m[0]) for m in new_messages]
-                    line_bot_api.push_message(line_user_id, send_data)
-                    for m in new_messages:
-                        cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (%s, %s) ON CONFLICT DO NOTHING", (line_user_id, m[1]))
-                except Exception: pass
-        cursor.close()
-        conn.close()
-    except Exception: pass
+                    line_bot_api.push_message(line_user_id, [TextSendMessage(text=m[0]) for m in new_msgs])
+                    for m in new_msgs: cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (%s, %s) ON CONFLICT DO NOTHING", (line_user_id, m[1]))
+                except: pass
+        cursor.close(); conn.close()
+    except: pass
 
-scheduler = BackgroundScheduler()
-scheduler.add_job(check_and_send_news, 'interval', minutes=60)
-scheduler.start()
+scheduler = BackgroundScheduler(); scheduler.add_job(check_and_send_news, 'interval', minutes=60); scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
 
 @app.post("/callback")
 async def callback(request: Request, x_line_signature: str = Header(None)):
     body = await request.body()
-    try:
-        handler.handle(body.decode("utf-8"), x_line_signature)
-    except InvalidSignatureError:
-        raise HTTPException(status_code=400, detail="Invalid signature")
+    try: handler.handle(body.decode("utf-8"), x_line_signature)
+    except InvalidSignatureError: raise HTTPException(status_code=400, detail="Invalid signature")
     return "OK"
 
 @handler.add(FollowEvent)
@@ -371,91 +278,25 @@ def handle_follow(event):
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    text = event.message.text.strip()
-    line_user_id = event.source.user_id
-
-    if "会員連携" in text:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="📝 ダッシュボードに表示されている「会員番号（6桁の英数字）」をそのまま送信してください。\n例: AB1234"))
-        
+    text = event.message.text.strip(); line_user_id = event.source.user_id
+    if "会員連携" in text: line_bot_api.reply_message(event.reply_token, TextSendMessage(text="📝 ダッシュボードに表示されている「会員番号（6桁の英数字）」をそのまま送信してください。\n例: AB1234"))
     elif "ダッシュボード" in text:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = %s", (line_user_id,))
-        row = cursor.fetchone()
-        cursor.close(); conn.close()
-
-        if row:
-            app_url = f"https://stock-app-xyif.onrender.com/{row['app_user_id']}"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"📊 あなたのダッシュボードはこちらです！\n{app_url}"))
-        else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="⚠️ まだ会員連携が完了していません。\n「会員連携」ボタンをタップして、会員番号を登録してください！"))
-
+        row = cursor.fetchone(); cursor.close(); conn.close()
+        if row: line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"📊 あなたのダッシュボードはこちらです！\nhttps://stock-app-xyif.onrender.com/{row['app_user_id']}"))
+        else: line_bot_api.reply_message(event.reply_token, TextSendMessage(text="⚠️ まだ会員連携が完了していません。"))
     elif re.match(r"^[a-zA-Z0-9]{6}$", text):
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        conn = get_db_connection(); cursor = conn.cursor()
         cursor.execute("INSERT INTO line_users (line_user_id, app_user_id) VALUES (%s, %s) ON CONFLICT (line_user_id) DO UPDATE SET app_user_id = EXCLUDED.app_user_id", (line_user_id, text))
         cursor.close(); conn.close()
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"✅ 会員番号「{text}」との紐付けが完了しました！\n今後、保有銘柄や市況の新しいニュースが出たらAIの解説付きでお知らせします📉✨"))
-        
-    elif text == "ニューステスト":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="🚀 ニューステスト隊が出動しました！最新ニュースをAIが要約してきます...🤖💭"))
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = %s", (line_user_id,))
-            row = cursor.fetchone()
-            
-            if not row:
-                line_bot_api.push_message(line_user_id, TextSendMessage(text="⚠️ 先に会員連携を済ませてください！"))
-                cursor.close(); conn.close(); return
-
-            app_user_id = row["app_user_id"]
-            
-            cursor.execute("SELECT name FROM portfolio WHERE user_id = %s AND ticker LIKE '%%.T'", (app_user_id,))
-            p_names = [r["name"] for r in cursor.fetchall()]
-            
-            cursor.execute("SELECT name FROM watchlist WHERE user_id = %s AND ticker LIKE '%%.T'", (app_user_id,))
-            w_names = [r["name"] for r in cursor.fetchall()]
-            cursor.close(); conn.close()
-
-            market_targets = ["日経平均", "S&P500", "為替 ドル円"]
-            target_names = list(set(p_names + w_names + market_targets))
-
-            headers = {"User-Agent": "Mozilla/5.0"}
-            new_messages = []
-            for company_name in target_names:
-                query = urllib.parse.quote(f"{company_name} 株")
-                url = f"https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
-                res = requests.get(url, headers=headers, timeout=5)
-                if res.status_code == 200:
-                    root = ET.fromstring(res.text)
-                    items = root.findall('.//item')
-                    if items:
-                        item = items[0] 
-                        title = item.find('title').text
-                        link = item.find('link').text
-                        ai_summary = get_ai_summary(title)
-                        new_messages.append(f"📰 【テスト配信: {company_name}】\n\n{title}\n\n💡 AI解説:\n{ai_summary}\n\n{link}")
-                        if len(new_messages) >= 2: break 
-
-            if new_messages:
-                send_data = [TextSendMessage(text=m) for m in new_messages]
-                line_bot_api.push_message(line_user_id, send_data)
-            else:
-                line_bot_api.push_message(line_user_id, TextSendMessage(text="😢 ニュースが見つかりませんでした。"))
-        except Exception as e:
-            print("テストエラー:", e)
-
-    else:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="💡 メニューから操作を選ぶか、連携したい会員番号（6桁の英数字）を送信してください！"))
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"✅ 会員番号「{text}」との紐付けが完了しました！"))
+    else: line_bot_api.reply_message(event.reply_token, TextSendMessage(text="💡 メニューから操作を選ぶか、連携したい会員番号（6桁の英数字）を送信してください！"))
 
 @app.get("/api/ai_summary")
-def api_ai_summary(title: str):
-    summary = get_ai_summary(title)
-    return {"summary": summary}
+def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
 def is_business_day(dt: datetime) -> bool: return dt.weekday() not in (5, 6) and not jpholiday.is_holiday(dt)
-
 def get_next_business_day(dt: datetime) -> datetime:
     curr = dt
     while not is_business_day(curr): curr += timedelta(days=1)
@@ -463,25 +304,22 @@ def get_next_business_day(dt: datetime) -> datetime:
 
 @app.get("/")
 def read_root(): return FileResponse("index.html")
-
 @app.get("/admin")
 def read_admin(): return FileResponse("admin.html")
-
 @app.get("/{user_id}")
 def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# 🌟 修正: 検索のタイムアウトを延ばし、Yahooとみんかぶの総取り＆名前の美白化（半角化）を追加！
+# ==========================================
+# 🌟 ハイブリッド・サジェスト検索（超強化版）
+# ==========================================
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
     results = []
     q_str = q.strip().lower()
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36",
-        "Referer": "https://finance.yahoo.co.jp/"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36"}
 
     if asset_type in ["JP", "ALL"]:
         for item in JPX_STOCKS:
@@ -498,65 +336,57 @@ def search_stock(q: str, asset_type: str = "ALL"):
                     ticker = quote.get("symbol", "")
                     name = quote.get("shortname", quote.get("longname", ticker))
                     if asset_type == "US" and ticker.endswith(".T"): continue
-                    if not any(r["ticker"] == ticker for r in results):
-                        results.append({"ticker": ticker, "name": name})
-        except Exception: pass
+                    if not any(r["ticker"] == ticker for r in results): results.append({"ticker": ticker, "name": name})
+        except: pass
 
-    # 🌟 投資信託の最強検索（ひふみ、たわら対応！）
-    if asset_type == "FUND" or (asset_type == "ALL" and len(results) < 8):
-        
+    # 🌟 投資信託の最強検索（内蔵キャッシュ ＋ APIのハイブリッド）
+    if asset_type in ["FUND", "ALL"] and len(results) < 8:
         # ① 8桁直打ち対応
         if len(q_str) == 8 and q_str.isalnum():
             try:
-                fund_url = f"https://itf.minkabu.jp/fund/{q_str.upper()}"
-                res = requests.get(fund_url, headers=headers, timeout=5)
+                res = requests.get(f"https://itf.minkabu.jp/fund/{q_str.upper()}", headers=headers, timeout=3)
                 if res.status_code == 200:
-                    soup = BeautifulSoup(res.text, 'html.parser')
-                    name = ""
-                    h1 = soup.find('h1')
-                    if h1: name = h1.get_text(strip=True)
-                    if not name:
-                        title_elem = soup.find('title')
-                        if title_elem: name = title_elem.text.split('|')[0].split('-')[0].strip()
-                    if name:
-                        # 全角文字を綺麗な半角に変換！
-                        name = unicodedata.normalize('NFKC', name)
-                        results.append({"ticker": q_str.upper(), "name": name})
-            except Exception: pass
+                    soup = BeautifulSoup(res.text, 'html.parser'); h1 = soup.find('h1')
+                    name = h1.get_text(strip=True) if h1 else (soup.find('title').text.split('|')[0].split('-')[0].strip() if soup.find('title') else "")
+                    if name: results.append({"ticker": q_str.upper(), "name": unicodedata.normalize('NFKC', name)})
+            except: pass
 
-        # ② Yahoo Finance JSON API (一番確実で速い)
-        try:
-            yj_url = f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}"
-            res = requests.get(yj_url, headers=headers, timeout=5)
-            if res.status_code == 200:
-                for item in res.json().get("results", []):
-                    code = item.get("code", "")
-                    name = item.get("name", "")
-                    # 投信は8文字英数字。株(4桁)などを除外
-                    if code and name and len(code) == 8 and code.isalnum() and not code.endswith(".T"):
-                        name = unicodedata.normalize('NFKC', name) # 全角を半角に美しく変換！
-                        if not any(r["ticker"] == code for r in results):
-                            results.append({"ticker": code, "name": name})
-        except Exception: pass
+        # ② 超高速！人気ファンドの内部キャッシュから検索（スペース対応）
+        search_terms = q_str.replace(" ", " ").split()
+        for fund in POPULAR_FUNDS:
+            fund_text = fund["name"].lower() + " " + " ".join(fund["keywords"])
+            if all(term in fund_text for term in search_terms):
+                if not any(r["ticker"] == fund["ticker"] for r in results):
+                    results.append({"ticker": fund["ticker"], "name": fund["name"]})
+                    if len(results) >= 8: break
+                    
+        # ③ Yahoo Finance API (スペースを除去して検索精度アップ)
+        if len(results) < 8:
+            q_yahoo = q.replace(" ", "").replace(" ", "")
+            try:
+                res = requests.get(f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q_yahoo)}", headers=headers, timeout=3)
+                if res.status_code == 200:
+                    for item in res.json().get("results", []):
+                        code = item.get("code", ""); name = item.get("name", "")
+                        if code and name and len(code) == 8 and code.isalnum() and not code.endswith(".T"):
+                            if not any(r["ticker"] == code for r in results):
+                                results.append({"ticker": code, "name": unicodedata.normalize('NFKC', name)})
+                        if len(results) >= 8: break
+            except: pass
 
-        # ③ みんかぶ投信専用のキーワード検索 (バックアップ)
+        # ④ みんかぶ投信専用検索 (バックアップ)
         if len(results) < 8:
             try:
-                search_url = f"https://itf.minkabu.jp/search/fund?word={urllib.parse.quote(q)}"
-                res = requests.get(search_url, headers=headers, timeout=5)
+                res = requests.get(f"https://itf.minkabu.jp/search/fund?word={urllib.parse.quote(q)}", headers=headers, timeout=3)
                 if res.status_code == 200:
-                    soup = BeautifulSoup(res.text, 'html.parser')
-                    for a in soup.find_all('a', href=re.compile(r'/fund/[0-9A-Za-z]{8}')):
+                    for a in BeautifulSoup(res.text, 'html.parser').find_all('a', href=re.compile(r'/fund/[0-9A-Za-z]{8}')):
                         code_match = re.search(r'/fund/([0-9A-Za-z]{8})', a['href'])
                         if code_match:
-                            code = code_match.group(1).upper()
-                            name = a.get_text(strip=True)
-                            if code and name and len(name) > 3:
-                                name = unicodedata.normalize('NFKC', name) # 全角を半角に美しく変換！
-                                if not any(r["ticker"] == code for r in results):
-                                    results.append({"ticker": code, "name": name})
+                            code = code_match.group(1).upper(); name = a.get_text(strip=True)
+                            if code and name and len(name) > 3 and not any(r["ticker"] == code for r in results):
+                                results.append({"ticker": code, "name": unicodedata.normalize('NFKC', name)})
                         if len(results) >= 8: break
-            except Exception: pass
+            except: pass
 
     return results[:8]
 
@@ -599,8 +429,7 @@ def get_portfolio(user_id: str):
     
     usdjpy_info = get_usdjpy_rate()
     portfolio_data = []; cat_totals = {"日本株": {"current": 0.0, "book": 0.0}, "米国株": {"current": 0.0, "book": 0.0}, "投資信託": {"current": 0.0, "book": 0.0}}
-    total_assets = 0.0; total_book = 0.0
-    total_est_dividend_jpy = 0.0 
+    total_assets = 0.0; total_book = 0.0; total_est_dividend_jpy = 0.0 
 
     for row in rows:
         item = dict(row); ticker = item["ticker"]; quantity = item["quantity"]; average_price = item["average_price"]
@@ -610,13 +439,9 @@ def get_portfolio(user_id: str):
         
         fetched_price, div_yield = get_asset_data(ticker, is_jpy, is_fund)
         
-        # 🌟 最新基準価額(fetched_price) を一番優先させる！
-        if fetched_price > 0:
-            current_price = fetched_price
-        elif item.get("manual_price") is not None and item["manual_price"] > 0:
-            current_price = item["manual_price"]
-        else:
-            current_price = average_price
+        if fetched_price > 0: current_price = fetched_price
+        elif item.get("manual_price") is not None and item["manual_price"] > 0: current_price = item["manual_price"]
+        else: current_price = average_price
             
         if is_fund: 
             current_value_jpy = (quantity * current_price) / 10000.0
@@ -625,36 +450,17 @@ def get_portfolio(user_id: str):
         elif is_jpy: 
             current_value_jpy = (current_price * quantity)
             book_value_jpy = (average_price * quantity)
-            category = "日本株"
-            total_est_dividend_jpy += current_value_jpy * (div_yield / 100.0)
+            category = "日本株"; total_est_dividend_jpy += current_value_jpy * (div_yield / 100.0)
         else: 
             current_value_jpy = (current_price * quantity) * fx_rate
             book_value_jpy = (average_price * quantity) * fx_rate
-            category = "米国株"
-            total_est_dividend_jpy += current_value_jpy * (div_yield / 100.0)
+            category = "米国株"; total_est_dividend_jpy += current_value_jpy * (div_yield / 100.0)
             
-        item.update({
-            "category": category, 
-            "is_fund": is_fund, 
-            "current_price": current_price, 
-            "currency": "JPY" if is_jpy or is_fund else "USD", 
-            "current_value_jpy": current_value_jpy, 
-            "profit_loss_jpy": current_value_jpy - book_value_jpy,
-            "dividend_yield": div_yield
-        })
+        item.update({"category": category, "is_fund": is_fund, "current_price": current_price, "currency": "JPY" if is_jpy or is_fund else "USD", "current_value_jpy": current_value_jpy, "profit_loss_jpy": current_value_jpy - book_value_jpy, "dividend_yield": div_yield})
         cat_totals[category]["current"] += current_value_jpy; cat_totals[category]["book"] += book_value_jpy
-        total_assets += current_value_jpy; total_book += book_value_jpy
-        portfolio_data.append(item)
+        total_assets += current_value_jpy; total_book += book_value_jpy; portfolio_data.append(item)
 
-    return {
-        "total_assets": total_assets, 
-        "total_book": total_book, 
-        "usdjpy_rate": usdjpy_info["rate"], 
-        "usdjpy_time": usdjpy_info["time"], 
-        "category_totals": cat_totals, 
-        "portfolio": portfolio_data,
-        "est_dividend_jpy": total_est_dividend_jpy 
-    }
+    return {"total_assets": total_assets, "total_book": total_book, "usdjpy_rate": usdjpy_info["rate"], "usdjpy_time": usdjpy_info["time"], "category_totals": cat_totals, "portfolio": portfolio_data, "est_dividend_jpy": total_est_dividend_jpy}
 
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
@@ -665,19 +471,13 @@ def get_jp_news(user_id: str):
     w_names = [r["name"] for r in cursor.fetchall()]
     cursor.close(); conn.close()
 
-    market_targets = ["主要市況: 日経平均", "主要市況: S&P500", "主要市況: 為替 ドル円"]
-    target_names = list(set(p_names + w_names)) + market_targets
-
-    news_list = []
-    headers = {"User-Agent": "Mozilla/5.0"}
+    target_names = list(set(p_names + w_names)) + ["主要市況: 日経平均", "主要市況: S&P500", "主要市況: 為替 ドル円"]
+    news_list = []; headers = {"User-Agent": "Mozilla/5.0"}
     for company_name in target_names:
-        search_term = company_name.replace("主要市況: ", "") + " 株"
-        url = f"https://news.google.com/rss/search?q={urllib.parse.quote(search_term)}&hl=ja&gl=JP&ceid=JP:ja"
         try:
-            res = requests.get(url, headers=headers, timeout=5)
+            res = requests.get(f"https://news.google.com/rss/search?q={urllib.parse.quote(company_name.replace('主要市況: ', '') + ' 株')}&hl=ja&gl=JP&ceid=JP:ja", headers=headers, timeout=5)
             if res.status_code == 200:
-                root = ET.fromstring(res.text)
-                for item in root.findall('.//item')[:3]:
+                for item in ET.fromstring(res.text).findall('.//item')[:3]:
                     try:
                         dt = parsedate_to_datetime(item.find('pubDate').text)
                         news_list.append({"stock_name": company_name, "title": item.find('title').text, "link": item.find('link').text, "pub_time": dt.strftime("%Y/%m/%d %H:%M"), "timestamp": dt.timestamp()})
@@ -691,7 +491,6 @@ def add_fund_rule(user_id: str, rule: FundRuleCreate):
     conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute('INSERT INTO fund_rules (user_id, ticker, name, frequency, monthly_day, amount, start_date) VALUES (%s, %s, %s, %s, %s, %s, %s)', (user_id, rule.ticker, rule.name, rule.frequency, rule.monthly_day, rule.amount, rule.start_date))
     curr = datetime.strptime(rule.start_date, "%Y-%m-%d"); today = datetime.now()
-    
     fetched_price, _ = get_asset_data(rule.ticker, False, True)
     base_price = rule.avg_price if rule.avg_price > 0 else (fetched_price or 10000.0)
 
