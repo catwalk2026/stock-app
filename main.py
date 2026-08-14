@@ -15,6 +15,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 import csv
+import unicodedata  # 🌟追加: 全角文字を綺麗な半角に変換する魔法のライブラリ
 
 # --- LINE連携用ライブラリ ---
 from linebot import LineBotApi, WebhookHandler
@@ -33,7 +34,6 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 app = FastAPI()
 
-# 🌟 DATABASE2_URL または DATABASE_URL のどちらからでも自動接続できる無敵仕様
 DATABASE2_URL = os.environ.get("DATABASE2_URL") or os.environ.get("DATABASE_URL")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
@@ -195,9 +195,6 @@ def get_usdjpy_rate():
     
     return {"rate": rate, "time": fetch_time}
 
-# ==========================================
-# 🌟 資産データのオンデマンド・キャッシュ取得（修正版）
-# ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -216,7 +213,6 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36"}
     
     if is_fund and len(ticker) == 8 and ticker.isalnum():
-        # 1. みnかぶ投信
         try:
             m_url = f"https://itf.minkabu.jp/fund/{ticker}"
             res = requests.get(m_url, headers=headers, timeout=5)
@@ -229,7 +225,6 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
                     if nums: price = float(nums[0].replace(',', ''))
         except: pass
 
-        # 2. Yahoo!ファイナンス
         if price == 0.0:
             try:
                 y_url = f"https://finance.yahoo.co.jp/quote/{ticker}"
@@ -240,7 +235,6 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
                     if match: price = float(match.group(1).replace(',', ''))
             except: pass
 
-        # 3. 日経新聞
         if price == 0.0:
             try:
                 n_url = f"https://www.nikkei.com/nkd/fund/?fcode={ticker}"
@@ -296,9 +290,6 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     cursor.close(); conn.close()
     return price, div_yield
 
-# ==========================================
-# ニュースのパトロールとPush送信機能
-# ==========================================
 def check_and_send_news():
     if not DATABASE2_URL: return
     try:
@@ -365,9 +356,6 @@ scheduler.add_job(check_and_send_news, 'interval', minutes=60)
 scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
 
-# ==========================================
-# LINE Bot 用のWebhook受け取り口
-# ==========================================
 @app.post("/callback")
 async def callback(request: Request, x_line_signature: str = Header(None)):
     body = await request.body()
@@ -461,9 +449,6 @@ def handle_message(event):
     else:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="💡 メニューから操作を選ぶか、連携したい会員番号（6桁の英数字）を送信してください！"))
 
-# ==========================================
-# API・コア機能
-# ==========================================
 @app.get("/api/ai_summary")
 def api_ai_summary(title: str):
     summary = get_ai_summary(title)
@@ -487,7 +472,7 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# 🌟 修正: みんかぶ投信専用エンジンでどんなキーワード（S&P500, ひふみ, オルカン等）でも100%検索可能化！
+# 🌟 修正: 検索のタイムアウトを延ばし、Yahooとみんかぶの総取り＆名前の美白化（半角化）を追加！
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
@@ -495,10 +480,9 @@ def search_stock(q: str, asset_type: str = "ALL"):
     q_str = q.strip().lower()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36",
-        "Referer": "https://itf.minkabu.jp/"
+        "Referer": "https://finance.yahoo.co.jp/"
     }
 
-    # 日本株
     if asset_type in ["JP", "ALL"]:
         for item in JPX_STOCKS:
             if q_str in item["code"].lower() or q_str in item["name"].lower():
@@ -506,10 +490,9 @@ def search_stock(q: str, asset_type: str = "ALL"):
                 if len(results) >= 8: break
         if results and asset_type == "JP": return results[:8]
 
-    # 米国株
     if asset_type in ["US", "ALL"] and len(results) < 8:
         try:
-            res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=US", headers=headers, timeout=3)
+            res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=US", headers=headers, timeout=5)
             if res.status_code == 200:
                 for quote in res.json().get("quotes", []):
                     ticker = quote.get("symbol", "")
@@ -519,13 +502,14 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         results.append({"ticker": ticker, "name": name})
         except Exception: pass
 
-    # 🌟 投資信託（みんかぶ投信検索を直接解析）
+    # 🌟 投資信託の最強検索（ひふみ、たわら対応！）
     if asset_type == "FUND" or (asset_type == "ALL" and len(results) < 8):
-        # ① 8桁のコード直打ち対応
+        
+        # ① 8桁直打ち対応
         if len(q_str) == 8 and q_str.isalnum():
             try:
                 fund_url = f"https://itf.minkabu.jp/fund/{q_str.upper()}"
-                res = requests.get(fund_url, headers=headers, timeout=3)
+                res = requests.get(fund_url, headers=headers, timeout=5)
                 if res.status_code == 200:
                     soup = BeautifulSoup(res.text, 'html.parser')
                     name = ""
@@ -535,11 +519,28 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         title_elem = soup.find('title')
                         if title_elem: name = title_elem.text.split('|')[0].split('-')[0].strip()
                     if name:
+                        # 全角文字を綺麗な半角に変換！
+                        name = unicodedata.normalize('NFKC', name)
                         results.append({"ticker": q_str.upper(), "name": name})
             except Exception: pass
 
-        # ② みんかぶ投信専用のキーワード検索
-        if not results:
+        # ② Yahoo Finance JSON API (一番確実で速い)
+        try:
+            yj_url = f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}"
+            res = requests.get(yj_url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                for item in res.json().get("results", []):
+                    code = item.get("code", "")
+                    name = item.get("name", "")
+                    # 投信は8文字英数字。株(4桁)などを除外
+                    if code and name and len(code) == 8 and code.isalnum() and not code.endswith(".T"):
+                        name = unicodedata.normalize('NFKC', name) # 全角を半角に美しく変換！
+                        if not any(r["ticker"] == code for r in results):
+                            results.append({"ticker": code, "name": name})
+        except Exception: pass
+
+        # ③ みんかぶ投信専用のキーワード検索 (バックアップ)
+        if len(results) < 8:
             try:
                 search_url = f"https://itf.minkabu.jp/search/fund?word={urllib.parse.quote(q)}"
                 res = requests.get(search_url, headers=headers, timeout=5)
@@ -550,25 +551,10 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         if code_match:
                             code = code_match.group(1).upper()
                             name = a.get_text(strip=True)
-                            if code and name and len(name) > 3 and not any(r["ticker"] == code for r in results):
-                                results.append({"ticker": code, "name": name})
-                        if len(results) >= 8: break
-            except Exception: pass
-
-        # ③ みんかぶ総合検索（バックアップ）
-        if not results:
-            try:
-                minkabu_url = f"https://minkabu.jp/search?query={urllib.parse.quote(q)}"
-                res = requests.get(minkabu_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
-                if res.status_code == 200:
-                    soup = BeautifulSoup(res.text, 'html.parser')
-                    for a in soup.find_all('a', href=re.compile(r'/fund/[0-9A-Za-z]{8}')):
-                        code_match = re.search(r'/fund/([0-9A-Za-z]{8})', a['href'])
-                        if code_match:
-                            code = code_match.group(1).upper()
-                            name = a.get_text(strip=True)
-                            if code and name and len(name) < 50 and not any(r["ticker"] == code for r in results):
-                                results.append({"ticker": code, "name": name})
+                            if code and name and len(name) > 3:
+                                name = unicodedata.normalize('NFKC', name) # 全角を半角に美しく変換！
+                                if not any(r["ticker"] == code for r in results):
+                                    results.append({"ticker": code, "name": name})
                         if len(results) >= 8: break
             except Exception: pass
 
@@ -598,7 +584,6 @@ def record_trade(user_id: str, trade: TradeCreate):
             new_price = ((current["quantity"] * current["average_price"]) + (trade.quantity * trade.price)) / new_qty
             cursor.execute("UPDATE portfolio SET quantity = %s, average_price = %s WHERE user_id = %s AND ticker = %s", (new_qty, new_price, user_id, ticker))
         else:
-            # 🌟 買付時、manual_priceにはNULL（未設定）を入れて最新価格の上書きを妨げないようにする
             cursor.execute("INSERT INTO portfolio (user_id, ticker, name, quantity, average_price, manual_price) VALUES (%s, %s, %s, %s, %s, NULL)", (user_id, ticker, name, trade.quantity, trade.price))
     elif trade.trade_type == "SELL" and current:
         new_qty = current["quantity"] - trade.quantity
@@ -606,7 +591,6 @@ def record_trade(user_id: str, trade: TradeCreate):
         else: cursor.execute("UPDATE portfolio SET quantity = %s WHERE user_id = %s AND ticker = %s", (new_qty, user_id, ticker))
     cursor.close(); conn.close(); return {"message": "Success"}
 
-# 🌟 大幅修正: 最新基準価額（39,019円）が絶対に反映されるポートフォリオ計算！
 @app.get("/api/{user_id}/portfolio")
 def get_portfolio(user_id: str):
     conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -624,10 +608,9 @@ def get_portfolio(user_id: str):
         is_fund = (len(ticker) == 8 and ticker.isalnum()) or "投信" in item["name"] or "ファンド" in item["name"] or "スリム" in item["name"]
         fx_rate = 1.0 if is_jpy or is_fund else usdjpy_info["rate"]
         
-        # 1. 外部から最新価格を取得
         fetched_price, div_yield = get_asset_data(ticker, is_jpy, is_fund)
         
-        # 2. 🌟 優先順位: スクレイピング成功価格(fetched_price) > 手動更新価格(manual_price) > 買付単価(average_price)
+        # 🌟 最新基準価額(fetched_price) を一番優先させる！
         if fetched_price > 0:
             current_price = fetched_price
         elif item.get("manual_price") is not None and item["manual_price"] > 0:
