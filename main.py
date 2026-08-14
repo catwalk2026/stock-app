@@ -295,7 +295,7 @@ def handle_message(event):
 
             app_user_id = row["app_user_id"]
             cursor.execute("SELECT name FROM portfolio WHERE user_id = %s AND ticker LIKE '%%.T'", (app_user_id,))
-            p_names = [r["name"] for r in cursor.fetchall()]
+            p_names = [r["name"] for r infetchall()]
             cursor.execute("SELECT name FROM watchlist WHERE user_id = %s AND ticker LIKE '%%.T'", (app_user_id,))
             w_names = [r["name"] for r in cursor.fetchall()]
             cursor.close(); conn.close()
@@ -346,16 +346,48 @@ def get_next_business_day(dt: datetime) -> datetime:
     while not is_business_day(curr): curr += timedelta(days=1)
     return curr
 
+# 🌟 修正: 投資信託の価格取得を「Yahoo」と「みんかぶ」の2重スクレイピング＆正規表現に強化！
 def fetch_latest_fund_price(ticker: str) -> float:
+    ticker = ticker.strip()
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0.0.0 Safari/537.36"}
+    
+    # ルート1: Yahoo!ファイナンスから取得
     try:
-        res = requests.get(f"https://itf.minkabu.jp/fund/{ticker.strip()}", headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
+        y_url = f"https://finance.yahoo.co.jp/quote/{ticker}"
+        res = requests.get(y_url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            html = res.text
+            idx = html.find("基準価額")
+            if idx != -1:
+                sub = html[idx:idx+300]
+                # HTMLタグの間に挟まれた「10,000」のような数字を無理やり引っこ抜く
+                nums = re.findall(r'>([1-9][0-9]*,[0-9]{3}|[1-9][0-9]{3,})<', sub)
+                if nums: return float(nums[0].replace(',', ''))
+    except Exception as e:
+        print("Yahoo fund price fetch error:", e)
+
+    # ルート2: みんかぶ投信から取得（バックアップ）
+    try:
+        m_url = f"https://itf.minkabu.jp/fund/{ticker}"
+        res = requests.get(m_url, headers=headers, timeout=5)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
-            price_elem = soup.find('div', class_='stock_price')
+            # 従来のstock_price
+            price_elem = soup.find(class_='stock_price')
             if price_elem:
                 num = re.sub(r'[^\d.]', '', price_elem.text)
                 if num and float(num) > 100: return float(num)
-    except Exception: pass
+            
+            # ページ内の「基準価額」という文字の周辺から抽出
+            html = res.text
+            idx = html.find("基準価額")
+            if idx != -1:
+                sub = html[idx:idx+300]
+                nums = re.findall(r'([1-9][0-9]*,[0-9]{3}|[1-9][0-9]{3,})円', sub)
+                if nums: return float(nums[0].replace(',', ''))
+    except Exception as e:
+        print("Minkabu fund price fetch error:", e)
+
     return 0.0
 
 @app.get("/")
@@ -369,7 +401,7 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# 🌟 修正: 投資信託の「3段構え」無敵検索ルート！
+# 🌟 JPXメモリ検索 ＆ 投資信託の8桁ダイレクト検索対応
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
@@ -401,10 +433,10 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         results.append({"ticker": ticker, "name": name})
         except Exception: pass
 
-    # 🌟 投資信託（強化版）
+    # 🌟 投資信託
     if asset_type == "FUND" or (asset_type == "ALL" and len(results) < 8):
         
-        # ① ダイレクトアタック: 入力が「ちょうど8桁の英数字」なら直接ページを取得（最も確実）
+        # ① 8桁のコード直打ち対応！
         if len(q_str) == 8 and q_str.isalnum():
             try:
                 fund_url = f"https://itf.minkabu.jp/fund/{q_str.upper()}"
@@ -421,40 +453,35 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         results.append({"ticker": q_str.upper(), "name": name})
             except Exception: pass
 
-        # ② みんかぶ投信の検索ページ
+        # ② Yahoo Finance 検索
         if not results:
             try:
-                search_url = f"https://itf.minkabu.jp/search/fund?word={urllib.parse.quote(q)}"
-                res = requests.get(search_url, headers=headers, timeout=3)
+                yj_url = f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}"
+                res = requests.get(yj_url, headers=headers, timeout=3)
                 if res.status_code == 200:
-                    soup = BeautifulSoup(res.text, 'html.parser')
-                    for a in soup.find_all('a', href=True):
-                        match = re.search(r'/fund/([0-9A-Za-z]{8})(?:$|\?)', a['href'])
-                        if match:
-                            code = match.group(1).upper()
-                            name = a.get_text(separator=" ", strip=True)
-                            if name and len(name) > 3 and len(name) < 80 and "詳細" not in name and "チャート" not in name:
-                                if not any(r["ticker"] == code for r in results):
-                                    results.append({"ticker": code, "name": name})
-                            if len(results) >= 8: break
+                    for item in res.json().get("results", []):
+                        code = item.get("code", "")
+                        name = item.get("name", "")
+                        if code and name and len(code) == 8 and code.isalnum():
+                            if not any(r["ticker"] == code for r in results):
+                                results.append({"ticker": code, "name": name})
             except Exception: pass
 
-        # ③ みんかぶ総合検索（フォールバック）
+        # ③ みんかぶ総合検索
         if not results:
             try:
                 minkabu_url = f"https://minkabu.jp/search?query={urllib.parse.quote(q)}"
-                res = requests.get(minkabu_url, headers=headers, timeout=3)
+                res = requests.get(minkabu_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
                 if res.status_code == 200:
                     soup = BeautifulSoup(res.text, 'html.parser')
-                    for a in soup.find_all('a', href=True):
-                        match = re.search(r'/fund/([0-9A-Za-z]{8})(?:$|\?)', a['href'])
-                        if match:
-                            code = match.group(1).upper()
-                            name = a.get_text(separator=" ", strip=True)
-                            if name and len(name) > 3 and len(name) < 80 and "詳細" not in name:
-                                if not any(r["ticker"] == code for r in results):
-                                    results.append({"ticker": code, "name": name})
-                            if len(results) >= 8: break
+                    for a in soup.find_all('a', href=re.compile(r'/fund/[0-9A-Za-z]{8}')):
+                        code_match = re.search(r'/fund/([0-9A-Za-z]{8})', a['href'])
+                        if code_match:
+                            code = code_match.group(1).upper()
+                            name = a.text.strip()
+                            if code and name and len(name) < 40 and not any(r["ticker"] == code for r in results):
+                                results.append({"ticker": code, "name": name})
+                        if len(results) >= 8: break
             except Exception: pass
 
     return results[:8]
