@@ -38,7 +38,7 @@ DATABASE2_URL = os.environ.get("DATABASE2_URL") or os.environ.get("DATABASE_URL"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
 # ==========================================
-# 🌟 JPX（日本株）と 人気投信（王道17選）のキャッシュデータ
+# 🌟 JPX（日本株）と 人気投信（王道ファンド）の正確なキャッシュデータ
 # ==========================================
 JPX_STOCKS = []
 
@@ -66,25 +66,23 @@ def load_jpx_stocks():
 
 load_jpx_stocks()
 
-# 💡 ユーザーさんのアイデアを実装！「王道ファンド」をプログラムに内蔵して爆速化！
+# 💡 証券コードを1つずつ再確認した完全版リスト！
 POPULAR_FUNDS = [
     {"ticker": "0331418A", "name": "eMAXIS Slim 全世界株式(オール・カントリー)", "keywords": ["オルカン", "emaxis", "slim", "all", "全世界", "カントリー", "三菱ufj"]},
     {"ticker": "03311187", "name": "eMAXIS Slim 米国株式(S&P500)", "keywords": ["emaxis", "slim", "s&p500", "sp500", "米国", "アメリカ"]},
-    {"ticker": "8931119C", "name": "SBI・V・S&P500インデックス・ファンド", "keywords": ["sbi", "v", "s&p", "sp500", "バンガード"]},
-    {"ticker": "89312217", "name": "SBI・V・全米株式インデックス・ファンド", "keywords": ["sbi", "v", "全米", "vti", "バンガード"]},
-    {"ticker": "9B311181", "name": "楽天・全米株式インデックス・ファンド(楽天・VTI)", "keywords": ["楽天", "全米", "vti", "バンガード"]},
-    {"ticker": "4731A159", "name": "楽天・全世界株式インデックス・ファンド(楽天・VT)", "keywords": ["楽天", "全世界", "vt", "オルカン", "バンガード"]},
-    {"ticker": "04313182", "name": "たわらノーロード 先進国株式", "keywords": ["たわら", "ノーロード", "先進国"]},
-    {"ticker": "0431419B", "name": "たわらノーロード 全世界株式", "keywords": ["たわら", "ノーロード", "全世界", "オルカン"]},
-    {"ticker": "29311172", "name": "ニッセイ外国株式インデックスファンド", "keywords": ["ニッセイ", "外国", "インデックス"]},
-    {"ticker": "2931413B", "name": "ニッセイ日経225インデックスファンド", "keywords": ["ニッセイ", "日経"]},
-    {"ticker": "0A312122", "name": "ひふみプラス", "keywords": ["ひふみ", "プラス", "レオス"]},
-    {"ticker": "0A31116A", "name": "ひふみ年金", "keywords": ["ひふみ", "年金", "レオス"]},
-    {"ticker": "0A31119A", "name": "ひふみワールド+", "keywords": ["ひふみ", "ワールド", "レオス"]},
-    {"ticker": "03312178", "name": "eMAXIS Slim 先進国株式インデックス", "keywords": ["emaxis", "slim", "先進国"]},
-    {"ticker": "03311155", "name": "eMAXIS Slim 国内株式(TOPIX)", "keywords": ["emaxis", "slim", "国内", "topix", "トピックス"]},
-    {"ticker": "03312152", "name": "eMAXIS Slim 国内株式(日経平均)", "keywords": ["emaxis", "slim", "国内", "日経"]},
-    {"ticker": "03311172", "name": "eMAXIS Slim バランス(8資産均等型)", "keywords": ["emaxis", "slim", "バランス", "8資産"]},
+    {"ticker": "89311199", "name": "SBI・V・S&P500インデックス・ファンド", "keywords": ["sbi", "v", "s&p", "sp500", "バンガード"]},
+    {"ticker": "89311216", "name": "SBI・V・全米株式インデックス・ファンド", "keywords": ["sbi", "v", "全米", "vti", "バンガード"]},
+    {"ticker": "9I312179", "name": "楽天・全米株式インデックス・ファンド(楽天・VTI)", "keywords": ["楽天", "全米", "vti", "バンガード"]},
+    {"ticker": "9I311179", "name": "楽天・全世界株式インデックス・ファンド(楽天・VT)", "keywords": ["楽天", "全世界", "vt", "オルカン", "バンガード"]},
+    {"ticker": "4731B15C", "name": "たわらノーロード 先進国株式", "keywords": ["たわら", "ノーロード", "先進国"]},
+    {"ticker": "47312197", "name": "たわらノーロード 全世界株式", "keywords": ["たわら", "ノーロード", "全世界", "オルカン"]},
+    {"ticker": "2931113C", "name": "ニッセイ外国株式インデックスファンド", "keywords": ["ニッセイ", "外国", "インデックス"]},
+    {"ticker": "29311041", "name": "ニッセイ日経225インデックスファンド", "keywords": ["ニッセイ", "日経"]},
+    {"ticker": "9C311125", "name": "ひふみプラス", "keywords": ["ひふみ", "プラス", "レオス"]},
+    {"ticker": "03319172", "name": "eMAXIS Slim 先進国株式インデックス", "keywords": ["emaxis", "slim", "先進国"]},
+    {"ticker": "03317172", "name": "eMAXIS Slim 国内株式(TOPIX)", "keywords": ["emaxis", "slim", "国内", "topix", "トピックス"]},
+    {"ticker": "03311182", "name": "eMAXIS Slim 国内株式(日経平均)", "keywords": ["emaxis", "slim", "国内", "日経"]},
+    {"ticker": "03312175", "name": "eMAXIS Slim バランス(8資産均等型)", "keywords": ["emaxis", "slim", "バランス", "8資産"]},
 ]
 
 def get_db_connection():
@@ -311,9 +309,6 @@ def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
     raise HTTPException(status_code=404, detail="会員番号は6桁の英数字である必要があります")
 
-# ==========================================
-# 🌟 ハイブリッド・サジェスト検索（超強化版）
-# ==========================================
 @app.get("/api/search_stock")
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
