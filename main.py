@@ -15,6 +15,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 import csv
+import unicodedata
 
 # --- LINE連携用ライブラリ ---
 from linebot import LineBotApi, WebhookHandler
@@ -64,6 +65,27 @@ def load_jpx_stocks():
         print("❌ JPX銘柄データの読み込み失敗:", e)
 
 load_jpx_stocks()
+
+# ==========================================
+# 🌟 復活: 人気ファンドのニックネーム辞書（これでオルカンが検索できます！）
+# ==========================================
+POPULAR_FUNDS = [
+    {"ticker": "0331418A", "name": "eMAXIS Slim 全世界株式(オール・カントリー)", "keywords": ["オルカン", "emaxis", "slim", "all", "全世界", "カントリー"]},
+    {"ticker": "03311187", "name": "eMAXIS Slim 米国株式(S&P500)", "keywords": ["emaxis", "slim", "s&p500", "sp500", "米国"]},
+    {"ticker": "89311199", "name": "SBI・V・S&P500インデックス・ファンド", "keywords": ["sbi", "v", "s&p", "sp500"]},
+    {"ticker": "89311216", "name": "SBI・V・全米株式インデックス・ファンド", "keywords": ["sbi", "v", "全米", "vti"]},
+    {"ticker": "9I312179", "name": "楽天・全米株式インデックス・ファンド(楽天・VTI)", "keywords": ["楽天", "全米", "vti"]},
+    {"ticker": "9I311179", "name": "楽天・全世界株式インデックス・ファンド(楽天・VT)", "keywords": ["楽天", "全世界", "vt", "オルカン"]},
+    {"ticker": "4731B15C", "name": "たわらノーロード 先進国株式", "keywords": ["たわら", "ノーロード", "先進国"]},
+    {"ticker": "47312197", "name": "たわらノーロード 全世界株式", "keywords": ["たわら", "ノーロード", "全世界", "オルカン"]},
+    {"ticker": "2931113C", "name": "ニッセイ外国株式インデックスファンド", "keywords": ["ニッセイ", "外国", "インデックス"]},
+    {"ticker": "29311041", "name": "ニッセイ日経225インデックスファンド", "keywords": ["ニッセイ", "日経"]},
+    {"ticker": "9C311125", "name": "ひふみプラス", "keywords": ["ひふみ", "プラス", "レオス"]},
+    {"ticker": "03319172", "name": "eMAXIS Slim 先進国株式インデックス", "keywords": ["emaxis", "slim", "先進国"]},
+    {"ticker": "03317172", "name": "eMAXIS Slim 国内株式(TOPIX)", "keywords": ["emaxis", "slim", "国内", "topix"]},
+    {"ticker": "03311182", "name": "eMAXIS Slim 国内株式(日経平均)", "keywords": ["emaxis", "slim", "国内", "日経"]},
+    {"ticker": "03312175", "name": "eMAXIS Slim バランス(8資産均等型)", "keywords": ["emaxis", "slim", "バランス", "8資産"]},
+]
 
 def get_db_connection():
     if not DATABASE2_URL:
@@ -195,12 +217,11 @@ def get_usdjpy_rate():
     return {"rate": rate, "time": fetch_time}
 
 # ==========================================
-# 🌟 資産データのオンデマンド・キャッシュ取得 (ユーザーさんの正解ロジックを復元！)
+# 🌟 資産データのオンデマンド・キャッシュ取得
 # ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    # キャッシュを強制更新するために日付文字列を少し変えます
-    today_str = datetime.now().strftime("%Y-%m-%d-v7")
+    today_str = datetime.now().strftime("%Y-%m-%d")
     
     try:
         conn = get_db_connection()
@@ -220,7 +241,6 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     
     if is_fund and len(ticker) == 8 and ticker.isalnum():
-        # 🌟 ここです！あなたの最強のみんかぶロジック！
         try:
             m_url = f"https://itf.minkabu.jp/fund/{ticker}"
             res = requests.get(m_url, headers=headers, timeout=5)
@@ -502,6 +522,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
         "Referer": "https://finance.yahoo.co.jp/"
     }
 
+    # 1. 日本株検索
     if asset_type in ["JP", "ALL"]:
         for item in JPX_STOCKS:
             if q_str in item["code"].lower() or q_str in item["name"].lower():
@@ -509,6 +530,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
                 if len(results) >= 8: break
         if results and asset_type == "JP": return results[:8]
 
+    # 2. 米国株検索
     if asset_type in ["US", "ALL"] and len(results) < 8:
         try:
             res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=US", headers=headers, timeout=3)
@@ -521,8 +543,18 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         results.append({"ticker": ticker, "name": name})
         except Exception: pass
 
-    if asset_type == "FUND" or (asset_type == "ALL" and len(results) < 8):
-        if len(q_str) == 8 and q_str.isalnum():
+    # 3. 投資信託検索 (🌟 ここにPOPULAR_FUNDSの処理を復活させました！)
+    if asset_type in ["FUND", "ALL"] and len(results) < 8:
+        # ① まずはニックネーム（オルカン等）で王道ファンドから検索
+        search_terms = q_str.replace(" ", " ").split()
+        for fund in POPULAR_FUNDS:
+            if all(t in (fund["name"].lower() + " " + " ".join(fund["keywords"])) for t in search_terms):
+                if not any(r["ticker"] == fund["ticker"] for r in results): 
+                    results.append({"ticker": fund["ticker"], "name": fund["name"]})
+                if len(results) >= 8: break
+
+        # ② 8桁のコードでみんかぶから直接検索
+        if len(results) < 8 and len(q_str) == 8 and q_str.isalnum():
             try:
                 fund_url = f"https://itf.minkabu.jp/fund/{q_str.upper()}"
                 res = requests.get(fund_url, headers=headers, timeout=3)
@@ -538,6 +570,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         results.append({"ticker": q_str.upper(), "name": name})
             except Exception: pass
 
+        # ③ Yahooから検索
         if not results:
             try:
                 yj_url = f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}"
@@ -551,6 +584,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
                                 results.append({"ticker": code, "name": name})
             except Exception: pass
 
+        # ④ みんかぶキーワード検索
         if not results:
             try:
                 minkabu_url = f"https://minkabu.jp/search?query={urllib.parse.quote(q)}"
