@@ -6,78 +6,99 @@
     <title>AIポートフォリオ＆投資ダッシュボード</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- 🌟 グラフ描画用ライブラリを復活 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; font-weight: bold; }
-        .tab-inactive { color: #6b7280; }
+        /* 🌟 指定カラーパレットの適用 */
+        body { background-color: #F8F6ED; color: #2F3842; }
+        .bg-white-card { background-color: #FFFFFF; }
+        .text-main { color: #2F3842; }
+        .text-turquoise { color: #25B2C7; }
+        .bg-turquoise { background-color: #60C7D5; }
+        .hover-bg-turquoise:hover { background-color: #25B2C7; }
+        .border-light { border-color: #F7F7F8; }
+        .text-stone { color: #596572; }
+        .text-orange { color: #F77261; }
+        .text-mint { color: #42B187; }
+        
+        .tab-active { border-bottom: 2px solid #25B2C7; color: #25B2C7; font-weight: bold; }
+        .tab-inactive { color: #596572; }
         [v-cloak] { display: none; }
     </style>
 </head>
-<body class="bg-gray-50 font-sans text-gray-800">
+<body class="font-sans antialiased">
     <div class="max-w-4xl mx-auto px-4 py-6">
         <!-- ヘッダー -->
         <header class="flex justify-between items-center mb-6">
-            <h1 class="text-2xl font-extrabold text-gray-900"><i class="fas fa-chart-pie text-blue-500 mr-2"></i>My Portfolio</h1>
-            <div class="text-sm text-gray-500 bg-white px-3 py-1 rounded-full shadow-sm">
+            <h1 class="text-2xl font-extrabold text-main"><i class="fas fa-chart-pie text-turquoise mr-2"></i>My Portfolio</h1>
+            <div class="text-sm text-stone bg-white px-3 py-1 rounded-full shadow-sm border border-light">
                 ID: <span id="display-user-id" class="font-mono font-bold"></span>
             </div>
         </header>
 
         <!-- サマリーカード群 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
-                <p class="text-sm text-gray-500 font-bold mb-1">💰 総資産額</p>
+            <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light">
+                <p class="text-sm text-stone font-bold mb-1">💰 総資産額</p>
                 <div class="flex items-baseline gap-2">
-                    <span class="text-3xl font-extrabold text-gray-900" id="total-assets">¥0</span>
+                    <span class="text-3xl font-extrabold text-main" id="total-assets">¥0</span>
                 </div>
                 <div class="mt-2 text-sm font-bold" id="total-profit-container">
                     評価損益: <span id="total-profit">¥0</span>
                 </div>
-                <p class="text-xs text-gray-400 mt-2 text-right">USD/JPY: <span id="usdjpy-rate">--</span></p>
+                <p class="text-xs text-stone mt-2 text-right opacity-70">USD/JPY: <span id="usdjpy-rate">--</span></p>
             </div>
 
             <!-- 配当金モチベーションカード -->
-            <div class="bg-gradient-to-br from-yellow-50 to-orange-50 p-5 rounded-xl shadow-sm border border-yellow-200">
-                <p class="text-sm text-yellow-700 font-bold mb-1"><i class="fas fa-seedling mr-1"></i> 予想される不労所得（年間配当）</p>
+            <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light relative overflow-hidden">
+                <div class="absolute right-0 top-0 w-16 h-16 bg-[#F8F6ED] rounded-bl-full -z-10"></div>
+                <p class="text-sm text-stone font-bold mb-1"><i class="fas fa-seedling text-turquoise mr-1"></i> 予想される不労所得（年間配当）</p>
                 <div class="flex items-baseline gap-2">
-                    <span class="text-3xl font-extrabold text-yellow-600" id="yearly-dividend">¥0</span>
-                    <span class="text-sm text-yellow-700 font-bold">/ 年</span>
+                    <span class="text-3xl font-extrabold text-[#C4BF4D]" id="yearly-dividend">¥0</span>
+                    <span class="text-sm text-stone font-bold">/ 年</span>
                 </div>
-                <div class="mt-3 p-2 bg-white/60 rounded-lg">
-                    <p class="text-sm font-bold text-gray-700">月のお小遣い: 約 <span id="monthly-dividend" class="text-lg text-yellow-600">0</span> 円</p>
-                    <p class="text-xs text-gray-600 mt-1 font-medium" id="dividend-level-text">コツコツ投資して不労所得を育てましょう🌱</p>
+                <div class="mt-3 p-2 bg-[#F8F6ED] rounded-lg">
+                    <p class="text-sm font-bold text-main">月のお小遣い: 約 <span id="monthly-dividend" class="text-lg text-[#C4BF4D]">0</span> 円</p>
+                    <p class="text-xs text-stone mt-1 font-medium" id="dividend-level-text">コツコツ投資して不労所得を育てましょう🌱</p>
                 </div>
             </div>
         </div>
 
-        <!-- 🌟 UI復旧：取引の追加セクション -->
-        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
-            <h3 class="text-lg font-extrabold text-gray-800 mb-4">取引の追加</h3>
+        <!-- 🌟 グラフ復活エリア -->
+        <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light mb-6">
+            <h3 class="text-sm font-bold text-stone mb-2">📈 資産推移</h3>
+            <canvas id="asset-chart" height="70"></canvas>
+        </div>
+
+        <!-- 取引の追加セクション -->
+        <div class="bg-white-card p-6 rounded-xl shadow-sm border border-light mb-6">
+            <h3 class="text-lg font-extrabold text-main mb-4">取引の追加</h3>
             <div class="mb-4">
-                <label class="block text-sm font-bold text-gray-700 mb-1">資産タイプ</label>
-                <select id="trade-asset-type" class="w-full border border-gray-300 rounded p-2 bg-gray-50" onchange="resetSearch('trade')">
+                <label class="block text-sm font-bold text-stone mb-1">資産タイプ</label>
+                <select id="trade-asset-type" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" onchange="resetSearch('trade')">
                     <option value="JP">日本株</option>
                     <option value="US">米国株</option>
                 </select>
             </div>
             
-            <div class="bg-[#fcfbf6] p-4 rounded-lg border border-[#f0ece1] mb-4 relative">
-                <label class="block text-sm font-bold text-gray-700 mb-2"><i class="fas fa-search"></i> 銘柄検索（自動入力）</label>
-                <input type="text" id="trade-search" class="w-full border border-gray-300 rounded p-2" placeholder="例: 7203 または トヨタ" autocomplete="off">
-                <div id="trade-suggest" class="absolute z-10 w-full bg-white border border-gray-200 shadow-lg rounded-b hidden max-h-48 overflow-y-auto"></div>
+            <div class="bg-[#F8F6ED] p-4 rounded-lg border border-light mb-4 relative">
+                <label class="block text-sm font-bold text-stone mb-2"><i class="fas fa-search text-turquoise"></i> 銘柄検索（自動入力）</label>
+                <input type="text" id="trade-search" class="w-full border border-light rounded p-2 text-main" placeholder="例: 7203 または トヨタ" autocomplete="off">
+                <div id="trade-suggest" class="absolute z-10 w-full bg-white border border-light shadow-lg rounded-b hidden max-h-48 overflow-y-auto"></div>
             </div>
             
             <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">銘柄コード</label>
-                    <input type="text" id="trade-ticker" class="w-full border border-gray-300 rounded p-2 bg-gray-50" readonly>
+                    <label class="block text-sm font-bold text-stone mb-1">銘柄コード</label>
+                    <input type="text" id="trade-ticker" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly>
                 </div>
                 <div class="md:col-span-2">
-                    <label class="block text-sm font-bold text-gray-700 mb-1">銘柄名</label>
-                    <input type="text" id="trade-name" class="w-full border border-gray-300 rounded p-2 bg-gray-50" readonly>
+                    <label class="block text-sm font-bold text-stone mb-1">銘柄名</label>
+                    <input type="text" id="trade-name" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly>
                 </div>
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">取引種別</label>
-                    <select id="trade-type" class="w-full border border-gray-300 rounded p-2">
+                    <label class="block text-sm font-bold text-stone mb-1">取引種別</label>
+                    <select id="trade-type" class="w-full border border-light rounded p-2 text-main">
                         <option value="BUY">買付</option>
                         <option value="SELL">売却</option>
                     </select>
@@ -86,50 +107,50 @@
 
             <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">取引日</label>
-                    <input type="date" id="trade-date" class="w-full border border-gray-300 rounded p-2">
+                    <label class="block text-sm font-bold text-stone mb-1">取引日</label>
+                    <input type="date" id="trade-date" class="w-full border border-light rounded p-2 text-main">
                 </div>
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">株数指定 (株)</label>
-                    <input type="number" step="0.01" id="trade-qty" class="w-full border border-gray-300 rounded p-2">
+                    <label class="block text-sm font-bold text-stone mb-1">株数指定 (株)</label>
+                    <input type="number" step="0.01" id="trade-qty" class="w-full border border-light rounded p-2 text-main">
                 </div>
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">単価 (円)</label>
-                    <input type="number" step="0.01" id="trade-price" class="w-full border border-gray-300 rounded p-2">
+                    <label class="block text-sm font-bold text-stone mb-1">単価 (円)</label>
+                    <input type="number" step="0.01" id="trade-price" class="w-full border border-light rounded p-2 text-main">
                 </div>
                 <div class="md:col-span-1">
-                    <button onclick="submitTrade('trade')" class="w-full bg-[#52c2d0] text-white font-bold py-2 rounded hover:bg-[#3eaab7] transition shadow">保存する</button>
+                    <button onclick="submitTrade('trade')" class="w-full bg-turquoise text-white font-bold py-2 rounded hover-bg-turquoise transition shadow">保存する</button>
                 </div>
             </div>
         </div>
 
-        <!-- 🌟 UI復旧：自動積立ルール設定セクション -->
-        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
-            <h3 class="text-lg font-extrabold text-gray-800 mb-4">自動積立ルール設定</h3>
-            <div class="bg-[#fcfbf6] p-4 rounded-lg border border-[#f0ece1] mb-4 relative">
-                <label class="block text-sm font-bold text-gray-700 mb-2"><i class="fas fa-search"></i> ファンド検索（自動入力）</label>
-                <input type="text" id="fund-search" class="w-full border border-gray-300 rounded p-2" placeholder="例: オルカン または eMAXIS" autocomplete="off">
-                <div id="fund-suggest" class="absolute z-10 w-full bg-white border border-gray-200 shadow-lg rounded-b hidden max-h-48 overflow-y-auto"></div>
+        <!-- 自動積立ルール設定セクション -->
+        <div class="bg-white-card p-6 rounded-xl shadow-sm border border-light mb-6">
+            <h3 class="text-lg font-extrabold text-main mb-4">自動積立ルール設定</h3>
+            <div class="bg-[#F8F6ED] p-4 rounded-lg border border-light mb-4 relative">
+                <label class="block text-sm font-bold text-stone mb-2"><i class="fas fa-search text-turquoise"></i> ファンド検索（自動入力）</label>
+                <input type="text" id="fund-search" class="w-full border border-light rounded p-2 text-main" placeholder="例: オルカン または eMAXIS" autocomplete="off">
+                <div id="fund-suggest" class="absolute z-10 w-full bg-white border border-light shadow-lg rounded-b hidden max-h-48 overflow-y-auto"></div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">投信コード</label>
-                    <input type="text" id="fund-ticker" class="w-full border border-gray-300 rounded p-2 bg-gray-50" readonly>
+                    <label class="block text-sm font-bold text-stone mb-1">投信コード</label>
+                    <input type="text" id="fund-ticker" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly>
                 </div>
                 <div class="md:col-span-2">
-                    <label class="block text-sm font-bold text-gray-700 mb-1">ファンド名</label>
-                    <input type="text" id="fund-name" class="w-full border border-gray-300 rounded p-2 bg-gray-50" readonly>
+                    <label class="block text-sm font-bold text-stone mb-1">ファンド名</label>
+                    <input type="text" id="fund-name" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly>
                 </div>
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">積立コース</label>
-                    <select id="fund-freq" class="w-full border border-gray-300 rounded p-2">
+                    <label class="block text-sm font-bold text-stone mb-1">積立コース</label>
+                    <select id="fund-freq" class="w-full border border-light rounded p-2 text-main">
                         <option value="MONTHLY">毎月コース</option>
                     </select>
                 </div>
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">積立日 (毎月)</label>
-                    <select id="fund-day" class="w-full border border-gray-300 rounded p-2">
+                    <label class="block text-sm font-bold text-stone mb-1">積立日 (毎月)</label>
+                    <select id="fund-day" class="w-full border border-light rounded p-2 text-main">
                         <option value="1">1日</option>
                         <option value="15">15日</option>
                         <option value="25">25日</option>
@@ -139,45 +160,45 @@
 
             <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">積立金額 (円)</label>
-                    <input type="number" id="fund-amount" class="w-full border border-gray-300 rounded p-2" value="30000">
+                    <label class="block text-sm font-bold text-stone mb-1">積立金額 (円)</label>
+                    <input type="number" id="fund-amount" class="w-full border border-light rounded p-2 text-main" value="30000">
                 </div>
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">基準価額 (1万口) <input type="checkbox" id="fund-manual" onchange="toggleFundPrice()"> 手入力</label>
-                    <input type="number" step="0.01" id="fund-price" class="w-full border border-gray-300 rounded p-2 bg-gray-100" readonly placeholder="例: 28459">
+                    <label class="block text-sm font-bold text-stone mb-1">基準価額 (1万口) <input type="checkbox" id="fund-manual" onchange="toggleFundPrice()"> 手入力</label>
+                    <input type="number" step="0.01" id="fund-price" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly placeholder="例: 28459">
                 </div>
                 <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">開始日</label>
-                    <input type="date" id="fund-start" class="w-full border border-gray-300 rounded p-2">
+                    <label class="block text-sm font-bold text-stone mb-1">開始日</label>
+                    <input type="date" id="fund-start" class="w-full border border-light rounded p-2 text-main">
                 </div>
                 <div class="md:col-span-2">
-                    <button onclick="submitFund()" class="w-full bg-[#52c2d0] text-white font-bold py-2 rounded hover:bg-[#3eaab7] transition shadow">積立を開始する</button>
+                    <button onclick="submitFund()" class="w-full bg-turquoise text-white font-bold py-2 rounded hover-bg-turquoise transition shadow">積立を開始する</button>
                 </div>
             </div>
         </div>
 
         <!-- タブナビゲーション -->
-        <div class="flex border-b border-gray-200 mb-6">
+        <div class="flex border-b border-light mb-6">
             <button onclick="switchTab('portfolio')" id="tab-portfolio" class="py-2 px-4 tab-active">保有資産</button>
             <button onclick="switchTab('history')" id="tab-history" class="py-2 px-4 tab-inactive">取引履歴</button>
             <button onclick="switchTab('news')" id="tab-news" class="py-2 px-4 tab-inactive">関連ニュース</button>
         </div>
 
         <div id="content-portfolio">
-            <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                <ul id="portfolio-list" class="divide-y divide-gray-100"><li class="p-4 text-center text-gray-500">読み込み中...</li></ul>
+            <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
+                <ul id="portfolio-list" class="divide-y border-light"><li class="p-4 text-center text-stone">読み込み中...</li></ul>
             </div>
         </div>
 
         <div id="content-history" class="hidden">
-            <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                <ul id="history-list" class="divide-y divide-gray-100"><li class="p-4 text-center text-gray-500">履歴がありません</li></ul>
+            <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
+                <ul id="history-list" class="divide-y border-light"><li class="p-4 text-center text-stone">履歴がありません</li></ul>
             </div>
         </div>
 
         <div id="content-news" class="hidden">
-            <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden p-4" id="news-container">
-                <p class="text-center text-gray-500">ニュースを読み込んでいます...</p>
+            <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden p-4" id="news-container">
+                <p class="text-center text-stone">ニュースを読み込んでいます...</p>
             </div>
         </div>
     </div>
@@ -188,9 +209,11 @@
         document.getElementById('display-user-id').textContent = userId;
         document.getElementById('trade-date').valueAsDate = new Date();
         document.getElementById('fund-start').valueAsDate = new Date();
+        let chartInstance = null;
 
         window.onload = () => {
             loadDashboard();
+            loadGraph();
             setupSearch('trade-search', 'trade-suggest', 'trade-ticker', 'trade-name', 'trade-asset-type');
             setupSearch('fund-search', 'fund-suggest', 'fund-ticker', 'fund-name', 'FUND', 'fund-price');
         };
@@ -215,7 +238,7 @@
                 const totalProfit = data.total_assets - data.total_book;
                 const profitEl = document.getElementById('total-profit');
                 profitEl.textContent = `${totalProfit >= 0 ? '+' : ''}¥${Math.floor(totalProfit).toLocaleString()}`;
-                profitEl.className = totalProfit >= 0 ? 'text-green-600' : 'text-red-600';
+                profitEl.className = totalProfit >= 0 ? 'text-mint' : 'text-orange';
                 document.getElementById('usdjpy-rate').textContent = `${data.usdjpy_rate}円 (${data.usdjpy_time})`;
 
                 const yearlyDiv = data.est_dividend_jpy || 0;
@@ -223,41 +246,31 @@
                 document.getElementById('yearly-dividend').textContent = `¥${Math.floor(yearlyDiv).toLocaleString()}`;
                 document.getElementById('monthly-dividend').textContent = monthlyDiv.toLocaleString();
 
-                let levelText = "コツコツ投資を続けて不労所得を育てましょう🌱";
-                if (monthlyDiv >= 300000) levelText = "もはや完全な不労所得生活レベル！FIRE達成！？🌴✨";
-                else if (monthlyDiv >= 100000) levelText = "家賃がまるまる払えるレベル！生活が超楽になります🏠✨";
-                else if (monthlyDiv >= 30000) levelText = "毎月の光熱費と水道代が全額まかなえるレベル💡";
-                else if (monthlyDiv >= 10000) levelText = "格安SIMなら家族全員のスマホ代が払えるレベル📱";
-                else if (monthlyDiv >= 5000) levelText = "ちょっと豪華なランチや飲み代が毎月浮くレベル🍣";
-                else if (monthlyDiv >= 1000) levelText = "毎月スタバの新作が無料で飲めるレベル☕️";
-                else if (monthlyDiv > 0) levelText = "銀行の利息より圧倒的にお得！チロルチョコが買えるレベル🍫";
-                document.getElementById('dividend-level-text').textContent = levelText;
-
                 const listEl = document.getElementById('portfolio-list');
                 listEl.innerHTML = '';
                 if (data.portfolio.length === 0) {
-                    listEl.innerHTML = '<li class="p-4 text-center text-gray-500">保有資産がありません。</li>';
+                    listEl.innerHTML = '<li class="p-4 text-center text-stone">保有資産がありません。</li>';
                     return;
                 }
 
                 data.portfolio.forEach(item => {
                     const profit = item.profit_loss_jpy;
                     const profitStr = profit >= 0 ? `+¥${Math.floor(profit).toLocaleString()}` : `-¥${Math.abs(Math.floor(profit)).toLocaleString()}`;
-                    const profitClass = profit >= 0 ? 'text-green-600' : 'text-red-600';
+                    const profitClass = profit >= 0 ? 'text-mint' : 'text-orange';
                     const isFund = item.is_fund;
                     const priceUnit = isFund ? '円 (1万口)' : (item.currency === 'USD' ? '$' : '円');
 
                     listEl.innerHTML += `
-                        <li class="p-4 hover:bg-gray-50 flex justify-between items-center">
+                        <li class="p-4 hover:bg-[#F8F6ED] flex justify-between items-center transition">
                             <div>
-                                <div class="font-bold text-gray-800">${item.name}</div>
-                                <div class="text-xs text-gray-500 mt-1"><span class="bg-gray-100 px-2 py-0.5 rounded mr-1">${item.category}</span>${item.ticker}</div>
-                                <div class="text-xs text-gray-500 mt-1">保有: ${item.quantity.toLocaleString()} ${isFund ? '口' : '株'} | 現在値: ${item.current_price.toLocaleString()} ${priceUnit}</div>
+                                <div class="font-bold text-main">${item.name}</div>
+                                <div class="text-xs text-stone mt-1"><span class="bg-[#F8F6ED] px-2 py-0.5 rounded border border-light mr-1">${item.category}</span>${item.ticker}</div>
+                                <div class="text-xs text-stone mt-1 opacity-80">保有: ${item.quantity.toLocaleString()} ${isFund ? '口' : '株'} | 現在値: ${item.current_price.toLocaleString()} ${priceUnit}</div>
                             </div>
                             <div class="text-right">
-                                <div class="font-bold text-gray-900">¥${Math.floor(item.current_value_jpy).toLocaleString()}</div>
+                                <div class="font-bold text-main">¥${Math.floor(item.current_value_jpy).toLocaleString()}</div>
                                 <div class="text-xs font-bold mt-1 ${profitClass}">${profitStr}</div>
-                                <button onclick="deleteStock('${item.ticker}')" class="text-xs text-red-400 hover:text-red-600 mt-2"><i class="fas fa-trash-alt"></i> 全て削除</button>
+                                <button onclick="deleteStock('${item.ticker}')" class="text-xs text-orange hover:opacity-70 mt-2 transition"><i class="fas fa-trash-alt"></i> 全て削除</button>
                             </div>
                         </li>
                     `;
@@ -265,62 +278,100 @@
             } catch (e) { console.error(e); }
         }
 
+        async function loadGraph() {
+            try {
+                const res = await fetch(`/api/${userId}/history`);
+                const data = await res.json();
+                if (data.length === 0) return;
+                
+                const labels = data.map(d => d.date.substring(5)); // M-Dのみ表示
+                const values = data.map(d => d.total_assets);
+                
+                const ctx = document.getElementById('asset-chart').getContext('2d');
+                if(chartInstance) chartInstance.destroy();
+                chartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: '総資産推移',
+                            data: values,
+                            borderColor: '#60C7D5',
+                            backgroundColor: 'rgba(96, 199, 213, 0.15)',
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 2
+                        }]
+                    },
+                    options: { 
+                        responsive: true, 
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: { 
+                            x: { grid: { display: false }, ticks: { color: '#596572' } },
+                            y: { grid: { color: '#F7F7F8' }, ticks: { color: '#596572' } }
+                        }
+                    }
+                });
+            } catch(e) { console.error("Graph load error", e); }
+        }
+
         async function loadHistory() {
             const listEl = document.getElementById('history-list');
-            listEl.innerHTML = '<li class="p-4 text-center text-gray-500">読み込み中...</li>';
+            listEl.innerHTML = '<li class="p-4 text-center text-stone">読み込み中...</li>';
             try {
                 const res = await fetch(`/api/${userId}/transactions/ALL`);
                 const trades = await res.json();
-                if (trades.length === 0) { listEl.innerHTML = '<li class="p-4 text-center text-gray-500">取引履歴がありません</li>'; return; }
+                if (trades.length === 0) { listEl.innerHTML = '<li class="p-4 text-center text-stone">取引履歴がありません</li>'; return; }
                 listEl.innerHTML = '';
                 trades.forEach(t => {
-                    const typeLabel = t.type.includes('BUY') ? '<span class="text-red-500 font-bold">買付</span>' : '<span class="text-blue-500 font-bold">売却</span>';
+                    const typeLabel = t.type.includes('BUY') ? '<span class="text-orange font-bold">買付</span>' : '<span class="text-turquoise font-bold">売却</span>';
                     listEl.innerHTML += `
-                        <li class="p-4 hover:bg-gray-50 flex justify-between items-center">
+                        <li class="p-4 hover:bg-[#F8F6ED] flex justify-between items-center transition">
                             <div>
-                                <div class="font-bold text-gray-800">${t.name}</div>
-                                <div class="text-xs text-gray-500 mt-1">${t.trade_date} | ${typeLabel}</div>
-                                <div class="text-xs text-gray-500 mt-1">数量: ${t.quantity} | 単価: ${t.price.toLocaleString()}</div>
+                                <div class="font-bold text-main">${t.name}</div>
+                                <div class="text-xs text-stone mt-1">${t.trade_date} | ${typeLabel}</div>
+                                <div class="text-xs text-stone mt-1 opacity-80">数量: ${t.quantity} | 単価: ${t.price.toLocaleString()}</div>
                             </div>
-                            <button onclick="deleteTransaction(${t.id})" class="bg-gray-100 hover:bg-red-100 text-gray-500 hover:text-red-600 px-3 py-1 rounded transition"><i class="fas fa-trash-alt"></i> 削除</button>
+                            <button onclick="deleteTransaction(${t.id})" class="bg-[#F8F6ED] border border-light hover:border-orange text-stone hover:text-orange px-3 py-1 rounded transition"><i class="fas fa-trash-alt"></i> 削除</button>
                         </li>
                     `;
                 });
-            } catch (e) { listEl.innerHTML = '<li class="p-4 text-center text-red-500">読み込みエラー</li>'; }
+            } catch (e) { listEl.innerHTML = '<li class="p-4 text-center text-orange">読み込みエラー</li>'; }
         }
 
         async function deleteTransaction(txId) {
-            if (!confirm("この取引履歴を削除しますか？\n（残りの保有数量や取得単価も再計算されます）")) return;
+            if (!confirm("この取引履歴を削除しますか？")) return;
             try {
                 const res = await fetch(`/api/${userId}/transaction/${txId}`, { method: 'DELETE' });
-                if (res.ok) { loadHistory(); loadDashboard(); }
+                if (res.ok) { loadHistory(); loadDashboard(); loadGraph(); }
             } catch (e) { alert("通信エラーが発生しました。"); }
         }
 
         async function deleteStock(ticker) {
-            if (!confirm(`【${ticker}】のデータをすべて削除しますか？\n（取引履歴もすべて消去されます）`)) return;
+            if (!confirm(`【${ticker}】のデータをすべて削除しますか？`)) return;
             try {
                 const res = await fetch(`/api/${userId}/delete_stock/${ticker}`, { method: 'DELETE' });
-                if (res.ok) loadDashboard();
+                if (res.ok) { loadDashboard(); loadGraph(); if(!document.getElementById('content-history').classList.contains('hidden')) loadHistory(); }
             } catch (e) { console.error(e); }
         }
 
         async function loadNews() {
             const container = document.getElementById('news-container');
-            container.innerHTML = '<p class="text-center text-gray-500">読み込み中...</p>';
+            container.innerHTML = '<p class="text-center text-stone">読み込み中...</p>';
             try {
                 const res = await fetch(`/api/${userId}/news`);
                 const news = await res.json();
-                if (news.length === 0) { container.innerHTML = '<p class="text-center text-gray-500">関連ニュースがありません</p>'; return; }
+                if (news.length === 0) { container.innerHTML = '<p class="text-center text-stone">関連ニュースがありません</p>'; return; }
                 container.innerHTML = '<ul class="space-y-4"></ul>';
                 const ul = container.querySelector('ul');
                 news.forEach(n => {
-                    ul.innerHTML += `<li class="border-b pb-3 last:border-0"><span class="text-xs font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded">${n.stock_name}</span><span class="text-xs text-gray-400 ml-2">${n.pub_time}</span><a href="${n.link}" target="_blank" class="block mt-1 text-sm font-bold text-blue-600 hover:underline">${n.title}</a></li>`;
+                    ul.innerHTML += `<li class="border-b border-light pb-3 last:border-0"><span class="text-xs font-bold bg-[#F8F6ED] border border-light text-turquoise px-2 py-0.5 rounded">${n.stock_name}</span><span class="text-xs text-stone ml-2 opacity-80">${n.pub_time}</span><a href="${n.link}" target="_blank" class="block mt-1 text-sm font-bold text-main hover:text-turquoise transition">${n.title}</a></li>`;
                 });
-            } catch (e) { container.innerHTML = '<p class="text-center text-red-500">ニュースの取得に失敗しました</p>'; }
+            } catch (e) { container.innerHTML = '<p class="text-center text-orange">ニュースの取得に失敗しました</p>'; }
         }
 
-        // --- 汎用サジェスト関数 ---
+        // --- サジェスト関数 ---
         function setupSearch(inputId, suggestId, tickerId, nameId, typeSource, priceId = null) {
             const input = document.getElementById(inputId);
             const suggest = document.getElementById(suggestId);
@@ -333,27 +384,29 @@
                 if (query.length < 1) { suggest.classList.add('hidden'); return; }
 
                 timeout = setTimeout(async () => {
-                    const res = await fetch(`/api/search_stock?q=${encodeURIComponent(query)}&asset_type=${assetType}`);
-                    const results = await res.json();
-                    suggest.innerHTML = '';
-                    if (results.length > 0) {
-                        results.forEach(item => {
-                            const div = document.createElement('div');
-                            div.className = 'p-3 border-b text-sm text-gray-800 hover:bg-gray-100 cursor-pointer';
-                            div.innerHTML = `<span class="font-bold text-gray-500 mr-2">${item.ticker}</span>${item.name}`;
-                            div.onclick = () => {
-                                document.getElementById(tickerId).value = item.ticker;
-                                document.getElementById(nameId).value = item.name;
-                                input.value = item.name;
-                                suggest.classList.add('hidden');
-                                if(priceId) fetchFundPrice(item.ticker, priceId);
-                            };
-                            suggest.appendChild(div);
-                        });
-                    } else {
-                        suggest.innerHTML = '<div class="p-3 text-sm text-gray-500">見つかりませんでした</div>';
-                    }
-                    suggest.classList.remove('hidden');
+                    try {
+                        const res = await fetch(`/api/search_stock?q=${encodeURIComponent(query)}&asset_type=${assetType}`);
+                        const results = await res.json();
+                        suggest.innerHTML = '';
+                        if (results.length > 0) {
+                            results.forEach(item => {
+                                const div = document.createElement('div');
+                                div.className = 'p-3 border-b border-light text-sm text-main hover:bg-[#F8F6ED] cursor-pointer transition';
+                                div.innerHTML = `<span class="font-bold text-stone mr-2">${item.ticker}</span>${item.name}`;
+                                div.onclick = () => {
+                                    document.getElementById(tickerId).value = item.ticker;
+                                    document.getElementById(nameId).value = item.name;
+                                    input.value = item.name;
+                                    suggest.classList.add('hidden');
+                                    if(priceId) fetchFundPrice(item.ticker, priceId);
+                                };
+                                suggest.appendChild(div);
+                            });
+                        } else {
+                            suggest.innerHTML = '<div class="p-3 text-sm text-stone">見つかりませんでした</div>';
+                        }
+                        suggest.classList.remove('hidden');
+                    } catch(e) {}
                 }, 400);
             });
             document.addEventListener('click', (e) => {
@@ -368,7 +421,7 @@
                 const res = await fetch(`/api/fund_info/${ticker}`);
                 const data = await res.json();
                 if(data.price > 0) el.value = data.price;
-                else el.placeholder = "取得失敗・手入力してください";
+                else el.placeholder = "手入力してください";
             } catch (e) { el.placeholder = "取得失敗"; }
         }
 
@@ -376,7 +429,7 @@
             const el = document.getElementById('fund-price');
             const isManual = document.getElementById('fund-manual').checked;
             el.readOnly = !isManual;
-            el.className = isManual ? "w-full border border-gray-300 rounded p-2 bg-white" : "w-full border border-gray-300 rounded p-2 bg-gray-100";
+            el.className = isManual ? "w-full border border-light rounded p-2 bg-white text-main" : "w-full border border-light rounded p-2 bg-[#F8F6ED] text-main";
         }
 
         function resetSearch(prefix) {
@@ -420,6 +473,7 @@
                 if (res.ok) {
                     resetSearch('trade'); resetSearch('fund');
                     loadDashboard();
+                    loadGraph();
                     if(!document.getElementById('content-history').classList.contains('hidden')) loadHistory();
                     alert("保存しました！");
                 } else alert("保存に失敗しました。");
