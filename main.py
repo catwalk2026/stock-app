@@ -34,9 +34,6 @@ app = FastAPI()
 DATABASE2_URL = os.environ.get("DATABASE2_URL") or os.environ.get("DATABASE_URL")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
-# ==========================================
-# 🌟 基礎データ（JPX銘柄と人気ファンド辞書）
-# ==========================================
 JPX_STOCKS = []
 def load_jpx_stocks():
     global JPX_STOCKS
@@ -140,12 +137,9 @@ def get_usdjpy_rate():
     except: pass
     return {"rate": rate, "time": fetch_time}
 
-# ==========================================
-# 🌟 ステルス偽装＆最強価格スクレイピングロジック
-# ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d-v10") # キャッシュリセット
+    today_str = datetime.now().strftime("%Y-%m-%d-v11")
     price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
     
     try:
@@ -162,12 +156,7 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     }
     
     if is_fund and len(ticker) == 8 and ticker.isalnum():
-        urls_to_try = [
-            f"https://itf.minkabu.jp/fund/{ticker}",
-            f"https://finance.yahoo.co.jp/quote/{ticker}",
-            f"https://www.nikkei.com/nkd/fund/?fcode={ticker}"
-        ]
-        
+        urls_to_try = [f"https://itf.minkabu.jp/fund/{ticker}", f"https://finance.yahoo.co.jp/quote/{ticker}", f"https://www.nikkei.com/nkd/fund/?fcode={ticker}"]
         for url in urls_to_try:
             if price > 0.0: break
             try:
@@ -177,11 +166,9 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
                     idx = text_only.find("基準価額")
                     if idx != -1:
                         snippet = text_only[idx:idx+150]
-                        # 🌟 究極の修正：数字の中に必ずカンマ（,）が含まれるものだけを抽出。2025などは100%無視されます。
                         match = re.search(r'([1-9][0-9]{0,2}(?:,[0-9]{3})+)', snippet)
                         if match: price = float(match.group(1).replace(',', ''))
             except: pass
-
     else:
         try:
             stock_ticker = ticker if not is_jpy else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
@@ -222,21 +209,7 @@ async def callback(request: Request, x_line_signature: str = Header(None)):
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    text = event.message.text.strip(); line_user_id = event.source.user_id
-    if "会員連携" in text: line_bot_api.reply_message(event.reply_token, TextSendMessage(text="会員番号を送信してください。\n例: AB1234"))
-    elif "ダッシュボード" in text:
-        try:
-            conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = %s", (line_user_id,))
-            row = cursor.fetchone(); cursor.close(); conn.close()
-            if row: line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"ダッシュボード: https://stock-app-xyif.onrender.com/{row['app_user_id']}"))
-        except: pass
-    elif re.match(r"^[a-zA-Z0-9]{6}$", text):
-        try:
-            conn = get_db_connection(); cursor = conn.cursor()
-            cursor.execute("INSERT INTO line_users (line_user_id, app_user_id) VALUES (%s, %s) ON CONFLICT (line_user_id) DO UPDATE SET app_user_id = EXCLUDED.app_user_id", (line_user_id, text))
-            cursor.close(); conn.close(); line_bot_api.reply_message(event.reply_token, TextSendMessage(text="連携完了！"))
-        except: pass
+    pass
 
 @app.get("/api/ai_summary")
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
@@ -294,7 +267,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
             if all(t in (fund["name"].lower() + " " + " ".join(fund["keywords"])) for t in search_terms):
                 if not any(r["ticker"] == fund["ticker"] for r in results): results.append({"ticker": fund["ticker"], "name": fund["name"]})
                 if len(results) >= 8: break
-
         if len(results) < 8 and len(q_str) == 8 and q_str.isalnum():
             try:
                 res = requests.get(f"https://itf.minkabu.jp/fund/{q_str.upper()}", headers=headers, timeout=3)
@@ -302,15 +274,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
                     soup = BeautifulSoup(res.text, 'html.parser')
                     name = soup.find('h1').get_text(strip=True) if soup.find('h1') else (soup.find('title').text.split('|')[0].split('-')[0].strip() if soup.find('title') else "")
                     if name: results.append({"ticker": q_str.upper(), "name": name})
-            except: pass
-
-        if not results:
-            try:
-                res = requests.get(f"https://finance.yahoo.co.jp/api/v1/finance/suggest/realtime?query={urllib.parse.quote(q)}", headers=headers, timeout=3)
-                if res.status_code == 200:
-                    for item in res.json().get("results", []):
-                        if len(item.get("code", "")) == 8 and not any(r["ticker"] == item.get("code") for r in results):
-                            results.append({"ticker": item.get("code"), "name": item.get("name")})
             except: pass
 
     return results[:8]
@@ -372,7 +335,9 @@ def get_portfolio(user_id: str):
         fx_rate = 1.0 if is_jpy or is_fund else usdjpy_info["rate"]
         
         fetched_price, div_yield = get_asset_data(ticker, is_jpy, is_fund)
-        current_price = fetched_price if (item.get("manual_price") is None and fetched_price > 0) else manual_price
+        
+        # 🌟 最重要バグ修正：取得価格を最優先し、取得できない場合のみ手入力価格を使う
+        current_price = fetched_price if fetched_price > 0 else manual_price
             
         if is_fund: current_value_jpy = (quantity * current_price) / 10000.0; book_value_jpy = (quantity * average_price) / 10000.0; category = "投資信託"
         elif is_jpy: current_value_jpy = (current_price * quantity); book_value_jpy = (average_price * quantity); category = "日本株"; total_est_dividend_jpy += current_value_jpy * (div_yield / 100.0)
@@ -420,7 +385,14 @@ def get_transactions_by_category(user_id: str, category: str):
         conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute("SELECT t.*, p.name FROM transactions t LEFT JOIN portfolio p ON t.ticker = p.ticker AND p.user_id = t.user_id WHERE t.user_id = %s ORDER BY t.trade_date DESC", (user_id,))
         rows = cursor.fetchall(); cursor.close(); conn.close()
-        return [dict(r, name=r["name"] or r["ticker"]) for r in rows if category.upper() == ("FUND" if ((len(r["ticker"]) == 8 and r["ticker"].isalnum()) or "投信" in (r["name"] or r["ticker"]) or "ファンド" in (r["name"] or r["ticker"])) else ("JP" if r["ticker"].endswith(".T") else "US"))]
+        
+        # 🌟 履歴バグ修正：ALLの場合はすべて返すように条件を修正
+        result = []
+        for r in rows:
+            item_cat = "FUND" if ((len(r["ticker"]) == 8 and r["ticker"].isalnum()) or "投信" in (r["name"] or r["ticker"]) or "ファンド" in (r["name"] or r["ticker"])) else ("JP" if r["ticker"].endswith(".T") else "US")
+            if category.upper() == "ALL" or category.upper() == item_cat:
+                result.append(dict(r, name=r["name"] or r["ticker"]))
+        return result
     except: return []
 
 @app.delete("/api/{user_id}/transaction/{tx_id}")
@@ -478,6 +450,41 @@ def get_history(user_id: str):
         if day_total > 0 or date_str == all_dates[-1]: result.append({"date": date_str, "total_assets": round(day_total, 2)})
             
     return result
+
+@app.get("/api/{user_id}/news")
+def get_jp_news(user_id: str):
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT name FROM portfolio WHERE user_id = %s AND ticker LIKE '%%.T' AND quantity > 0", (user_id,))
+        # 🌟 ニュースバグ修正：空の銘柄名を除外
+        p_names = [r["name"] for r in cursor.fetchall() if r["name"]]
+        cursor.execute("SELECT name FROM watchlist WHERE user_id = %s AND ticker LIKE '%%.T'", (user_id,))
+        w_names = [r["name"] for r in cursor.fetchall() if r["name"]]
+        cursor.close(); conn.close()
+        
+        market_targets = ["主要市況: 日経平均", "主要市況: S&P500", "主要市況: 為替 ドル円"]
+        target_names = list(set(p_names + w_names)) + market_targets
+
+        news_list = []
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        for company_name in target_names:
+            search_term = company_name.replace("主要市況: ", "") + " 株"
+            url = f"https://news.google.com/rss/search?q={urllib.parse.quote(search_term)}&hl=ja&gl=JP&ceid=JP:ja"
+            try:
+                res = requests.get(url, headers=headers, timeout=5)
+                if res.status_code == 200:
+                    root = ET.fromstring(res.text)
+                    for item in root.findall('.//item')[:3]:
+                        try:
+                            dt = parsedate_to_datetime(item.find('pubDate').text)
+                            news_list.append({"stock_name": company_name, "title": item.find('title').text, "link": item.find('link').text, "pub_time": dt.strftime("%Y/%m/%d %H:%M"), "timestamp": dt.timestamp()})
+                        except: pass
+            except: pass
+        news_list.sort(key=lambda x: x["timestamp"], reverse=True)
+        return news_list[:300]
+    except Exception as e:
+        print("News Error:", e)
+        return []
 
 @app.get("/api/{user_id}/watchlist")
 def get_watchlist(user_id: str):
