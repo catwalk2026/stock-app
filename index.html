@@ -3,1049 +3,482 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ABCash ポートフォリオダッシュボード</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>AIポートフォリオ＆投資ダッシュボード</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
-        :root {
-            --turquoise-main: #25B2C7;
-            --turquoise-base: #60C7D5;
-            --text-black: #2F3842;
-            --accent-orange: #F77261;
-            --stone: #596572;
-            --white: #FFFFFF;
-            --light-border: #F7F7F8;
-            --mint-main: #42B187;
-            --mint-base: #60D5A9;
-            --ivory-main: #CBC2B3;
-            --ivory-base: #F8F6ED;
-            --flamingo-main: #D56C76;
-            --blue-base: #6FAFE4;
-        }
-
-        body { 
-            font-family: "Helvetica Neue", Arial, "Hiragino标志 Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif; 
-            background-color: var(--ivory-base); 
-            color: var(--text-black); 
-            margin: 0; 
-            line-height: 1.6;
-        }
-        
-        #login-screen { display: none; height: 100vh; justify-content: center; align-items: center; background: var(--ivory-base); }
-        .login-card { background: var(--white); padding: 50px 60px; border-radius: 16px; box-shadow: 0 4px 24px rgba(47, 56, 66, 0.05); text-align: center; }
-        
-        #dashboard-screen { display: none; padding: 30px 20px; }
-        .container { max-width: 1040px; margin: 0 auto; background: var(--white); padding: 40px; border-radius: 16px; box-shadow: 0 4px 24px rgba(47, 56, 66, 0.04); }
-        
-        h1, h2, h3 { margin-top: 0; color: var(--text-black); font-weight: 700; letter-spacing: 0.05em; }
-        h1 { font-size: 1.6rem; margin-bottom: 30px; }
-        h2 { font-size: 1.3rem; margin-bottom: 24px; }
-        h3 { font-size: 1.1rem; color: var(--stone); margin-bottom: 16px; }
-
-        .header-info { margin-bottom: 40px; background: var(--white); padding: 24px 30px; border-radius: 12px; border: 1px solid var(--light-border); }
-        .total-assets { font-size: 1.8rem; font-weight: bold; color: var(--text-black); }
-        .fx-rate { font-size: 0.95rem; color: var(--text-black); font-weight: bold; }
-        .fx-time { font-size: 0.75rem; color: var(--stone); font-weight: normal; margin-left: 8px; }
-        .user-id-badge { font-size: 0.9rem; background: var(--ivory-base); color: var(--stone); padding: 6px 12px; border-radius: 20px; font-weight: bold; margin-left:15px; }
-
-        .tabs { display: flex; border-bottom: 2px solid var(--light-border); margin-bottom: 35px; gap: 10px; overflow-x: auto; white-space: nowrap; }
-        .tab-button { padding: 12px 24px; font-weight: bold; cursor: pointer; border: none; background: none; outline: none; font-size: 1rem; color: var(--ivory-main); transition: all 0.3s ease; }
-        .tab-button:hover { color: var(--stone); }
-        .tab-button.active { color: var(--turquoise-main); border-bottom: 3px solid var(--turquoise-main); }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; animation: fadeIn 0.5s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-
-        .charts-wrapper { display: flex; gap: 24px; margin-bottom: 40px; flex-wrap: wrap; }
-        .chart-box { flex: 1; min-width: 320px; background: var(--white); padding: 24px; border-radius: 12px; border: 1px solid var(--light-border); }
-        
-        .filter-btn { background: var(--white); border: 1px solid var(--ivory-main); color: var(--stone); padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: 0.2s; font-size: 0.8rem; }
-        .filter-btn:hover { border-color: var(--turquoise-base); color: var(--turquoise-base); }
-        .filter-btn.active { background: var(--turquoise-base); color: var(--white); border-color: var(--turquoise-base); font-weight: bold; }
-
-        .summary-card { background: var(--white); border: 1px solid var(--light-border); border-radius: 12px; padding: 24px; margin-top: 20px; }
-        .summary-row { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--light-border); }
-        .summary-row:last-child { border-bottom: none; padding-bottom: 0; }
-        .category-badge { font-weight: bold; font-size: 1.05rem; display: flex; align-items: center; gap: 10px; color: var(--text-black); }
-        .badge-icon { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
-        .val-total { font-size: 1.25rem; font-weight: bold; color: var(--text-black); letter-spacing: 0.05em; }
-
-        .add-form, .rule-box { background: var(--white); border: 1px solid var(--light-border); padding: 24px; border-radius: 12px; margin-bottom: 35px; }
-        .form-group { display: inline-block; margin-right: 16px; margin-bottom: 16px; vertical-align: top; }
-        .form-group label { display: block; font-size: 0.85rem; margin-bottom: 6px; color: var(--stone); font-weight: bold; }
-        .form-group input, .form-group select { padding: 10px 14px; border: 1px solid var(--ivory-main); border-radius: 8px; color: var(--text-black); font-size: 0.95rem; outline: none; transition: border-color 0.3s; background-color: var(--white); }
-        .form-group input:focus, .form-group select:focus { border-color: var(--turquoise-base); }
-
-        /* ロックされた状態の入力欄 */
-        .input-locked { background-color: #F0F2F5 !important; color: #8C96A0 !important; cursor: not-allowed; border-color: #E2E8ED !important; }
-
-        .btn-submit { padding: 12px 28px; background: var(--turquoise-base); color: var(--white); border: none; border-radius: 30px; cursor: pointer; font-weight: bold; margin-top: 20px; transition: all 0.3s ease; font-size: 1rem; letter-spacing: 0.05em; display: inline-block;}
-        .btn-submit:hover { background: var(--turquoise-main); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(37, 178, 199, 0.2); }
-
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 40px; }
-        th, td { border: none; border-bottom: 1px solid var(--light-border); padding: 16px 12px; text-align: right; color: var(--text-black); font-size: 0.95rem; }
-        th { text-align: center; color: var(--stone); font-weight: normal; font-size: 0.85rem; }
-        td:first-child, td:nth-child(2) { text-align: left; }
-        
-        .type-buy-auto { color: var(--turquoise-main); font-weight: bold; }
-        .type-buy-spot { color: var(--blue-base); font-weight: bold; }
-        .positive { color: var(--mint-main); font-weight: bold; }
-        .negative { color: var(--flamingo-main); font-weight: bold; }
-        
-        .btn-delete { background: var(--accent-orange); color: var(--white); border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; transition: 0.3s; font-size: 0.85rem; }
-        .btn-delete:hover { background: var(--flamingo-main); }
-        .btn-edit { background: var(--ivory-main); color: var(--white); border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; margin-right: 6px; transition: 0.3s; font-size: 0.85rem; }
-        .btn-edit:hover { background: var(--stone); }
-        .section-title { margin-top: 50px; border-bottom: 1px solid var(--light-border); padding-bottom: 12px; color: var(--text-black); }
-        
-        .news-card { background: var(--white); border: 1px solid var(--light-border); padding: 16px 20px; border-radius: 12px; margin-bottom: 16px; transition: 0.2s; }
-        .news-card:hover { border-color: var(--turquoise-base); box-shadow: 0 4px 12px rgba(47, 56, 66, 0.05); }
-        .news-title { color: var(--text-black); font-weight: bold; font-size: 1.05rem; margin-bottom: 8px; line-height: 1.4; }
-        .news-meta { color: var(--stone); font-size: 0.85rem; display: flex; gap: 12px; align-items: center; }
-        .news-tag { background: var(--ivory-base); padding: 2px 8px; border-radius: 4px; font-weight: bold; color: var(--turquoise-main); font-size: 0.8rem; }
-
-        .search-wrapper { position: relative; display: inline-block; width: 100%; max-width: 350px; margin-bottom: 16px; padding: 16px; background: var(--ivory-base); border-radius: 8px; }
-        .suggestions-box { position: absolute; top: 100%; left: 0; width: 100%; background: var(--white); border: 1px solid var(--light-border); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 100; display: none; max-height: 250px; overflow-y: auto; }
-        .suggestion-item { padding: 10px 15px; cursor: pointer; border-bottom: 1px solid var(--light-border); font-size: 0.9rem; }
-        .suggestion-item:last-child { border-bottom: none; }
-        .suggestion-item:hover { background: var(--ivory-base); color: var(--turquoise-main); }
+        .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; font-weight: bold; }
+        .tab-inactive { color: #6b7280; }
+        .suggest-item:hover { background-color: #f3f4f6; cursor: pointer; }
+        [v-cloak] { display: none; }
     </style>
 </head>
-<body>
-    <div id="login-screen">
-        <div class="login-card">
-            <h1 style="color: var(--turquoise-main); margin-bottom: 10px;">ABCash Portfolio</h1>
-            <p style="color: var(--stone); margin-bottom: 30px;">生徒さんの会員番号を入力してください</p>
-            <input type="text" id="login-id" placeholder="例: AB1234" maxlength="6" style="padding: 15px; font-size: 1.4rem; text-align: center; border: 2px solid var(--ivory-main); border-radius: 8px; width: 220px; display: block; margin: 0 auto 20px auto; color: var(--text-black); font-weight: bold; letter-spacing: 0.2em;">
-            <button onclick="enterDashboard()" class="btn-submit">ダッシュボードを開く</button>
+<body class="bg-gray-50 font-sans text-gray-800">
+    <div class="max-w-4xl mx-auto px-4 py-6">
+        <!-- ヘッダー -->
+        <header class="flex justify-between items-center mb-6">
+            <h1 class="text-2xl font-extrabold text-gray-900"><i class="fas fa-chart-pie text-blue-500 mr-2"></i>My Portfolio</h1>
+            <div class="text-sm text-gray-500 bg-white px-3 py-1 rounded-full shadow-sm">
+                ID: <span id="display-user-id" class="font-mono font-bold"></span>
+            </div>
+        </header>
+
+        <!-- サマリーカード群 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <!-- 総資産カード -->
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+                <p class="text-sm text-gray-500 font-bold mb-1">💰 総資産額</p>
+                <div class="flex items-baseline gap-2">
+                    <span class="text-3xl font-extrabold text-gray-900" id="total-assets">¥0</span>
+                </div>
+                <div class="mt-2 text-sm font-bold" id="total-profit-container">
+                    評価損益: <span id="total-profit">¥0</span>
+                </div>
+                <p class="text-xs text-gray-400 mt-2 text-right">USD/JPY: <span id="usdjpy-rate">--</span></p>
+            </div>
+
+            <!-- 🌟 追加：配当金モチベーションカード -->
+            <div class="bg-gradient-to-br from-yellow-50 to-orange-50 p-5 rounded-xl shadow-sm border border-yellow-200">
+                <p class="text-sm text-yellow-700 font-bold mb-1"><i class="fas fa-seedling mr-1"></i> 予想される不労所得（年間配当）</p>
+                <div class="flex items-baseline gap-2">
+                    <span class="text-3xl font-extrabold text-yellow-600" id="yearly-dividend">¥0</span>
+                    <span class="text-sm text-yellow-700 font-bold">/ 年</span>
+                </div>
+                <div class="mt-3 p-2 bg-white/60 rounded-lg">
+                    <p class="text-sm font-bold text-gray-700">月のお小遣い: 約 <span id="monthly-dividend" class="text-lg text-yellow-600">0</span> 円</p>
+                    <p class="text-xs text-gray-600 mt-1 font-medium" id="dividend-level-text">コツコツ投資して不労所得を育てましょう🌱</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- アクションボタン -->
+        <div class="flex flex-wrap gap-3 mb-6">
+            <button onclick="openTradeModal('JP')" class="flex-1 bg-blue-600 text-white font-bold py-3 px-4 rounded-lg shadow hover:bg-blue-700 transition">
+                <i class="fas fa-plus-circle mr-1"></i> 取引の追加
+            </button>
+            <button onclick="openFundRuleModal()" class="flex-1 bg-teal-500 text-white font-bold py-3 px-4 rounded-lg shadow hover:bg-teal-600 transition">
+                <i class="fas fa-sync-alt mr-1"></i> 投信・自動積立
+            </button>
+        </div>
+
+        <!-- タブナビゲーション -->
+        <div class="flex border-b border-gray-200 mb-6">
+            <button onclick="switchTab('portfolio')" id="tab-portfolio" class="py-2 px-4 tab-active">保有資産</button>
+            <button onclick="switchTab('history')" id="tab-history" class="py-2 px-4 tab-inactive">取引履歴</button>
+            <button onclick="switchTab('news')" id="tab-news" class="py-2 px-4 tab-inactive">関連ニュース</button>
+        </div>
+
+        <!-- タブコンテンツ：保有資産 -->
+        <div id="content-portfolio">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                <ul id="portfolio-list" class="divide-y divide-gray-100">
+                    <li class="p-4 text-center text-gray-500">読み込み中...</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- タブコンテンツ：取引履歴 -->
+        <div id="content-history" class="hidden">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                <ul id="history-list" class="divide-y divide-gray-100">
+                    <li class="p-4 text-center text-gray-500">履歴がありません</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- タブコンテンツ：ニュース -->
+        <div id="content-news" class="hidden">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden p-4" id="news-container">
+                <p class="text-center text-gray-500">ニュースを読み込んでいます...</p>
+            </div>
         </div>
     </div>
 
-    <div id="dashboard-screen">
-        <div class="container">
-            <h1 style="display:flex; align-items:center;">
-                ✨ ポートフォリオダッシュボード
-                <span class="user-id-badge">ID: <span id="display-user-id"></span></span>
-            </h1>
+    <!-- モーダル：取引の追加 -->
+    <div id="trade-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50 px-4">
+        <div class="bg-white rounded-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold">取引の追加</h2>
+                <button onclick="closeModals()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+            </div>
             
-            <div class="header-info" style="display:block;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                    <div class="total-assets">総資産額: <span id="total-assets">計算中...</span></div>
-                    <div class="fx-rate">米ドル/円: <span id="fx-rate">-</span>円 <span id="fx-time" class="fx-time"></span></div>
+            <div class="mb-4">
+                <label class="block text-sm font-bold text-gray-700 mb-1">資産タイプ</label>
+                <select id="trade-asset-type" class="w-full border rounded-lg p-2 bg-gray-50" onchange="resetSearch()">
+                    <option value="JP">日本株</option>
+                    <option value="US">米国株</option>
+                    <option value="FUND">投資信託</option>
+                </select>
+            </div>
+
+            <div class="mb-4 relative">
+                <label class="block text-sm font-bold text-gray-700 mb-1"><i class="fas fa-search"></i> 銘柄検索（自動入力）</label>
+                <input type="text" id="trade-search" class="w-full border rounded-lg p-2" placeholder="例: 7203 または トヨタ" autocomplete="off">
+                <div id="suggest-box" class="absolute z-10 w-full bg-white border border-gray-200 shadow-lg rounded-b-lg hidden max-h-48 overflow-y-auto"></div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 mb-4">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">ティッカー/コード</label>
+                    <input type="text" id="trade-ticker" class="w-full border rounded-lg p-2 bg-gray-100" readonly>
                 </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">銘柄名</label>
+                    <input type="text" id="trade-name" class="w-full border rounded-lg p-2 bg-gray-100" readonly>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 mb-4">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">取引種別</label>
+                    <select id="trade-type" class="w-full border rounded-lg p-2">
+                        <option value="BUY">買付</option>
+                        <option value="SELL">売却</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">取引日</label>
+                    <input type="date" id="trade-date" class="w-full border rounded-lg p-2">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 mb-6">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">数量（株/口）</label>
+                    <input type="number" step="0.01" id="trade-quantity" class="w-full border rounded-lg p-2">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">単価/基準価額</label>
+                    <input type="number" step="0.01" id="trade-price" class="w-full border rounded-lg p-2">
+                </div>
+            </div>
+
+            <button onclick="submitTrade()" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg shadow hover:bg-blue-700 transition">
+                保存する
+            </button>
+        </div>
+    </div>
+
+    <!-- JavaScript ロジック -->
+    <script>
+        const userId = window.location.pathname.replace('/', '') || 'GUEST';
+        document.getElementById('display-user-id').textContent = userId;
+        document.getElementById('trade-date').valueAsDate = new Date();
+
+        let searchTimeout = null;
+
+        // --- 初期ロード ---
+        window.onload = () => {
+            loadDashboard();
+            setupSearch();
+        };
+
+        // --- タブ切り替え ---
+        function switchTab(tabName) {
+            ['portfolio', 'history', 'news'].forEach(t => {
+                document.getElementById(`content-${t}`).classList.add('hidden');
+                document.getElementById(`tab-${t}`).classList.replace('tab-active', 'tab-inactive');
+            });
+            document.getElementById(`content-${tabName}`).classList.remove('hidden');
+            document.getElementById(`tab-${tabName}`).classList.replace('tab-inactive', 'tab-active');
+
+            if (tabName === 'history') loadHistory();
+            if (tabName === 'news') loadNews();
+        }
+
+        // --- ダッシュボード（保有資産）読み込み ---
+        async function loadDashboard() {
+            try {
+                const res = await fetch(`/api/${userId}/portfolio`);
+                const data = await res.json();
+
+                // 資産額の表示
+                document.getElementById('total-assets').textContent = `¥${Math.floor(data.total_assets).toLocaleString()}`;
                 
-                <div class="progress-container">
-                    <div style="display:flex; justify-content:space-between; font-size:0.85rem; color:var(--stone); margin-bottom:5px; font-weight:bold;">
-                        <span>目標: 10,000,000円</span>
-                        <span id="goal-percent">0%</span>
-                    </div>
-                    <div style="width:100%; background:var(--light-border); border-radius:10px; height:12px; overflow:hidden;">
-                        <div id="goal-bar" style="height:100%; background:var(--turquoise-base); width:0%; transition:width 1s ease-out;"></div>
-                    </div>
-                    <div style="font-size:0.85rem; color:var(--stone); margin-top:8px;">
-                        🎁 予想年間配当金（概算）: <span id="est-dividend" style="font-weight:bold; color:var(--accent-orange); font-size:1rem;">¥0</span> / 年
-                    </div>
-                </div>
-            </div>
+                const totalProfit = data.total_assets - data.total_book;
+                const profitEl = document.getElementById('total-profit');
+                profitEl.textContent = `${totalProfit >= 0 ? '+' : ''}¥${Math.floor(totalProfit).toLocaleString()}`;
+                profitEl.className = totalProfit >= 0 ? 'text-green-600' : 'text-red-600';
+                
+                document.getElementById('usdjpy-rate').textContent = `${data.usdjpy_rate}円 (${data.usdjpy_time})`;
 
-            <div class="tabs">
-                <button class="tab-button active" onclick="switchTab('tab-all')">資産全体</button>
-                <button class="tab-button" onclick="switchTab('tab-jp')">日本株</button>
-                <button class="tab-button" onclick="switchTab('tab-us')">米国株</button>
-                <button class="tab-button" onclick="switchTab('tab-fund')">投資信託</button>
-                <button class="tab-button" onclick="switchTab('tab-news')">関連ニュース</button>
-                <button class="tab-button" onclick="switchTab('tab-watchlist')">気になるリスト</button>
-            </div>
+                // 🌟 配当金の計算と表示
+                const yearlyDiv = data.est_dividend_jpy || 0;
+                const monthlyDiv = Math.floor(yearlyDiv / 12);
+                document.getElementById('yearly-dividend').textContent = `¥${Math.floor(yearlyDiv).toLocaleString()}`;
+                document.getElementById('monthly-dividend').textContent = monthlyDiv.toLocaleString();
 
-            <div id="tab-all" class="tab-content active">
-                <h2>資産サマリー</h2>
-                <div class="charts-wrapper">
-                    <div class="chart-box"><canvas id="portfolioChart"></canvas></div>
-                    <div class="chart-box">
-                        <div class="chart-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
-                            <h3 style="margin:0;">資産推移</h3>
-                            <div class="chart-filters" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-                                <button class="filter-btn" onclick="filterChart('1W', this)">1週間</button>
-                                <button class="filter-btn" onclick="filterChart('1M', this)">1ヶ月</button>
-                                <button class="filter-btn" onclick="filterChart('3M', this)">3ヶ月</button>
-                                <button class="filter-btn" onclick="filterChart('1Y', this)">1年</button>
-                                <button class="filter-btn" onclick="filterChart('3Y', this)">3年</button>
-                                <button class="filter-btn active" onclick="filterChart('ALL', this)">全期間</button>
-                                <div style="display:flex; align-items:center; gap:4px; border-left:1px solid var(--light-border); padding-left:8px; margin-left:4px;">
-                                    <input type="date" id="chart-start" onchange="filterChart('CUSTOM')" style="padding:4px; border:1px solid var(--ivory-main); border-radius:4px; font-size:0.8rem; outline:none;">
-                                    <span style="color:var(--stone);">〜</span>
-                                    <input type="date" id="chart-end" onchange="filterChart('CUSTOM')" style="padding:4px; border:1px solid var(--ivory-main); border-radius:4px; font-size:0.8rem; outline:none;">
+                let levelText = "コツコツ投資を続けて不労所得を育てましょう🌱";
+                if (monthlyDiv >= 300000) levelText = "もはや完全な不労所得生活レベル！FIRE達成！？🌴✨";
+                else if (monthlyDiv >= 100000) levelText = "家賃がまるまる払えるレベル！生活が超楽になります🏠✨";
+                else if (monthlyDiv >= 30000) levelText = "毎月の光熱費と水道代が全額まかなえるレベル💡";
+                else if (monthlyDiv >= 10000) levelText = "格安SIMなら家族全員のスマホ代が払えるレベル📱";
+                else if (monthlyDiv >= 5000) levelText = "ちょっと豪華なランチや飲み代が毎月浮くレベル🍣";
+                else if (monthlyDiv >= 1000) levelText = "毎月スタバの新作が無料で飲めるレベル☕️";
+                else if (monthlyDiv > 0) levelText = "銀行の利息より圧倒的にお得！チロルチョコが買えるレベル🍫";
+                document.getElementById('dividend-level-text').textContent = levelText;
+
+                // 保有リストの描画
+                const listEl = document.getElementById('portfolio-list');
+                listEl.innerHTML = '';
+                if (data.portfolio.length === 0) {
+                    listEl.innerHTML = '<li class="p-4 text-center text-gray-500">保有資産がありません。<br>「取引の追加」から登録してください。</li>';
+                    return;
+                }
+
+                data.portfolio.forEach(item => {
+                    const profit = item.profit_loss_jpy;
+                    const profitStr = profit >= 0 ? `+¥${Math.floor(profit).toLocaleString()}` : `-¥${Math.abs(Math.floor(profit)).toLocaleString()}`;
+                    const profitClass = profit >= 0 ? 'text-green-600' : 'text-red-600';
+                    const isFund = item.is_fund;
+                    const priceUnit = isFund ? '円 (1万口)' : (item.currency === 'USD' ? '$' : '円');
+
+                    listEl.innerHTML += `
+                        <li class="p-4 hover:bg-gray-50 transition flex justify-between items-center">
+                            <div>
+                                <div class="font-bold text-gray-800">${item.name}</div>
+                                <div class="text-xs text-gray-500 mt-1">
+                                    <span class="bg-gray-100 px-2 py-0.5 rounded mr-1">${item.category}</span>
+                                    ${item.ticker}
+                                </div>
+                                <div class="text-xs text-gray-500 mt-1">
+                                    保有: ${item.quantity.toLocaleString()} ${isFund ? '口' : '株'} | 
+                                    現在値: ${item.current_price.toLocaleString()} ${priceUnit}
                                 </div>
                             </div>
-                        </div>
-                        <canvas id="historyChart"></canvas>
-                    </div>
-                </div>
-
-                <div class="summary-card">
-                    <h3>クラス別評価額・損益</h3>
-                    <div class="summary-row">
-                        <div class="category-badge"><span class="badge-icon" style="background:var(--turquoise-base);"></span>日本株式</div>
-                        <div class="val-box" style="text-align: right;">
-                            <div class="val-total" id="cat-jp-total">¥0</div>
-                            <div style="font-size: 0.95rem; margin-top:2px;" id="cat-jp-pl">-</div>
-                        </div>
-                    </div>
-                    <div class="summary-row">
-                        <div class="category-badge"><span class="badge-icon" style="background:var(--accent-orange);"></span>米国株式</div>
-                        <div class="val-box" style="text-align: right;">
-                            <div class="val-total" id="cat-us-total">¥0</div>
-                            <div style="font-size: 0.95rem; margin-top:2px;" id="cat-us-pl">-</div>
-                        </div>
-                    </div>
-                    <div class="summary-row">
-                        <div class="category-badge"><span class="badge-icon" style="background:var(--mint-base);"></span>投資信託</div>
-                        <div class="val-box" style="text-align: right;">
-                            <div class="val-total" id="cat-fund-total">¥0</div>
-                            <div style="font-size: 0.95rem; margin-top:2px;" id="cat-fund-pl">-</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div id="tab-jp" class="tab-content">
-                <h2>日本株ポートフォリオ</h2>
-                <div class="add-form">
-                    <h3>取引の追加</h3>
-                    <div class="search-wrapper">
-                        <label>🔍 銘柄検索（自動入力）</label>
-                        <input type="text" id="jp-search-input" placeholder="例: 7203 または トヨタ" oninput="handleSearchInput(this.value, 'JP')" autocomplete="off" style="width:calc(100% - 30px); padding:8px; margin-top:6px;">
-                        <div id="jp-search-suggestions" class="suggestions-box"></div>
-                    </div><br>
-
-                    <div class="form-group"><label>指定形式</label><select id="jp-calc-mode" onchange="toggleCalcMode('jp')"><option value="QTY">株数指定 (株)</option><option value="AMOUNT">金額指定 (円)</option></select></div>
-                    <div class="form-group"><label>区分</label><select id="jp-trade-type"><option value="BUY_SPOT">買付</option><option value="SELL">売却</option></select></div>
-                    <div class="form-group"><label>取引日</label><input type="date" id="jp-trade-date" class="default-date"></div>
-                    <div class="form-group"><label>証券コード</label><input type="text" id="jp-ticker" placeholder="例: 7203"></div>
-                    <div class="form-group"><label>銘柄名</label><input type="text" id="jp-name" placeholder="例: トヨタ自動車"></div>
-                    <div class="form-group"><label>株単価 (円)</label><input type="number" id="jp-price" oninput="calculateQty('jp')" placeholder="例: 2800"></div>
-                    <div class="form-group" id="jp-amount-group" style="display:none;"><label>買付金額 (円)</label><input type="number" id="jp-amount" oninput="calculateQty('jp')" placeholder="例: 100000"></div>
-                    <div class="form-group"><label>株数</label><input type="number" id="jp-qty" placeholder="例: 100"></div>
-                    <div class="form-group"><label>取引理由（任意）</label><input type="text" id="jp-reason" placeholder="例: 決算内容の好感"></div>
-                    <button type="button" class="btn-submit" onclick="submitStockTrade('JP')">日本株を記録する</button>
-                </div>
-                <table>
-                    <thead><tr><th>コード</th><th>銘柄名</th><th>株数</th><th>取得単価 (円)</th><th>現在価格 (円)</th><th>評価額 (円)</th><th>損益 (円)</th><th>操作</th></tr></thead>
-                    <tbody id="table-jp"></tbody>
-                </table>
-                <h3 class="section-title">取引履歴</h3>
-                <table>
-                    <thead><tr><th>取引日</th><th>区分</th><th>銘柄名</th><th>株数</th><th>取得単価 (円)</th><th>取引総額 (円)</th><th>理由</th><th>操作</th></tr></thead>
-                    <tbody id="tx-table-jp"></tbody>
-                </table>
-            </div>
-
-            <div id="tab-us" class="tab-content">
-                <h2>米国株ポートフォリオ</h2>
-                <div class="add-form">
-                    <h3>取引の追加</h3>
-                    <div class="search-wrapper">
-                        <label>🔍 銘柄検索（自動入力）</label>
-                        <input type="text" id="us-search-input" placeholder="例: AAPL または Apple" oninput="handleSearchInput(this.value, 'US')" autocomplete="off" style="width:calc(100% - 30px); padding:8px; margin-top:6px;">
-                        <div id="us-search-suggestions" class="suggestions-box"></div>
-                    </div><br>
-
-                    <div class="form-group"><label>指定形式</label><select id="us-calc-mode" onchange="toggleCalcMode('us')"><option value="QTY">株数指定 (株)</option><option value="AMOUNT">金額指定 ($)</option></select></div>
-                    <div class="form-group"><label>区分</label><select id="us-trade-type"><option value="BUY_SPOT">買付</option><option value="SELL">売却</option></select></div>
-                    <div class="form-group"><label>取引日</label><input type="date" id="us-trade-date" class="default-date"></div>
-                    <div class="form-group"><label>ティッカー</label><input type="text" id="us-ticker" placeholder="例: AAPL"></div>
-                    <div class="form-group"><label>銘柄名</label><input type="text" id="us-name" placeholder="例: Apple"></div>
-                    <div class="form-group"><label>株単価 ($)</label><input type="number" step="any" id="us-price" oninput="calculateQty('us')" placeholder="例: 220.5"></div>
-                    <div class="form-group" id="us-amount-group" style="display:none;"><label>買付金額 ($)</label><input type="number" step="any" id="us-amount" oninput="calculateQty('us')" placeholder="例: 1000"></div>
-                    <div class="form-group"><label>株数</label><input type="number" step="any" id="us-qty" placeholder="例: 10"></div>
-                    <div class="form-group"><label>取引理由（任意）</label><input type="text" id="us-reason" placeholder="例: 将来の成長に期待"></div>
-                    <button type="button" class="btn-submit" onclick="submitStockTrade('US')">米国株を記録する</button>
-                </div>
-                <table>
-                    <thead><tr><th>コード</th><th>銘柄名</th><th>株数</th><th>取得単価 ($)</th><th>現在価格 ($)</th><th>評価額 (円)</th><th>損益 (円)</th><th>操作</th></tr></thead>
-                    <tbody id="table-us"></tbody>
-                </table>
-                <h3 class="section-title">取引履歴</h3>
-                <table>
-                    <thead><tr><th>取引日</th><th>区分</th><th>銘柄名</th><th>株数</th><th>取得単価 ($)</th><th>取引総額 ($)</th><th>理由</th><th>操作</th></tr></thead>
-                    <tbody id="tx-table-us"></tbody>
-                </table>
-            </div>
-
-            <div id="tab-fund" class="tab-content">
-                <h2>投資信託ポートフォリオ</h2>
-                
-                <div style="display:flex; gap:10px; margin-bottom:20px;">
-                    <button id="btn-fund-rule" class="filter-btn active" style="padding:10px 20px; font-size:1rem;" onclick="toggleFundForm('rule')">自動積立ルールを設定</button>
-                    <button id="btn-fund-spot" class="filter-btn" style="padding:10px 20px; font-size:1rem;" onclick="toggleFundForm('spot')">スポット買付（一括購入）</button>
-                </div>
-
-                <div id="fund-form-rule" class="rule-box" style="display:block;">
-                    <h3>自動積立ルール設定</h3>
-                    <div class="search-wrapper">
-                        <label>🔍 ファンド検索（自動入力）</label>
-                        <input type="text" id="rule-search-input" placeholder="例: オルカン または eMAXIS" oninput="handleSearchInput(this.value, 'RULE')" autocomplete="off" style="width:calc(100% - 30px); padding:8px; margin-top:6px;">
-                        <div id="rule-search-suggestions" class="suggestions-box"></div>
-                    </div><br>
-                    <div class="form-group"><label>投信コード</label><input type="text" id="rule-ticker" onchange="fetchFundPriceAuto('rule')" placeholder="例: 0331418A"></div>
-                    <div class="form-group"><label>ファンド名</label><input type="text" id="rule-name" placeholder="例: eMAXIS Slim 全世界株式"></div>
-                    <div class="form-group"><label>積立コース</label><select id="rule-freq" onchange="toggleRuleFreq()"><option value="MONTHLY">毎月コース</option><option value="DAILY">毎日コース</option></select></div>
-                    <div class="form-group" id="rule-day-group"><label>積立日 (毎月)</label><select id="rule-day"><option value="1">1日</option><option value="5">5日</option><option value="10">10日</option><option value="15">15日</option><option value="20">20日</option><option value="25">25日</option></select></div>
-                    <div class="form-group"><label>積立金額 (円)</label><input type="number" id="rule-amount" placeholder="30000"></div>
-                    
-                    <!-- 🌟 修正ポイント: 自動反映/手入力の切り替えチェックボックスを追加 -->
-                    <div class="form-group">
-                        <label style="display:flex; justify-content:space-between; align-items:center;">
-                            <span>基準価額 (1万口)</span>
-                            <label style="font-size:0.75rem; font-weight:normal; display:flex; align-items:center; gap:4px; cursor:pointer; color:var(--text-black);">
-                                <input type="checkbox" id="rule-price-manual-check" onchange="toggleManualPrice('rule')"> 手入力(過去分等)
-                            </label>
-                        </label>
-                        <input type="number" id="rule-avg-price" class="input-locked" readonly placeholder="例: 28459">
-                    </div>
-
-                    <div class="form-group"><label>開始日</label><input type="date" id="rule-start-date" class="default-date"></div>
-                    <button type="button" class="btn-submit" onclick="submitFundRule()">積立を開始する</button>
-                </div>
-
-                <div id="fund-form-spot" class="add-form" style="display:none;">
-                    <h3>スポット買付（一括・個別追加）</h3>
-                    <div class="search-wrapper">
-                        <label>🔍 ファンド検索（自動入力）</label>
-                        <input type="text" id="spot-search-input" placeholder="例: S&P500 または 0331418A" oninput="handleSearchInput(this.value, 'SPOT')" autocomplete="off" style="width:calc(100% - 30px); padding:8px; margin-top:6px;">
-                        <div id="spot-search-suggestions" class="suggestions-box"></div>
-                    </div><br>
-                    <div class="form-group"><label>指定形式</label><select id="fund-calc-mode" onchange="toggleCalcMode('fund')"><option value="AMOUNT">金額指定 (円)</option><option value="QTY">口数指定 (口)</option></select></div>
-                    <div class="form-group"><label>区分</label><select id="fund-trade-type"><option value="BUY_SPOT">買付</option><option value="SELL">売却</option></select></div>
-                    <div class="form-group"><label>取引日</label><input type="date" id="fund-trade-date" class="default-date"></div>
-                    <div class="form-group"><label>投信コード</label><input type="text" id="fund-ticker" onchange="fetchFundPriceAuto('spot')" placeholder="例: 0331418A"></div>
-                    <div class="form-group"><label>ファンド名</label><input type="text" id="fund-name" placeholder="例: eMAXIS Slim S&P500"></div>
-
-                    <!-- 🌟 修正ポイント: 自動反映/手入力の切り替えチェックボックスを追加 -->
-                    <div class="form-group">
-                        <label style="display:flex; justify-content:space-between; align-items:center;">
-                            <span>基準価額 (1万口)</span>
-                            <label style="font-size:0.75rem; font-weight:normal; display:flex; align-items:center; gap:4px; cursor:pointer; color:var(--text-black);">
-                                <input type="checkbox" id="spot-price-manual-check" onchange="toggleManualPrice('spot')"> 手入力(過去分等)
-                            </label>
-                        </label>
-                        <input type="number" id="fund-price" oninput="calculateQty('fund')" class="input-locked" readonly placeholder="例: 28459">
-                    </div>
-
-                    <div class="form-group" id="fund-amount-group"><label>買付金額 (円)</label><input type="number" id="fund-amount" oninput="calculateQty('fund')" placeholder="例: 30000"></div>
-                    <div class="form-group"><label>買付口数 (口)</label><input type="number" id="fund-qty" placeholder="例: 35138"></div>
-                    <div class="form-group"><label>取引理由（任意）</label><input type="text" id="fund-reason" placeholder="例: 余剰資金の投資"></div>
-                    <button type="button" class="btn-submit" onclick="submitStockTrade('FUND')">買付を記録する</button>
-                </div>
-
-                <table>
-                    <thead><tr><th>ファンド名</th><th>保有口数</th><th>平均取得価額</th><th>現在基準価額</th><th>評価額 (円)</th><th>損益 (円)</th><th>操作</th></tr></thead>
-                    <tbody id="table-fund"></tbody>
-                </table>
-                <h3 class="section-title">取引履歴</h3>
-                <table>
-                    <thead><tr><th>取引日</th><th>区分</th><th>ファンド名</th><th>買付口数</th><th>取得基準価額</th><th>買付総額 (円)</th><th>理由</th><th>操作</th></tr></thead>
-                    <tbody id="tx-table-fund"></tbody>
-                </table>
-            </div>
-
-            <div id="tab-news" class="tab-content">
-                <h2>関連ニュース（保有株・気になるリスト・市況）</h2>
-                
-                <div style="background: var(--white); border: 1px solid var(--light-border); padding: 16px 20px; border-radius: 12px; margin-bottom: 24px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
-                        <span style="font-weight:bold; font-size:0.9rem; color:var(--stone);">期間フィルター:</span>
-                        <div id="news-range-buttons" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-                            <button class="filter-btn" onclick="filterNews('1W', this)">1週間</button>
-                            <button class="filter-btn active" onclick="filterNews('1M', this)">1ヶ月</button>
-                            <button class="filter-btn" onclick="filterNews('ALL', this)">全期間</button>
-                        </div>
-                    </div>
-                    <p style="font-size: 0.8rem; color: var(--stone); margin-top: 5px; margin-bottom:10px;">
-                        ※ニュースは外部サイトの仕様上、直近数週間〜1ヶ月分のみ取得可能です。
-                    </p>
-                    <div id="news-stock-filters" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; border-top:1px dashed var(--light-border); padding-top:10px;">
-                    </div>
-                </div>
-
-                <div id="news-container">
-                    <p>読み込み中...</p>
-                </div>
-            </div>
-
-            <div id="tab-watchlist" class="tab-content">
-                <h2>気になるリスト (Watchlist)</h2>
-                <p style="color: var(--stone); font-size: 0.9rem; margin-bottom: 20px;">
-                    まだ購入していないけれど、値動きを追っておきたい銘柄を登録できます。
-                </p>
-                
-                <div class="add-form">
-                    <h3>銘柄の追加</h3>
-                    <div class="form-group search-wrapper">
-                        <label>🔍 企業名 or 証券コード（自動入力）</label>
-                        <input type="text" id="watchlist-search" placeholder="例: トヨタ または 7203" oninput="handleSearchInput(this.value, 'WATCH')" autocomplete="off" style="width:calc(100% - 30px); padding:8px; margin-top:6px;">
-                        <div id="watchlist-search-suggestions" class="suggestions-box"></div>
-                    </div>
-                    <div class="form-group" style="display:none;">
-                        <input type="hidden" id="watchlist-ticker">
-                    </div>
-                    <button type="button" class="btn-submit" onclick="addWatchlist()">リストに追加する</button>
-                </div>
-
-                <table>
-                    <thead><tr><th>コード</th><th>銘柄名</th><th>現在価格</th><th>登録日</th><th>操作</th></tr></thead>
-                    <tbody id="table-watchlist"></tbody>
-                </table>
-            </div>
-
-        </div>
-    </div>
-
-    <script>
-        let myDoughnutChart = null;
-        let myLineChart = null;
-        let globalHistoryData = []; 
-        let globalNewsData = []; 
-        let currentPeriodNews = []; 
-        let currentNewsRange = '1M';
-        let currentNewsStock = 'ALL';
-        let searchTimeout = null; 
-
-        const COLOR_TURQUOISE = '#60C7D5';
-        const COLOR_TURQUOISE_MAIN = '#25B2C7';
-        const COLOR_ORANGE = '#F77261';
-        const COLOR_MINT = '#60D5A9';
-        const COLOR_LIGHT = 'rgba(96, 199, 213, 0.15)';
-        const COLOR_DISABLED = '#F7F7F8';
-
-        document.querySelectorAll('.default-date').forEach(el => el.valueAsDate = new Date());
-
-        const path = window.location.pathname.replace('/', '');
-        let currentUserId = null;
-
-        if (/^[a-zA-Z0-9]{6}$/.test(path)) {
-            currentUserId = path;
-            document.getElementById('display-user-id').textContent = currentUserId;
-            document.getElementById('login-screen').style.display = 'none';
-            document.getElementById('dashboard-screen').style.display = 'block';
-            fetchPortfolio();
-        } else {
-            document.getElementById('login-screen').style.display = 'flex';
-            document.getElementById('dashboard-screen').style.display = 'none';
-        }
-
-        function enterDashboard() {
-            const inputId = document.getElementById('login-id').value;
-            if (/^[a-zA-Z0-9]{6}$/.test(inputId)) {
-                window.location.href = '/' + inputId;
-            } else {
-                alert('会員番号は6桁の英数字を入力してください。（例: AB1234）');
-            }
-        }
-
-        function switchTab(tabId) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('active'));
-            document.getElementById(tabId).classList.add('active');
-            event.target.classList.add('active');
-
-            if (tabId === 'tab-jp') fetchCategoryTransactions('JP', 'tx-table-jp');
-            if (tabId === 'tab-us') fetchCategoryTransactions('US', 'tx-table-us');
-            if (tabId === 'tab-fund') fetchCategoryTransactions('FUND', 'tx-table-fund');
-            if (tabId === 'tab-news') fetchNews();
-            if (tabId === 'tab-watchlist') fetchWatchlist();
-        }
-
-        function toggleFundForm(type) {
-            document.getElementById('btn-fund-rule').classList.remove('active');
-            document.getElementById('btn-fund-spot').classList.remove('active');
-            document.getElementById('fund-form-rule').style.display = 'none';
-            document.getElementById('fund-form-spot').style.display = 'none';
-
-            document.getElementById('btn-fund-' + type).classList.add('active');
-            document.getElementById('fund-form-' + type).style.display = 'block';
-        }
-
-        function toggleRuleFreq() {
-            const freq = document.getElementById('rule-freq').value;
-            document.getElementById('rule-day-group').style.display = freq === 'MONTHLY' ? 'inline-block' : 'none';
-        }
-
-        function toggleCalcMode(prefix) {
-            const mode = document.getElementById(`${prefix}-calc-mode`).value;
-            const amountGroup = document.getElementById(`${prefix}-amount-group`);
-            const qtyInput = document.getElementById(`${prefix}-qty`);
-
-            if (mode === 'AMOUNT') {
-                amountGroup.style.display = 'inline-block';
-                qtyInput.readOnly = true;
-                qtyInput.style.backgroundColor = COLOR_DISABLED;
-                qtyInput.style.color = '#CBC2B3';
-            } else {
-                amountGroup.style.display = 'none';
-                qtyInput.readOnly = false;
-                qtyInput.style.backgroundColor = '#FFFFFF';
-                qtyInput.style.color = '#2F3842';
-            }
-            calculateQty(prefix);
-        }
-
-        function calculateQty(prefix) {
-            const modeElem = document.getElementById(`${prefix}-calc-mode`);
-            const mode = modeElem ? modeElem.value : 'QTY';
-            if (mode === 'AMOUNT') {
-                const amount = parseFloat(document.getElementById(`${prefix}-amount`).value);
-                const price = parseFloat(document.getElementById(`${prefix}-price`).value);
-                const qtyInput = document.getElementById(`${prefix}-qty`);
-
-                if (!isNaN(amount) && !isNaN(price) && price > 0) {
-                    if (prefix === 'fund') qtyInput.value = Math.round((amount / price) * 10000.0);
-                    else qtyInput.value = (amount / price).toFixed(4);
-                }
-            }
-        }
-
-        // 🌟 自動/手入力の切り替えロジックを追加
-        function toggleManualPrice(type) {
-            const isManual = document.getElementById(`${type}-price-manual-check`).checked;
-            const inputId = type === 'rule' ? 'rule-avg-price' : 'fund-price';
-            const inputElem = document.getElementById(inputId);
-
-            if (isManual) {
-                inputElem.readOnly = false;
-                inputElem.classList.remove('input-locked');
-                inputElem.focus();
-            } else {
-                inputElem.readOnly = true;
-                inputElem.classList.add('input-locked');
-                fetchFundPriceAuto(type); // チェックを外したら、もう一度最新価格を自動取得して上書き
-            }
-        }
-
-        async function fetchFundPriceAuto(type) {
-            // もし「手入力」にチェックが入っていたら、自動取得（上書き）はしない
-            const isManual = document.getElementById(`${type}-price-manual-check`).checked;
-            if (isManual) return;
-
-            const ticker = (type === 'rule' ? document.getElementById('rule-ticker') : document.getElementById('fund-ticker')).value.trim();
-            if (ticker.length === 8) {
-                try {
-                    const res = await fetch(`/api/fund_info/${ticker}`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        if (data.price > 0) {
-                            if (type === 'rule') {
-                                document.getElementById('rule-avg-price').value = data.price;
-                            } else { 
-                                document.getElementById('fund-price').value = data.price; 
-                                calculateQty('fund'); 
-                            }
-                        }
-                    }
-                } catch(e) {}
-            }
-        }
-
-        async function submitStockTrade(type) {
-            let trade_type, trade_date, ticker, name, price, quantity, reason;
-            if (type === 'JP') {
-                trade_type = document.getElementById('jp-trade-type').value; trade_date = document.getElementById('jp-trade-date').value;
-                ticker = document.getElementById('jp-ticker').value.trim(); name = document.getElementById('jp-name').value.trim();
-                price = parseFloat(document.getElementById('jp-price').value); quantity = parseFloat(document.getElementById('jp-qty').value);
-                reason = document.getElementById('jp-reason').value.trim();
-            } else if (type === 'US') {
-                trade_type = document.getElementById('us-trade-type').value; trade_date = document.getElementById('us-trade-date').value;
-                ticker = document.getElementById('us-ticker').value.trim().toUpperCase(); name = document.getElementById('us-name').value.trim();
-                price = parseFloat(document.getElementById('us-price').value); quantity = parseFloat(document.getElementById('us-qty').value);
-                reason = document.getElementById('us-reason').value.trim();
-            } else if (type === 'FUND') {
-                trade_type = document.getElementById('fund-trade-type').value; trade_date = document.getElementById('fund-trade-date').value;
-                ticker = document.getElementById('fund-ticker').value.trim(); name = document.getElementById('fund-name').value.trim();
-                price = parseFloat(document.getElementById('fund-price').value); quantity = parseFloat(document.getElementById('fund-qty').value);
-                reason = document.getElementById('fund-reason').value.trim();
-            }
-
-            if (!name || isNaN(price) || isNaN(quantity)) { alert('入力内容を確認してください。'); return; }
-
-            const res = await fetch(`/api/${currentUserId}/trade`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ticker, name, trade_type, asset_type: type, trade_date, quantity, price, reason }) 
-            });
-
-            if (res.ok) {
-                alert('取引を記録しました。行動が自信に繋がりますね！');
-                fetchPortfolio();
-                if (type === 'JP') { fetchCategoryTransactions('JP', 'tx-table-jp'); document.getElementById('jp-reason').value = ''; }
-                if (type === 'US') { fetchCategoryTransactions('US', 'tx-table-us'); document.getElementById('us-reason').value = ''; }
-                if (type === 'FUND') { fetchCategoryTransactions('FUND', 'tx-table-fund'); document.getElementById('fund-reason').value = ''; }
-            }
-        }
-
-        async function submitFundRule() {
-            const ticker = document.getElementById('rule-ticker').value.trim();
-            const name = document.getElementById('rule-name').value.trim();
-            const frequency = document.getElementById('rule-freq').value;
-            const monthly_day = parseInt(document.getElementById('rule-day').value);
-            const amount = parseFloat(document.getElementById('rule-amount').value);
-            const avg_price = parseFloat(document.getElementById('rule-avg-price').value) || 10000.0;
-            const start_date = document.getElementById('rule-start-date').value;
-
-            if (!ticker || !name || isNaN(amount) || !start_date) { alert('すべての項目を入力してください。'); return; }
-
-            const res = await fetch(`/api/${currentUserId}/fund_rule`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ticker, name, frequency, monthly_day, amount, avg_price, start_date })
-            });
-
-            if (res.ok) {
-                alert('自動積立の設定が完了しました！未来への第一歩です。');
-                fetchPortfolio(); fetchCategoryTransactions('FUND', 'tx-table-fund');
-            }
-        }
-
-        async function updatePrice(ticker, currentPrice) {
-            const newPriceStr = prompt(`最新の基準価額（1万口あたり）を入力してください:`, currentPrice);
-            if (!newPriceStr) return;
-            const newPrice = parseFloat(newPriceStr);
-            if (isNaN(newPrice) || newPrice <= 0) return;
-
-            const res = await fetch(`/api/${currentUserId}/update_price`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ticker: ticker, current_price: newPrice })
-            });
-            if (res.ok) fetchPortfolio();
-        }
-
-        async function deleteStock(ticker) {
-            if (!confirm(`選択した資産（${ticker}）の記録を削除してもよろしいですか？`)) return;
-            const res = await fetch(`/api/${currentUserId}/delete_stock/${encodeURIComponent(ticker)}`, { method: 'DELETE' });
-            if (res.ok) {
-                fetchPortfolio(); fetchCategoryTransactions('JP', 'tx-table-jp'); fetchCategoryTransactions('US', 'tx-table-us'); fetchCategoryTransactions('FUND', 'tx-table-fund');
-            }
-        }
-
-        async function fetchCategoryTransactions(category, targetTableId) {
-            const res = await fetch(`/api/${currentUserId}/transactions/${category}`);
-            const data = await res.json();
-            const tbody = document.getElementById(targetTableId);
-            tbody.innerHTML = '';
-
-            data.forEach(item => {
-                let totalVal = (item.quantity * item.price);
-                if (category === 'FUND') totalVal = totalVal / 10000.0;
-                let typeText = "買付"; let typeClass = "type-buy-spot";
-                if (item.type === "BUY_AUTO") { typeText = "自動積立"; typeClass = "type-buy-auto"; }
-                else if (item.type === "BUY_SPOT") { typeText = "一括買付"; typeClass = "type-buy-spot"; }
-                else if (item.type === "SELL") { typeText = "売却"; typeClass = "negative"; }
-
-                const unit = category === 'FUND' ? '口' : '株'; const currency = category === 'US' ? '$' : '¥';
-                const reasonText = item.reason ? item.reason : "-";
-
-                tbody.innerHTML += `
-                    <tr>
-                        <td style="text-align:center; color:#596572;">${item.trade_date}</td>
-                        <td style="text-align:center;" class="${typeClass}">${typeText}</td>
-                        <td style="font-weight:bold;">${item.name}</td>
-                        <td>${item.quantity.toLocaleString()} ${unit}</td>
-                        <td>${currency}${item.price.toLocaleString()}</td>
-                        <td>${currency}${Math.floor(totalVal).toLocaleString()}</td>
-                        <td style="color:#596572; font-size:0.85rem; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${reasonText}">${reasonText}</td>
-                        <td style="text-align:center;"><button class="btn-delete" onclick="deleteTx(${item.id}, '${category}')">削除</button></td>
-                    </tr>
-                `;
-            });
-        }
-
-        async function fetchPortfolio() {
-            try {
-                const response = await fetch(`/api/${currentUserId}/portfolio`);
-                const data = await response.json();
-
-                document.getElementById('total-assets').textContent = `¥${Math.floor(data.total_assets).toLocaleString()}`;
-                document.getElementById('fx-rate').textContent = data.usdjpy_rate.toFixed(2);
-                document.getElementById('fx-time').textContent = `(${data.usdjpy_time} 時点)`;
-
-                const tJp = document.getElementById('table-jp'); const tUs = document.getElementById('table-us'); const tFund = document.getElementById('table-fund');
-                tJp.innerHTML = ''; tUs.innerHTML = ''; tFund.innerHTML = '';
-                
-                data.portfolio.forEach(item => {
-                    const plClass = item.profit_loss_jpy >= 0 ? 'positive' : 'negative';
-                    const plSign = item.profit_loss_jpy >= 0 ? '+' : '';
-                    if (item.is_fund) {
-                        tFund.innerHTML += `<tr><td style="font-weight:bold;">${item.name}</td><td>${item.quantity.toLocaleString()} 口</td><td>¥${Math.floor(item.average_price).toLocaleString()}</td><td style="color:${COLOR_MINT}; font-weight:bold;">¥${Math.floor(item.current_price).toLocaleString()}</td><td>¥${Math.floor(item.current_value_jpy).toLocaleString()}</td><td class="${plClass}">${plSign}¥${Math.floor(item.profit_loss_jpy).toLocaleString()}</td><td style="text-align:center;"><button class="btn-edit" onclick="updatePrice('${item.ticker}', ${item.current_price})">更新</button><button class="btn-delete" onclick="deleteStock('${item.ticker}')">削除</button></td></tr>`;
-                    } else if (item.ticker.includes('.T')) {
-                        tJp.innerHTML += `<tr><td style="color:#596572;">${item.ticker.replace('.T', '')}</td><td style="font-weight:bold;">${item.name}</td><td>${item.quantity}</td><td>¥${item.average_price.toLocaleString()}</td><td>¥${item.current_price.toLocaleString()}</td><td>¥${Math.floor(item.current_value_jpy).toLocaleString()}</td><td class="${plClass}">${plSign}¥${Math.floor(item.profit_loss_jpy).toLocaleString()}</td><td style="text-align:center;"><button class="btn-delete" onclick="deleteStock('${item.ticker}')">削除</button></td></tr>`;
-                    } else {
-                        tUs.innerHTML += `<tr><td style="color:#596572;">${item.ticker}</td><td style="font-weight:bold;">${item.name}</td><td>${item.quantity}</td><td>$${item.average_price.toLocaleString()}</td><td>$${item.current_price.toLocaleString()}</td><td>¥${Math.floor(item.current_value_jpy).toLocaleString()}</td><td class="${plClass}">${plSign}¥${Math.floor(item.profit_loss_jpy).toLocaleString()}</td><td style="text-align:center;"><button class="btn-delete" onclick="deleteStock('${item.ticker}')">削除</button></td></tr>`;
-                    }
-                });
-
-                const catStats = data.category_totals;
-                
-                const targetGoal = 10000000;
-                const currentPercent = Math.min((data.total_assets / targetGoal) * 100, 100);
-                document.getElementById('goal-bar').style.width = `${currentPercent}%`;
-                document.getElementById('goal-percent').textContent = `${currentPercent.toFixed(1)}%`;
-
-                const estDivTotal = data.est_dividend_jpy || 0;
-                document.getElementById('est-dividend').textContent = `¥${Math.floor(estDivTotal).toLocaleString()}`;
-
-                function updateCatUI(idPrefix, current, book) {
-                    const pl = current - book;
-                    const pct = book > 0 ? (pl / book) * 100 : 0;
-                    const sign = pl >= 0 ? '+' : '';
-
-                    document.getElementById(`cat-${idPrefix}-total`).textContent = `¥${Math.floor(current).toLocaleString()}`;
-                    const plElem = document.getElementById(`cat-${idPrefix}-pl`);
-                    
-                    if (book > 0) {
-                        plElem.textContent = `${sign}¥${Math.floor(pl).toLocaleString()} (${sign}${pct.toFixed(2)}%)`;
-                        plElem.style.color = pl >= 0 ? 'var(--mint-main)' : 'var(--flamingo-main)';
-                        plElem.style.fontWeight = "bold";
-                    } else {
-                        plElem.textContent = '保有なし';
-                        plElem.style.color = 'var(--stone)';
-                        plElem.style.fontWeight = "normal";
-                    }
-                }
-
-                updateCatUI('jp', catStats["日本株"].current, catStats["日本株"].book);
-                updateCatUI('us', catStats["米国株"].current, catStats["米国株"].book);
-                updateCatUI('fund', catStats["投資信託"].current, catStats["投資信託"].book);
-
-                const ctx1 = document.getElementById('portfolioChart').getContext('2d');
-                if (myDoughnutChart) myDoughnutChart.destroy();
-                myDoughnutChart = new Chart(ctx1, {
-                    type: 'doughnut',
-                    data: { labels: ["日本株式", "米国株式", "投資信託"], datasets: [{ data: [catStats["日本株"].current, catStats["米国株"].current, catStats["投資信託"].current], backgroundColor: [COLOR_TURQUOISE, COLOR_ORANGE, COLOR_MINT], borderWidth: 2, borderColor: '#FFFFFF' }] },
-                    options: { responsive: true, cutout: '70%', plugins: { legend: { position: 'bottom', labels: { color: '#2F3842', padding: 20, font: { size: 13 } } } } }
-                });
-
-                fetchHistory();
-            } catch(e) { console.error(e); }
-        }
-
-        async function fetchHistory() {
-            try {
-                const res = await fetch(`/api/${currentUserId}/history`);
-                globalHistoryData = await res.json();
-                
-                const ctx2 = document.getElementById('historyChart').getContext('2d');
-                if (myLineChart) myLineChart.destroy();
-                
-                myLineChart = new Chart(ctx2, {
-                    type: 'line',
-                    data: { labels: [], datasets: [{ label: '総資産額 (円)', data: [], borderColor: COLOR_TURQUOISE_MAIN, backgroundColor: COLOR_LIGHT, fill: true, pointRadius: 2, pointBackgroundColor: '#FFFFFF', pointBorderColor: COLOR_TURQUOISE_MAIN, tension: 0.4 }] },
-                    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false, drawBorder: false }, ticks: { color: '#596572' } }, y: { grid: { color: '#F7F7F8' }, ticks: { color: '#596572', padding: 10 } } } }
-                });
-
-                filterChart('ALL');
-            } catch (e) { console.error("グラフ描画エラー: ", e); }
-        }
-
-        function filterChart(range, btnElement = null) {
-            if (!Array.isArray(globalHistoryData) || globalHistoryData.length === 0) {
-                myLineChart.data.labels = ['データなし'];
-                myLineChart.data.datasets[0].data = [0];
-                myLineChart.update();
-                return;
-            }
-
-            if (range !== 'CUSTOM' && btnElement) {
-                document.querySelectorAll('#tab-all .filter-btn').forEach(btn => btn.classList.remove('active'));
-                btnElement.classList.add('active');
-            } else if (range === 'CUSTOM') {
-                document.querySelectorAll('#tab-all .filter-btn').forEach(btn => btn.classList.remove('active'));
-            }
-
-            let filtered = [...globalHistoryData];
-            const today = new Date();
-            let startDate = null;
-            let endDate = today;
-
-            if (range === '1W') startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7);
-            else if (range === '1M') startDate = new Date(today.getFullYear(), today.getMonth() - 1, today.getDate());
-            else if (range === '3M') startDate = new Date(today.getFullYear(), today.getMonth() - 3, today.getDate());
-            else if (range === '1Y') startDate = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
-            else if (range === '3Y') startDate = new Date(today.getFullYear() - 3, today.getMonth(), today.getDate());
-            else if (range === 'CUSTOM') {
-                const s = document.getElementById('chart-start').value;
-                const e = document.getElementById('chart-end').value;
-                if (s) startDate = new Date(s);
-                if (e) endDate = new Date(e);
-            }
-
-            if (startDate) {
-                filtered = filtered.filter(d => {
-                    const dTime = new Date(d.date).getTime();
-                    return dTime >= startDate.getTime() && dTime <= (endDate.getTime() + 86400000);
-                });
-            }
-
-            if (filtered.length === 0) {
-                myLineChart.data.labels = ['期間内データなし'];
-                myLineChart.data.datasets[0].data = [0];
-            } else {
-                myLineChart.data.labels = filtered.map(h => h.date);
-                myLineChart.data.datasets[0].data = filtered.map(h => h.total_assets);
-            }
-            myLineChart.update();
-        }
-
-        async function fetchNews() {
-            const container = document.getElementById('news-container');
-            container.innerHTML = '<p style="color:var(--stone);">ニュースを取得中...</p>';
-            try {
-                const res = await fetch(`/api/${currentUserId}/news`);
-                globalNewsData = await res.json();
-                
-                if (globalNewsData.length === 0) {
-                    container.innerHTML = '<p style="color:var(--stone);">現在登録されている銘柄や市況のニュースはありません。</p>';
-                    return;
-                }
-                filterNews('1M');
-            } catch (e) {
-                container.innerHTML = '<p style="color:red;">ニュースの取得に失敗しました。</p>';
-            }
-        }
-
-        function filterNews(range, btnElement = null) {
-            currentNewsRange = range;
-            const buttons = document.querySelectorAll('#news-range-buttons .filter-btn');
-            buttons.forEach(btn => btn.classList.remove('active'));
-
-            if (btnElement) {
-                btnElement.classList.add('active');
-            }
-
-            const now = new Date();
-            let startMs = null;
-            let endMs = null;
-
-            if (range === '1W') startMs = now.getTime() - (7 * 24 * 60 * 60 * 1000);
-            else if (range === '1M') startMs = now.getTime() - (30 * 24 * 60 * 60 * 1000);
-
-            currentPeriodNews = globalNewsData.filter(n => {
-                if (!n.timestamp) return true;
-                const nMs = n.timestamp * 1000;
-                if (startMs !== null && nMs < startMs) return false;
-                if (endMs !== null && nMs > endMs) return false;
-                return true;
-            });
-
-            updateStockButtons();
-            renderFilteredNews();
-        }
-
-        function updateStockButtons() {
-            const stockFiltersDiv = document.getElementById('news-stock-filters');
-            const uniqueStocks = [...new Set(globalNewsData.map(n => n.stock_name))];
-            
-            let buttonsHtml = `<span style="font-size:0.85rem; color:var(--stone); font-weight:bold;">銘柄/市況:</span>
-                <button class="filter-btn ${currentNewsStock === 'ALL' ? 'active' : ''}" onclick="filterNewsByStock('ALL', this)">すべて (${currentPeriodNews.length})</button>`;
-            
-            uniqueStocks.forEach(name => {
-                const count = currentPeriodNews.filter(n => n.stock_name === name).length;
-                buttonsHtml += `<button class="filter-btn ${currentNewsStock === name ? 'active' : ''}" onclick="filterNewsByStock('${name}', this)">${name} (${count})</button>`;
-            });
-            stockFiltersDiv.innerHTML = buttonsHtml;
-        }
-
-        function filterNewsByStock(stockName, btnElement) {
-            currentNewsStock = stockName;
-            updateStockButtons(); 
-            renderFilteredNews();
-        }
-
-        async function fetchAiSummary(btn, title) {
-            const box = btn.nextElementSibling;
-            btn.style.display = 'none'; 
-            box.style.display = 'block'; 
-            box.innerHTML = '<span style="color:var(--stone); font-weight:bold;">Geminiが分析中... 🤖💭</span>';
-            try {
-                const res = await fetch(`/api/ai_summary?title=${encodeURIComponent(title)}`);
-                const data = await res.json();
-                if (data.summary) {
-                    box.innerHTML = data.summary.replace(/\n/g, '<br>');
-                } else {
-                    box.innerHTML = '<span style="color:red;">解説の取得に失敗しました。</span>';
-                    btn.style.display = 'inline-block';
-                }
-            } catch(e) {
-                box.innerHTML = '<span style="color:red;">エラーが発生しました。</span>';
-                btn.style.display = 'inline-block';
-            }
-        }
-
-        function renderFilteredNews() {
-            const container = document.getElementById('news-container');
-            let finalNews = [...currentPeriodNews];
-
-            if (currentNewsStock !== 'ALL') {
-                finalNews = finalNews.filter(n => n.stock_name === currentNewsStock);
-            }
-
-            if (finalNews.length === 0) {
-                container.innerHTML = '<p style="color:var(--stone);">指定した期間のニュースは見つかりませんでした。</p>';
-                return;
-            }
-
-            let html = '';
-            finalNews.forEach(news => {
-                html += `
-                    <div class="news-card" style="position: relative; display: block; margin-bottom:16px;">
-                        <a href="${news.link}" target="_blank" style="text-decoration:none; color:inherit;">
-                            <div class="news-title">${news.title}</div>
-                            <div class="news-meta">
-                                <span class="news-tag">${news.stock_name}</span>
-                                <span>${news.pub_time}</span>
+                            <div class="text-right">
+                                <div class="font-bold text-gray-900">¥${Math.floor(item.current_value_jpy).toLocaleString()}</div>
+                                <div class="text-xs font-bold mt-1 ${profitClass}">${profitStr}</div>
+                                <button onclick="deleteStock('${item.ticker}')" class="text-xs text-red-400 hover:text-red-600 mt-2"><i class="fas fa-trash-alt"></i> 全て削除</button>
                             </div>
-                        </a>
-                        <button onclick="fetchAiSummary(this, '${news.title.replace(/'/g, "\\'")}')" style="margin-top:10px; background:var(--ivory-base); border:1px solid var(--turquoise-base); color:var(--turquoise-main); padding:4px 12px; border-radius:6px; font-size:0.85rem; cursor:pointer; font-weight:bold;">✨ Geminiに要約してもらう</button>
-                        <div class="ai-summary-box" style="display:none; margin-top:10px; padding:12px; background:#F8F9FA; border-left:4px solid var(--turquoise-base); border-radius:4px; font-size:0.9rem; color:var(--text-black); line-height:1.6;"></div>
-                    </div>
-                `;
-            });
-            container.innerHTML = html;
-        }
-
-        async function handleSearchInput(query, type) {
-            clearTimeout(searchTimeout);
-            let boxId = '';
-            let assetParam = 'ALL';
-            
-            if (type === 'JP') { boxId = 'jp-search-suggestions'; assetParam = 'JP'; }
-            if (type === 'US') { boxId = 'us-search-suggestions'; assetParam = 'US'; }
-            if (type === 'WATCH') { boxId = 'watchlist-search-suggestions'; assetParam = 'ALL'; }
-            if (type === 'RULE') { boxId = 'rule-search-suggestions'; assetParam = 'FUND'; }
-            if (type === 'SPOT') { boxId = 'spot-search-suggestions'; assetParam = 'FUND'; }
-
-            const suggestionsDiv = document.getElementById(boxId);
-            if (!query.trim()) {
-                suggestionsDiv.style.display = 'none';
-                return;
-            }
-            
-            searchTimeout = setTimeout(async () => {
-                try {
-                    const res = await fetch(`/api/search_stock?q=${encodeURIComponent(query)}&asset_type=${assetParam}`);
-                    const results = await res.json();
-                    
-                    if (results.length > 0) {
-                        let html = '';
-                        results.forEach(r => {
-                            html += `<div class="suggestion-item" onclick="selectSuggestion('${r.ticker}', '${r.name}', '${type}')">${r.ticker} - ${r.name}</div>`;
-                        });
-                        suggestionsDiv.innerHTML = html;
-                        suggestionsDiv.style.display = 'block';
-                    } else {
-                        suggestionsDiv.innerHTML = '<div class="suggestion-item" style="color:var(--stone); cursor:default;">見つかりませんでした</div>';
-                        suggestionsDiv.style.display = 'block';
-                    }
-                } catch(e) {}
-            }, 300);
-        }
-
-        function selectSuggestion(ticker, name, type) {
-            if (type === 'JP') {
-                document.getElementById('jp-ticker').value = ticker.replace('.T', '');
-                document.getElementById('jp-name').value = name;
-                document.getElementById('jp-search-input').value = '';
-                document.getElementById('jp-search-suggestions').style.display = 'none';
-            } else if (type === 'US') {
-                document.getElementById('us-ticker').value = ticker;
-                document.getElementById('us-name').value = name;
-                document.getElementById('us-search-input').value = '';
-                document.getElementById('us-search-suggestions').style.display = 'none';
-            } else if (type === 'WATCH') {
-                document.getElementById('watchlist-search').value = name;
-                document.getElementById('watchlist-ticker').value = ticker;
-                document.getElementById('watchlist-search-suggestions').style.display = 'none';
-            } else if (type === 'RULE') {
-                document.getElementById('rule-ticker').value = ticker;
-                document.getElementById('rule-name').value = name;
-                document.getElementById('rule-search-input').value = '';
-                document.getElementById('rule-search-suggestions').style.display = 'none';
-                fetchFundPriceAuto('rule');
-            } else if (type === 'SPOT') {
-                document.getElementById('fund-ticker').value = ticker;
-                document.getElementById('fund-name').value = name;
-                document.getElementById('spot-search-input').value = '';
-                document.getElementById('spot-search-suggestions').style.display = 'none';
-                fetchFundPriceAuto('spot');
-            }
-        }
-
-        document.addEventListener('click', function(e) {
-            if (!e.target.closest('.search-wrapper')) {
-                const jpBox = document.getElementById('jp-search-suggestions');
-                const usBox = document.getElementById('us-search-suggestions');
-                const wBox = document.getElementById('watchlist-search-suggestions');
-                const ruleBox = document.getElementById('rule-search-suggestions');
-                const spotBox = document.getElementById('spot-search-suggestions');
-                if (jpBox) jpBox.style.display = 'none';
-                if (usBox) usBox.style.display = 'none';
-                if (wBox) wBox.style.display = 'none';
-                if (ruleBox) ruleBox.style.display = 'none';
-                if (spotBox) spotBox.style.display = 'none';
-            }
-        });
-
-        async function fetchWatchlist() {
-            const tbody = document.getElementById('table-watchlist');
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">読み込み中...</td></tr>';
-            try {
-                const res = await fetch(`/api/${currentUserId}/watchlist`);
-                const data = await res.json();
-                
-                if (data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--stone);">まだ登録されていません。</td></tr>';
-                    return;
-                }
-
-                let html = '';
-                data.forEach(item => {
-                    const priceText = item.current_price > 0 ? `${item.currency}${item.current_price.toLocaleString()}` : '-';
-                    html += `
-                        <tr>
-                            <td style="color:var(--stone);">${item.ticker.replace('.T', '')}</td>
-                            <td style="font-weight:bold;">${item.name}</td>
-                            <td style="font-weight:bold; color:var(--text-black);">${priceText}</td>
-                            <td style="color:var(--stone); font-size:0.85rem;">${item.added_date}</td>
-                            <td style="text-align:center;"><button class="btn-delete" onclick="deleteWatchlist('${item.ticker}')">削除</button></td>
-                        </tr>
+                        </li>
                     `;
                 });
-                tbody.innerHTML = html;
             } catch (e) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:red;">取得エラー</td></tr>';
+                console.error(e);
             }
         }
 
-        async function addWatchlist() {
-            const searchInput = document.getElementById('watchlist-search').value.trim();
-            const tickerInput = document.getElementById('watchlist-ticker').value.trim();
+        // --- 🌟 取引履歴の読み込み（削除ボタン完全対応） ---
+        async function loadHistory() {
+            const listEl = document.getElementById('history-list');
+            listEl.innerHTML = '<li class="p-4 text-center text-gray-500">読み込み中...</li>';
             
-            let ticker = tickerInput || searchInput;
-            let name = tickerInput ? searchInput : searchInput;
-            
-            if (!ticker) { alert('企業名や証券コードを入力してください。'); return; }
+            try {
+                // ALLカテゴリーで履歴を一括取得
+                const res = await fetch(`/api/${userId}/transactions/ALL`);
+                const trades = await res.json();
 
-            const res = await fetch(`/api/${currentUserId}/watchlist`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ticker: ticker, name: name })
+                if (trades.length === 0) {
+                    listEl.innerHTML = '<li class="p-4 text-center text-gray-500">取引履歴がありません</li>';
+                    return;
+                }
+
+                listEl.innerHTML = '';
+                trades.forEach(t => {
+                    const typeLabel = t.type.includes('BUY') ? '<span class="text-red-500 font-bold">買付</span>' : '<span class="text-blue-500 font-bold">売却</span>';
+                    listEl.innerHTML += `
+                        <li class="p-4 hover:bg-gray-50 flex justify-between items-center">
+                            <div>
+                                <div class="font-bold text-gray-800">${t.name}</div>
+                                <div class="text-xs text-gray-500 mt-1">${t.trade_date} | ${typeLabel}</div>
+                                <div class="text-xs text-gray-500 mt-1">数量: ${t.quantity} | 単価: ${t.price.toLocaleString()}</div>
+                            </div>
+                            <button onclick="deleteTransaction(${t.id})" class="bg-gray-100 hover:bg-red-100 text-gray-500 hover:text-red-600 px-3 py-1 rounded transition">
+                                <i class="fas fa-trash-alt"></i> 削除
+                            </button>
+                        </li>
+                    `;
+                });
+            } catch (e) {
+                console.error(e);
+                listEl.innerHTML = '<li class="p-4 text-center text-red-500">読み込みエラー</li>';
+            }
+        }
+
+        // --- 🌟 履歴削除APIを叩く関数 ---
+        async function deleteTransaction(txId) {
+            if (!confirm("この取引履歴を削除しますか？\n（※残りの保有数量や平均取得単価も再計算されます）")) return;
+            try {
+                const res = await fetch(`/api/${userId}/transaction/${txId}`, { method: 'DELETE' });
+                if (res.ok) {
+                    loadHistory(); // 履歴タブをリロード
+                    loadDashboard(); // 保有資産タブもリロード
+                } else {
+                    alert("削除に失敗しました。");
+                }
+            } catch (e) {
+                console.error(e);
+                alert("通信エラーが発生しました。");
+            }
+        }
+
+        // --- 銘柄の完全削除 ---
+        async function deleteStock(ticker) {
+            if (!confirm(`【${ticker}】のデータをすべて削除しますか？\n（※取引履歴もすべて消去されます）`)) return;
+            try {
+                const res = await fetch(`/api/${userId}/delete_stock/${ticker}`, { method: 'DELETE' });
+                if (res.ok) loadDashboard();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        // --- ニュースの読み込み ---
+        async function loadNews() {
+            const container = document.getElementById('news-container');
+            container.innerHTML = '<p class="text-center text-gray-500">読み込み中...</p>';
+            try {
+                const res = await fetch(`/api/${userId}/news`);
+                const news = await res.json();
+                if (news.length === 0) {
+                    container.innerHTML = '<p class="text-center text-gray-500">関連ニュースがありません</p>';
+                    return;
+                }
+                container.innerHTML = '<ul class="space-y-4"></ul>';
+                const ul = container.querySelector('ul');
+                news.forEach(n => {
+                    ul.innerHTML += `
+                        <li class="border-b pb-3 last:border-0">
+                            <span class="text-xs font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded">${n.stock_name}</span>
+                            <span class="text-xs text-gray-400 ml-2">${n.pub_time}</span>
+                            <a href="${n.link}" target="_blank" class="block mt-1 text-sm font-bold text-blue-600 hover:underline">${n.title}</a>
+                        </li>
+                    `;
+                });
+            } catch (e) {
+                container.innerHTML = '<p class="text-center text-red-500">ニュースの取得に失敗しました</p>';
+            }
+        }
+
+        // --- 🌟 サジェスト検索（自動入力）の実装 ---
+        function setupSearch() {
+            const input = document.getElementById('trade-search');
+            const suggestBox = document.getElementById('suggest-box');
+
+            input.addEventListener('input', () => {
+                clearTimeout(searchTimeout);
+                const query = input.value.trim();
+                const assetType = document.getElementById('trade-asset-type').value;
+
+                if (query.length < 1) {
+                    suggestBox.classList.add('hidden');
+                    return;
+                }
+
+                searchTimeout = setTimeout(async () => {
+                    try {
+                        const res = await fetch(`/api/search_stock?q=${encodeURIComponent(query)}&asset_type=${assetType}`);
+                        const results = await res.json();
+                        
+                        suggestBox.innerHTML = '';
+                        if (results.length > 0) {
+                            results.forEach(item => {
+                                const div = document.createElement('div');
+                                div.className = 'suggest-item p-3 border-b text-sm text-gray-800';
+                                div.innerHTML = `<span class="font-bold mr-2 text-gray-500">${item.ticker}</span>${item.name}`;
+                                div.onclick = () => {
+                                    document.getElementById('trade-ticker').value = item.ticker;
+                                    document.getElementById('trade-name').value = item.name;
+                                    input.value = item.name;
+                                    suggestBox.classList.add('hidden');
+                                    
+                                    // 投信の場合は価格を自動取得してみる
+                                    if(assetType === 'FUND') fetchFundPrice(item.ticker);
+                                };
+                                suggestBox.appendChild(div);
+                            });
+                            suggestBox.classList.remove('hidden');
+                        } else {
+                            suggestBox.innerHTML = '<div class="p-3 text-sm text-gray-500">見つかりませんでした</div>';
+                            suggestBox.classList.remove('hidden');
+                        }
+                    } catch (e) {
+                        console.error(e);
+                    }
+                }, 400); // 400ミリ秒待ってから検索
             });
 
-            if (res.ok) {
-                document.getElementById('watchlist-search').value = '';
-                document.getElementById('watchlist-ticker').value = '';
-                fetchWatchlist(); 
+            // 外側をクリックしたらサジェストを閉じる
+            document.addEventListener('click', (e) => {
+                if (e.target !== input && e.target !== suggestBox) {
+                    suggestBox.classList.add('hidden');
+                }
+            });
+        }
+
+        async function fetchFundPrice(ticker) {
+            document.getElementById('trade-price').placeholder = "基準価額を取得中...";
+            try {
+                const res = await fetch(`/api/fund_info/${ticker}`);
+                const data = await res.json();
+                if(data.price > 0) {
+                    document.getElementById('trade-price').value = data.price;
+                } else {
+                    document.getElementById('trade-price').placeholder = "手入力してください";
+                }
+            } catch (e) {
+                document.getElementById('trade-price').placeholder = "取得失敗";
             }
         }
 
-        async function deleteWatchlist(ticker) {
-            if (!confirm('この銘柄を気になるリストから削除しますか？')) return;
-            const res = await fetch(`/api/${currentUserId}/watchlist/${encodeURIComponent(ticker)}`, { method: 'DELETE' });
-            if (res.ok) fetchWatchlist();
+        function resetSearch() {
+            document.getElementById('trade-search').value = '';
+            document.getElementById('trade-ticker').value = '';
+            document.getElementById('trade-name').value = '';
+            document.getElementById('trade-price').value = '';
+        }
+
+        // --- モーダル制御 ---
+        function openTradeModal(type) {
+            document.getElementById('trade-asset-type').value = type;
+            resetSearch();
+            document.getElementById('trade-modal').classList.remove('hidden');
+        }
+        function openFundRuleModal() {
+            // 投資信託用の入力としてモーダルを開く
+            openTradeModal('FUND');
+        }
+        function closeModals() {
+            document.getElementById('trade-modal').classList.add('hidden');
+        }
+
+        // --- 取引の保存 ---
+        async function submitTrade() {
+            const data = {
+                asset_type: document.getElementById('trade-asset-type').value,
+                ticker: document.getElementById('trade-ticker').value,
+                name: document.getElementById('trade-name').value,
+                trade_type: document.getElementById('trade-type').value,
+                trade_date: document.getElementById('trade-date').value,
+                quantity: parseFloat(document.getElementById('trade-quantity').value),
+                price: parseFloat(document.getElementById('trade-price').value)
+            };
+
+            if (!data.ticker || !data.quantity || !data.price) {
+                alert("必須項目が入力されていません！");
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/${userId}/trade`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                if (res.ok) {
+                    closeModals();
+                    loadDashboard();
+                    if(!document.getElementById('content-history').classList.contains('hidden')) {
+                        loadHistory();
+                    }
+                } else {
+                    alert("保存に失敗しました。");
+                }
+            } catch (e) {
+                console.error(e);
+                alert("通信エラーが発生しました。");
+            }
         }
     </script>
 </body>
