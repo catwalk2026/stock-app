@@ -6,10 +6,8 @@
     <title>AIポートフォリオ＆投資ダッシュボード</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <!-- 🌟 グラフ描画用ライブラリを復活 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* 🌟 指定カラーパレットの適用 */
         body { background-color: #F8F6ED; color: #2F3842; }
         .bg-white-card { background-color: #FFFFFF; }
         .text-main { color: #2F3842; }
@@ -23,7 +21,12 @@
         
         .tab-active { border-bottom: 2px solid #25B2C7; color: #25B2C7; font-weight: bold; }
         .tab-inactive { color: #596572; }
-        [v-cloak] { display: none; }
+        
+        /* グラフフィルターボタンのアクティブ状態 */
+        .chart-filter-btn { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: bold; cursor: pointer; transition: all 0.2s; }
+        .filter-active { background-color: #60C7D5; color: #FFFFFF; }
+        .filter-inactive { background-color: #F8F6ED; color: #596572; border: 1px solid #F7F7F8; }
+        .filter-inactive:hover { background-color: #E2E8F0; }
     </style>
 </head>
 <body class="font-sans antialiased">
@@ -64,9 +67,27 @@
             </div>
         </div>
 
-        <!-- 🌟 グラフ復活エリア -->
+        <!-- 🌟 グラフエリア（フィルター機能追加） -->
         <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light mb-6">
-            <h3 class="text-sm font-bold text-stone mb-2">📈 資産推移</h3>
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
+                <h3 class="text-sm font-bold text-stone">📈 資産推移</h3>
+                <!-- 期間フィルターボタン -->
+                <div class="flex flex-wrap gap-2" id="chart-filters">
+                    <button onclick="filterChart('1D')" class="chart-filter-btn filter-inactive" id="filter-1D">1日</button>
+                    <button onclick="filterChart('1W')" class="chart-filter-btn filter-inactive" id="filter-1W">1週間</button>
+                    <button onclick="filterChart('3M')" class="chart-filter-btn filter-inactive" id="filter-3M">3ヶ月</button>
+                    <button onclick="filterChart('1Y')" class="chart-filter-btn filter-inactive" id="filter-1Y">1年</button>
+                    <button onclick="filterChart('3Y')" class="chart-filter-btn filter-inactive" id="filter-3Y">3年</button>
+                    <button onclick="filterChart('ALL')" class="chart-filter-btn filter-active" id="filter-ALL">全期間</button>
+                    
+                    <div class="flex items-center gap-1 bg-[#F8F6ED] px-2 py-1 rounded-full border border-light text-xs text-stone ml-2">
+                        <input type="date" id="chart-start-date" class="bg-transparent outline-none">
+                        <span>〜</span>
+                        <input type="date" id="chart-end-date" class="bg-transparent outline-none">
+                        <button onclick="filterChart('CUSTOM')" class="font-bold text-turquoise ml-1 hover:opacity-70" id="filter-CUSTOM">指定</button>
+                    </div>
+                </div>
+            </div>
             <canvas id="asset-chart" height="70"></canvas>
         </div>
 
@@ -180,7 +201,7 @@
         <!-- タブナビゲーション -->
         <div class="flex border-b border-light mb-6">
             <button onclick="switchTab('portfolio')" id="tab-portfolio" class="py-2 px-4 tab-active">保有資産</button>
-            <button onclick="switchTab('history')" id="tab-history" class="py-2 px-4 tab-inactive">取引履歴</button>
+            <button onclick="switchTab('history')" id="tab-history" class="py-2 px-4 tab-inactive">取引履歴 <span class="text-xs text-orange ml-1">※一括削除はこちら</span></button>
             <button onclick="switchTab('news')" id="tab-news" class="py-2 px-4 tab-inactive">関連ニュース</button>
         </div>
 
@@ -209,7 +230,9 @@
         document.getElementById('display-user-id').textContent = userId;
         document.getElementById('trade-date').valueAsDate = new Date();
         document.getElementById('fund-start').valueAsDate = new Date();
+        
         let chartInstance = null;
+        let fullChartData = []; // グラフの全データを保持
 
         window.onload = () => {
             loadDashboard();
@@ -270,7 +293,6 @@
                             <div class="text-right">
                                 <div class="font-bold text-main">¥${Math.floor(item.current_value_jpy).toLocaleString()}</div>
                                 <div class="text-xs font-bold mt-1 ${profitClass}">${profitStr}</div>
-                                <button onclick="deleteStock('${item.ticker}')" class="text-xs text-orange hover:opacity-70 mt-2 transition"><i class="fas fa-trash-alt"></i> 全て削除</button>
                             </div>
                         </li>
                     `;
@@ -278,44 +300,101 @@
             } catch (e) { console.error(e); }
         }
 
+        // --- 🌟 グラフ描画とフィルター機能 ---
         async function loadGraph() {
             try {
                 const res = await fetch(`/api/${userId}/history`);
-                const data = await res.json();
-                if (data.length === 0) return;
-                
-                const labels = data.map(d => d.date.substring(5)); // M-Dのみ表示
-                const values = data.map(d => d.total_assets);
-                
-                const ctx = document.getElementById('asset-chart').getContext('2d');
-                if(chartInstance) chartInstance.destroy();
-                chartInstance = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: '総資産推移',
-                            data: values,
-                            borderColor: '#60C7D5',
-                            backgroundColor: 'rgba(96, 199, 213, 0.15)',
-                            fill: true,
-                            tension: 0.4,
-                            pointRadius: 2
-                        }]
-                    },
-                    options: { 
-                        responsive: true, 
-                        maintainAspectRatio: false,
-                        plugins: { legend: { display: false } },
-                        scales: { 
-                            x: { grid: { display: false }, ticks: { color: '#596572' } },
-                            y: { grid: { color: '#F7F7F8' }, ticks: { color: '#596572' } }
-                        }
-                    }
-                });
+                fullChartData = await res.json();
+                filterChart('ALL'); // 初期表示は全期間
             } catch(e) { console.error("Graph load error", e); }
         }
 
+        function filterChart(period) {
+            // ボタンの見た目更新
+            const buttons = ['1D', '1W', '3M', '1Y', '3Y', 'ALL', 'CUSTOM'];
+            buttons.forEach(p => {
+                const btn = document.getElementById(`filter-${p}`);
+                if (btn) {
+                    if (p === period) {
+                        btn.classList.replace('filter-inactive', 'filter-active');
+                    } else {
+                        btn.classList.replace('filter-active', 'filter-inactive');
+                    }
+                }
+            });
+
+            if (fullChartData.length === 0) return;
+
+            let filteredData = [...fullChartData];
+            const today = new Date();
+            let startDate = new Date();
+
+            if (period === '1D') {
+                startDate.setDate(today.getDate() - 1);
+            } else if (period === '1W') {
+                startDate.setDate(today.getDate() - 7);
+            } else if (period === '3M') {
+                startDate.setMonth(today.getMonth() - 3);
+            } else if (period === '1Y') {
+                startDate.setFullYear(today.getFullYear() - 1);
+            } else if (period === '3Y') {
+                startDate.setFullYear(today.getFullYear() - 3);
+            } else if (period === 'CUSTOM') {
+                const startStr = document.getElementById('chart-start-date').value;
+                const endStr = document.getElementById('chart-end-date').value;
+                if (startStr && endStr) {
+                    filteredData = fullChartData.filter(d => d.date >= startStr && d.date <= endStr);
+                    renderChart(filteredData);
+                    return;
+                } else {
+                    alert("指定日を入力してください");
+                    return;
+                }
+            }
+
+            if (period !== 'ALL') {
+                const startStr = startDate.toISOString().split('T')[0];
+                filteredData = fullChartData.filter(d => d.date >= startStr);
+            }
+
+            renderChart(filteredData);
+        }
+
+        function renderChart(dataToRender) {
+            const labels = dataToRender.map(d => d.date.substring(5)); // M-Dのみ表示
+            const values = dataToRender.map(d => d.total_assets);
+            
+            const ctx = document.getElementById('asset-chart').getContext('2d');
+            if(chartInstance) chartInstance.destroy();
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '総資産推移',
+                        data: values,
+                        borderColor: '#60C7D5',
+                        backgroundColor: 'rgba(96, 199, 213, 0.15)',
+                        fill: true,
+                        tension: 0.1,
+                        pointRadius: 1,
+                        borderWidth: 2
+                    }]
+                },
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { 
+                        x: { grid: { display: false }, ticks: { color: '#596572' } },
+                        y: { grid: { color: '#F7F7F8' }, ticks: { color: '#596572' } }
+                    },
+                    animation: { duration: 400 }
+                }
+            });
+        }
+
+        // --- 🌟 履歴の読み込みと「銘柄ごとの一括削除ボタン」の追加 ---
         async function loadHistory() {
             const listEl = document.getElementById('history-list');
             listEl.innerHTML = '<li class="p-4 text-center text-stone">読み込み中...</li>';
@@ -323,25 +402,47 @@
                 const res = await fetch(`/api/${userId}/transactions/ALL`);
                 const trades = await res.json();
                 if (trades.length === 0) { listEl.innerHTML = '<li class="p-4 text-center text-stone">取引履歴がありません</li>'; return; }
-                listEl.innerHTML = '';
+                
+                // 銘柄ごとにまとめるための処理
+                const groupedTrades = {};
                 trades.forEach(t => {
-                    const typeLabel = t.type.includes('BUY') ? '<span class="text-orange font-bold">買付</span>' : '<span class="text-turquoise font-bold">売却</span>';
-                    listEl.innerHTML += `
-                        <li class="p-4 hover:bg-[#F8F6ED] flex justify-between items-center transition">
-                            <div>
-                                <div class="font-bold text-main">${t.name}</div>
-                                <div class="text-xs text-stone mt-1">${t.trade_date} | ${typeLabel}</div>
-                                <div class="text-xs text-stone mt-1 opacity-80">数量: ${t.quantity} | 単価: ${t.price.toLocaleString()}</div>
-                            </div>
-                            <button onclick="deleteTransaction(${t.id})" class="bg-[#F8F6ED] border border-light hover:border-orange text-stone hover:text-orange px-3 py-1 rounded transition"><i class="fas fa-trash-alt"></i> 削除</button>
-                        </li>
-                    `;
+                    if(!groupedTrades[t.ticker]) groupedTrades[t.ticker] = { name: t.name, histories: [] };
+                    groupedTrades[t.ticker].histories.push(t);
                 });
+
+                listEl.innerHTML = '';
+                for (const ticker in groupedTrades) {
+                    const group = groupedTrades[ticker];
+                    
+                    // 銘柄のヘッダーと一括削除ボタン
+                    listEl.innerHTML += `
+                        <div class="bg-[#F8F6ED] p-3 border-b border-light flex justify-between items-center">
+                            <div class="font-bold text-main">${group.name} <span class="text-xs font-normal text-stone ml-2">${ticker}</span></div>
+                            <button onclick="deleteStock('${ticker}')" class="text-xs bg-white border border-orange text-orange hover:bg-orange hover:text-white px-3 py-1 rounded transition shadow-sm">
+                                <i class="fas fa-trash-alt"></i> この銘柄の履歴・積立設定を一括削除
+                            </button>
+                        </div>
+                    `;
+                    
+                    // 個別の履歴
+                    group.histories.forEach(t => {
+                        const typeLabel = t.type.includes('BUY') ? '<span class="text-orange font-bold">買付</span>' : '<span class="text-turquoise font-bold">売却</span>';
+                        listEl.innerHTML += `
+                            <li class="p-3 pl-6 border-b border-light hover:bg-[#F8F6ED] flex justify-between items-center transition bg-white text-sm">
+                                <div>
+                                    <span class="text-stone mr-3">${t.trade_date}</span> ${typeLabel}
+                                    <span class="text-stone ml-3 opacity-80">数量: ${t.quantity} | 単価: ${t.price.toLocaleString()}</span>
+                                </div>
+                                <button onclick="deleteTransaction(${t.id})" class="text-stone hover:text-orange transition"><i class="fas fa-times"></i></button>
+                            </li>
+                        `;
+                    });
+                }
             } catch (e) { listEl.innerHTML = '<li class="p-4 text-center text-orange">読み込みエラー</li>'; }
         }
 
         async function deleteTransaction(txId) {
-            if (!confirm("この取引履歴を削除しますか？")) return;
+            if (!confirm("この取引履歴を1件削除しますか？")) return;
             try {
                 const res = await fetch(`/api/${userId}/transaction/${txId}`, { method: 'DELETE' });
                 if (res.ok) { loadHistory(); loadDashboard(); loadGraph(); }
@@ -349,7 +450,7 @@
         }
 
         async function deleteStock(ticker) {
-            if (!confirm(`【${ticker}】のデータをすべて削除しますか？`)) return;
+            if (!confirm(`本当に【${ticker}】に関するすべての取引履歴、積立設定、保有情報を削除しますか？\n（この操作は取り消せません）`)) return;
             try {
                 const res = await fetch(`/api/${userId}/delete_stock/${ticker}`, { method: 'DELETE' });
                 if (res.ok) { loadDashboard(); loadGraph(); if(!document.getElementById('content-history').classList.contains('hidden')) loadHistory(); }
@@ -371,7 +472,6 @@
             } catch (e) { container.innerHTML = '<p class="text-center text-orange">ニュースの取得に失敗しました</p>'; }
         }
 
-        // --- サジェスト関数 ---
         function setupSearch(inputId, suggestId, tickerId, nameId, typeSource, priceId = null) {
             const input = document.getElementById(inputId);
             const suggest = document.getElementById(suggestId);
