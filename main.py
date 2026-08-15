@@ -139,7 +139,7 @@ def get_usdjpy_rate():
 
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d-v11")
+    today_str = datetime.now().strftime("%Y-%m-%d")
     price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
     
     try:
@@ -335,8 +335,6 @@ def get_portfolio(user_id: str):
         fx_rate = 1.0 if is_jpy or is_fund else usdjpy_info["rate"]
         
         fetched_price, div_yield = get_asset_data(ticker, is_jpy, is_fund)
-        
-        # 🌟 最重要バグ修正：取得価格を最優先し、取得できない場合のみ手入力価格を使う
         current_price = fetched_price if fetched_price > 0 else manual_price
             
         if is_fund: current_value_jpy = (quantity * current_price) / 10000.0; book_value_jpy = (quantity * average_price) / 10000.0; category = "投資信託"
@@ -386,7 +384,6 @@ def get_transactions_by_category(user_id: str, category: str):
         cursor.execute("SELECT t.*, p.name FROM transactions t LEFT JOIN portfolio p ON t.ticker = p.ticker AND p.user_id = t.user_id WHERE t.user_id = %s ORDER BY t.trade_date DESC", (user_id,))
         rows = cursor.fetchall(); cursor.close(); conn.close()
         
-        # 🌟 履歴バグ修正：ALLの場合はすべて返すように条件を修正
         result = []
         for r in rows:
             item_cat = "FUND" if ((len(r["ticker"]) == 8 and r["ticker"].isalnum()) or "投信" in (r["name"] or r["ticker"]) or "ファンド" in (r["name"] or r["ticker"])) else ("JP" if r["ticker"].endswith(".T") else "US")
@@ -416,6 +413,7 @@ def delete_stock_api(user_id: str, ticker: str):
     except: pass
     return {"message": "Deleted"}
 
+# 🌟 グラフのバグ（ジグザグ現象）を修正：日付を完全にソートして返す
 @app.get("/api/{user_id}/history")
 def get_history(user_id: str):
     try:
@@ -435,6 +433,7 @@ def get_history(user_id: str):
                 if not math.isnan(row["Close"]): price_histories[ticker][idx.strftime("%Y-%m-%d")] = float(row["Close"])
         except: pass
 
+    # 日付の重複をなくし、過去から順番に並び替える（ここでバグが直ります！）
     all_dates = sorted(list(set([d for h in price_histories.values() for d in h.keys()] + [t["trade_date"] for t in trades] + [datetime.now().strftime("%Y-%m-%d")])))
     current_holdings = {t: 0.0 for t in price_histories.keys()}; last_known_price = {t: 0.0 for t in price_histories.keys()}
     trade_index = 0; result = []
@@ -456,7 +455,6 @@ def get_jp_news(user_id: str):
     try:
         conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute("SELECT name FROM portfolio WHERE user_id = %s AND ticker LIKE '%%.T' AND quantity > 0", (user_id,))
-        # 🌟 ニュースバグ修正：空の銘柄名を除外
         p_names = [r["name"] for r in cursor.fetchall() if r["name"]]
         cursor.execute("SELECT name FROM watchlist WHERE user_id = %s AND ticker LIKE '%%.T'", (user_id,))
         w_names = [r["name"] for r in cursor.fetchall() if r["name"]]
