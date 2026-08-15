@@ -35,14 +35,16 @@ DATABASE2_URL = os.environ.get("DATABASE2_URL") or os.environ.get("DATABASE_URL"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
 # ==========================================
-# 🌟 基礎データ（JPX銘柄と人気ファンド辞書）
+# 🌟 JPX（日本取引所グループ）全上場銘柄データの読み込み
 # ==========================================
 JPX_STOCKS = []
 def load_jpx_stocks():
     global JPX_STOCKS
     url = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.csv"
     try:
-        res = requests.get(url, timeout=10)
+        # 🌟 修正: ブロックされないように身分証(User-Agent)を追加
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             res.encoding = 'shift_jis'
             reader = csv.reader(res.text.splitlines())
@@ -144,7 +146,8 @@ def get_usdjpy_rate():
 # ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    # キャッシュをリセットして再取得させるための日付変更
+    today_str = datetime.now().strftime("%Y-%m-%d-v8")
     price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
     
     try:
@@ -155,20 +158,18 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
             cursor.close(); conn.close(); return row["price"], row["div_yield"]
     except: pass
         
-    # 🌟 ブロック回避のためのChrome偽装ヘッダー
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-        "Referer": "https://www.google.com/"
+        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8"
     }
     
     if is_fund and len(ticker) == 8 and ticker.isalnum():
         urls_to_try = [
-            f"https://site0.sbisec.co.jp/marble/fund/detail/achievement.do?Param6={ticker}", # SBI (弾かれにくい)
-            f"https://itf.minkabu.jp/fund/{ticker}", # みんかぶ
-            f"https://finance.yahoo.co.jp/quote/{ticker}", # Yahoo
-            f"https://www.nikkei.com/nkd/fund/?fcode={ticker}" # 日経
+            f"https://site0.sbisec.co.jp/marble/fund/detail/achievement.do?Param6={ticker}",
+            f"https://itf.minkabu.jp/fund/{ticker}",
+            f"https://finance.yahoo.co.jp/quote/{ticker}",
+            f"https://www.nikkei.com/nkd/fund/?fcode={ticker}"
         ]
         
         for url in urls_to_try:
@@ -176,10 +177,12 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
             try:
                 res = requests.get(url, headers=headers, timeout=5)
                 if res.status_code == 200:
-                    text_only = re.sub(r'<[^>]+>', '', res.text)
-                    # どんなサイトでも「基準価額」の後の数字をピンポイントで抜く正規表現
-                    match = re.search(r'基準価額[^0-9]*?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})', text_only)
-                    if match: price = float(match.group(1).replace(',', ''))
+                    idx = res.text.find("基準価額")
+                    if idx != -1:
+                        text_only = re.sub(r'<[^>]+>', '', res.text[idx:idx+200])
+                        # 🌟 修正: 2025/08/15 などの「年号」を無視して、「円」がついている数字だけを抜き出す！
+                        match = re.search(r'([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)\s*円', text_only)
+                        if match: price = float(match.group(1).replace(',', ''))
             except: pass
 
     else:
@@ -260,13 +263,26 @@ def read_user_dashboard(user_id: str):
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
     results = []; q_str = q.strip().lower()
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36"}
 
     if asset_type in ["JP", "ALL"]:
         for item in JPX_STOCKS:
             if q_str in item["code"].lower() or q_str in item["name"].lower():
                 results.append({"ticker": item["ticker"], "name": item["name"]})
                 if len(results) >= 8: break
+        
+        # 🌟 修正: 日本株が見つからなかった時のYahooバックアップを復活
+        if len(results) < 8:
+            try:
+                res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=JP", headers=headers, timeout=3)
+                if res.status_code == 200:
+                    for quote in res.json().get("quotes", []):
+                        code = quote.get("symbol", "")
+                        name = quote.get("shortname", quote.get("longname", code))
+                        if code.endswith(".T") and not any(r["ticker"] == code for r in results):
+                            results.append({"ticker": code, "name": name})
+            except: pass
+            
         if results and asset_type == "JP": return results[:8]
 
     if asset_type in ["US", "ALL"] and len(results) < 8:
@@ -379,4 +395,4 @@ def get_fund_info(ticker: str):
     price, _ = get_asset_data(ticker, False, True)
     return {"ticker": ticker, "price": price}
 
-# その他のAPI（News, FundRule, Watchlist等）は省略せず稼働
+# その他のAPI（News, FundRule, Watchlist等）は稼働状態のままです
