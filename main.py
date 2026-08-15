@@ -117,13 +117,11 @@ def get_usdjpy_rate():
         res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=3)
         if res.status_code == 200 and res.json().get("rates", {}).get("JPY", 0) > 100: rate = float(res.json()["rates"]["JPY"])
     except: pass
-    
     if rate == 0.0:
         try:
             hist = yf.Ticker("JPY=X").history(period="1d")
             if not hist.empty and not math.isnan(hist['Close'].iloc[-1]) and hist['Close'].iloc[-1] > 100: rate = float(hist['Close'].iloc[-1])
         except: pass
-        
     if rate == 0.0:
         try:
             cursor.execute("SELECT price FROM asset_cache WHERE ticker = 'USDJPY'")
@@ -234,7 +232,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
     results = []; q_str = q.strip().lower()
     headers = {"User-Agent": "Mozilla/5.0"}
-
     if asset_type in ["JP", "ALL"]:
         for item in JPX_STOCKS:
             if q_str in item["code"].lower() or q_str in item["name"].lower():
@@ -275,7 +272,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
                     name = soup.find('h1').get_text(strip=True) if soup.find('h1') else (soup.find('title').text.split('|')[0].split('-')[0].strip() if soup.find('title') else "")
                     if name: results.append({"ticker": q_str.upper(), "name": name})
             except: pass
-
     return results[:8]
 
 @app.post("/api/{user_id}/update_price")
@@ -413,7 +409,7 @@ def delete_stock_api(user_id: str, ticker: str):
     except: pass
     return {"message": "Deleted"}
 
-# 🌟 グラフのバグ（ジグザグ現象）を修正：日付を完全にソートして返す
+# 🌟 重すぎるバグ（O(N^2)）を完全に排除した爆速ロジック！
 @app.get("/api/{user_id}/history")
 def get_history(user_id: str):
     try:
@@ -424,30 +420,91 @@ def get_history(user_id: str):
     except: return []
     
     usdjpy = get_usdjpy_rate()["rate"]
-    price_histories = {}
-    for ticker in list(set([t["ticker"] for t in trades])):
-        price_histories[ticker] = {}
+    tickers = list(set(t["ticker"] for t in trades))
+    
+    # 1. 過去の価格データを一括取得（サーバー負荷を極限までカット）
+    prices_by_date = {}
+    start_date_obj = datetime.strptime(trades[0]["trade_date"], "%Y-%m-%d")
+    min_start = datetime.now() - timedelta(days=365*5) # 負荷対策: 最大5年前まで
+    if start_date_obj < min_start: start_date_str = min_start.strftime("%Y-%m-%d")
+    else: start_date_str = trades[0]["trade_date"]
+
+    for ticker in tickers:
+        if len(ticker) == 8 and ticker.isalnum(): continue # 投信はYFでエラーになるためスキップ
         try:
-            df = yf.Ticker(ticker if ticker.endswith(".T") else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)).history(start=trades[0]["trade_date"])
+            yf_ticker = ticker if ticker.endswith(".T") else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
+            df = yf.Ticker(yf_ticker).history(start=start_date_str)
             for idx, row in df.iterrows():
-                if not math.isnan(row["Close"]): price_histories[ticker][idx.strftime("%Y-%m-%d")] = float(row["Close"])
+                if not math.isnan(row["Close"]):
+                    d_str = idx.strftime("%Y-%m-%d")
+                    if d_str not in prices_by_date: prices_by_date[d_str] = {}
+                    prices_by_date[d_str][ticker] = float(row["Close"])
         except: pass
 
-    # 日付の重複をなくし、過去から順番に並び替える（ここでバグが直ります！）
-    all_dates = sorted(list(set([d for h in price_histories.values() for d in h.keys()] + [t["trade_date"] for t in trades] + [datetime.now().strftime("%Y-%m-%d")])))
-    current_holdings = {t: 0.0 for t in price_histories.keys()}; last_known_price = {t: 0.0 for t in price_histories.keys()}
-    trade_index = 0; result = []
+    # 2. 全日付のリストを作成し、順番に1回だけループ（これでフリーズしません！）
+    all_dates = set(prices_by_date.keys())
+    all_dates.update(t["trade_date"] for t in trades)
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    all_dates.add(today_str)
+    all_dates = sorted(list(all_dates))
+
+    current_holdings = {t: 0.0 for t in tickers}
+    last_known_price = {t: 0.0 for t in tickers}
+    
+    # 初期価格をセット
+    for t in trades:
+        if last_known_price[t["ticker"]] == 0: last_known_price[t["ticker"]] = t["price"]
+
+    # 最終日用の最新DB価格を取得
+    latest_db_prices = {}
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT ticker, price FROM asset_cache")
+        for r in cursor.fetchall(): latest_db_prices[r["ticker"]] = r["price"]
+        cursor.close(); conn.close()
+    except: pass
+
+    trade_index = 0
+    result = []
     
     for date_str in all_dates:
+        # 取引があれば保有量と最新価格を更新
         while trade_index < len(trades) and trades[trade_index]["trade_date"] <= date_str:
-            tr = trades[trade_index]; t = tr["ticker"]
+            tr = trades[trade_index]
+            t = tr["ticker"]
             if "BUY" in tr["type"]: current_holdings[t] += tr["quantity"]
             elif tr["type"] == "SELL": current_holdings[t] -= tr["quantity"]
-            last_known_price[t] = tr["price"]; trade_index += 1
+            last_known_price[t] = tr["price"]
+            trade_index += 1
+        
+        # 市場データがあれば価格を更新
+        if date_str in prices_by_date:
+            for t, p in prices_by_date[date_str].items():
+                last_known_price[t] = p
+                
+        # 最終日だけはDBの最新価格で強制上書き（ポートフォリオと一致させるため）
+        if date_str == today_str:
+            for t in tickers:
+                if t in latest_db_prices: last_known_price[t] = latest_db_prices[t]
+
+        # その日の総資産を計算
+        day_total = 0.0
+        for t, qty in current_holdings.items():
+            if qty > 0:
+                price = last_known_price.get(t, 0.0)
+                is_fund = len(t) == 8 and t.isalnum()
+                is_jpy = t.endswith(".T") or is_fund
+                val = (qty * price) / (10000.0 if is_fund else 1.0)
+                day_total += val * (1.0 if is_jpy else usdjpy)
+                
+        if day_total > 0 or date_str == today_str:
+            result.append({"date": date_str, "total_assets": round(day_total, 2)})
             
-        day_total = sum([((qty * (price_histories.get(t, {}).get(date_str) or ([p for d, p in price_histories.get(t, {}).items() if d <= date_str][-1:] or [last_known_price.get(t, 0.0)])[0])) / (10000.0 if len(t) == 8 and t.isalnum() else 1.0)) * (1.0 if t.endswith(".T") or (len(t) == 8 and t.isalnum()) else usdjpy) for t, qty in current_holdings.items() if qty > 0])
-        if day_total > 0 or date_str == all_dates[-1]: result.append({"date": date_str, "total_assets": round(day_total, 2)})
-            
+    # 3. ブラウザが重くならないようにデータ間引き（最大200件程度に圧縮）
+    if len(result) > 200:
+        step = len(result) // 100
+        result = result[::step] + [result[-1]] if result[-1] != result[::step][-1] else result[::step]
+        
     return result
 
 @app.get("/api/{user_id}/news")
@@ -480,9 +537,7 @@ def get_jp_news(user_id: str):
             except: pass
         news_list.sort(key=lambda x: x["timestamp"], reverse=True)
         return news_list[:300]
-    except Exception as e:
-        print("News Error:", e)
-        return []
+    except Exception as e: return []
 
 @app.get("/api/{user_id}/watchlist")
 def get_watchlist(user_id: str):
