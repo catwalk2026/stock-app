@@ -35,7 +35,7 @@ DATABASE2_URL = os.environ.get("DATABASE2_URL") or os.environ.get("DATABASE_URL"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
 # ==========================================
-# 🌟 JPX（日本取引所グループ）全上場銘柄データの読み込み
+# 🌟 基礎データ（JPX銘柄と人気ファンド辞書）
 # ==========================================
 JPX_STOCKS = []
 def load_jpx_stocks():
@@ -141,11 +141,11 @@ def get_usdjpy_rate():
     return {"rate": rate, "time": fetch_time}
 
 # ==========================================
-# 🌟 ステルス偽装＆最強価格スクレイピングロジック (絶対間違えない版)
+# 🌟 ステルス偽装＆最強価格スクレイピングロジック
 # ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d-v9") # キャッシュリセット
+    today_str = datetime.now().strftime("%Y-%m-%d-v10") # キャッシュリセット
     price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
     
     try:
@@ -158,38 +158,28 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
         
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8"
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
     }
     
     if is_fund and len(ticker) == 8 and ticker.isalnum():
-        # 1. 楽天証券から絶対間違えずに引っこ抜く (一番確実)
-        try:
-            res = requests.get(f"https://www.rakuten-sec.co.jp/web/fund/detail/?ID=JP90C000{ticker}", headers=headers, timeout=5)
-            if res.status_code == 200:
-                soup = BeautifulSoup(res.text, 'html.parser')
-                price_span = soup.find('span', class_='fsize-3x')
-                if price_span: price = float(price_span.text.replace(',', ''))
-        except: pass
-
-        # 2. みんかぶ (クラス名指定で年号を回避)
-        if price == 0.0:
+        urls_to_try = [
+            f"https://itf.minkabu.jp/fund/{ticker}",
+            f"https://finance.yahoo.co.jp/quote/{ticker}",
+            f"https://www.nikkei.com/nkd/fund/?fcode={ticker}"
+        ]
+        
+        for url in urls_to_try:
+            if price > 0.0: break
             try:
-                res = requests.get(f"https://itf.minkabu.jp/fund/{ticker}", headers=headers, timeout=5)
+                res = requests.get(url, headers=headers, timeout=5)
                 if res.status_code == 200:
-                    soup = BeautifulSoup(res.text, 'html.parser')
-                    price_div = soup.find('div', class_='stock_price')
-                    if price_div: price = float(price_div.text.replace(',', '').replace('円', '').strip())
-            except: pass
-            
-        # 3. Yahoo (予備)
-        if price == 0.0:
-            try:
-                res = requests.get(f"https://finance.yahoo.co.jp/quote/{ticker}", headers=headers, timeout=5)
-                if res.status_code == 200:
-                    soup = BeautifulSoup(res.text, 'html.parser')
-                    price_span = soup.find('span', class_='_3rXWJKZF')
-                    if price_span: price = float(price_span.text.replace(',', ''))
+                    text_only = re.sub(r'<[^>]+>', '', res.text)
+                    idx = text_only.find("基準価額")
+                    if idx != -1:
+                        snippet = text_only[idx:idx+150]
+                        # 🌟 究極の修正：数字の中に必ずカンマ（,）が含まれるものだけを抽出。2025などは100%無視されます。
+                        match = re.search(r'([1-9][0-9]{0,2}(?:,[0-9]{3})+)', snippet)
+                        if match: price = float(match.group(1).replace(',', ''))
             except: pass
 
     else:
@@ -270,14 +260,13 @@ def read_user_dashboard(user_id: str):
 def search_stock(q: str, asset_type: str = "ALL"):
     if not q: return []
     results = []; q_str = q.strip().lower()
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0"}
 
     if asset_type in ["JP", "ALL"]:
         for item in JPX_STOCKS:
             if q_str in item["code"].lower() or q_str in item["name"].lower():
                 results.append({"ticker": item["ticker"], "name": item["name"]})
                 if len(results) >= 8: break
-        
         if len(results) < 8:
             try:
                 res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=JP", headers=headers, timeout=3)
@@ -288,7 +277,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
                         if code.endswith(".T") and not any(r["ticker"] == code for r in results):
                             results.append({"ticker": code, "name": name})
             except: pass
-            
         if results and asset_type == "JP": return results[:8]
 
     if asset_type in ["US", "ALL"] and len(results) < 8:
@@ -502,24 +490,3 @@ def get_watchlist(user_id: str):
             r["current_price"] = price; r["currency"] = "¥" if r["ticker"].endswith(".T") or (len(r["ticker"])==4 and r["ticker"].isalnum()) else "$"
         return rows
     except: return []
-
-@app.post("/api/{user_id}/watchlist")
-def add_watchlist(user_id: str, item: WatchlistCreate):
-    try:
-        ticker = item.ticker.strip()
-        if len(ticker) == 4 and ticker.isalnum(): ticker = f"{ticker}.T" if not ticker.endswith(".T") else ticker
-        else: ticker = ticker.upper()
-        conn = get_db_connection(); cursor = conn.cursor()
-        cursor.execute('INSERT INTO watchlist (user_id, ticker, name, added_date) VALUES (%s, %s, %s, %s) ON CONFLICT (user_id, ticker) DO NOTHING', (user_id, ticker, item.name, datetime.now().strftime("%Y-%m-%d")))
-        cursor.close(); conn.close()
-    except: pass
-    return {"message": "Success"}
-
-@app.delete("/api/{user_id}/watchlist/{ticker}")
-def delete_watchlist(user_id: str, ticker: str):
-    try:
-        conn = get_db_connection(); cursor = conn.cursor()
-        cursor.execute("DELETE FROM watchlist WHERE user_id = %s AND ticker = %s", (user_id, ticker))
-        cursor.close(); conn.close()
-    except: pass
-    return {"message": "Success"}
