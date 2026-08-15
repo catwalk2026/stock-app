@@ -9,7 +9,6 @@
     <style>
         .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; font-weight: bold; }
         .tab-inactive { color: #6b7280; }
-        .suggest-item:hover { background-color: #f3f4f6; cursor: pointer; }
         [v-cloak] { display: none; }
     </style>
 </head>
@@ -25,7 +24,6 @@
 
         <!-- サマリーカード群 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <!-- 総資産カード -->
             <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
                 <p class="text-sm text-gray-500 font-bold mb-1">💰 総資産額</p>
                 <div class="flex items-baseline gap-2">
@@ -37,7 +35,7 @@
                 <p class="text-xs text-gray-400 mt-2 text-right">USD/JPY: <span id="usdjpy-rate">--</span></p>
             </div>
 
-            <!-- 🌟 追加：配当金モチベーションカード -->
+            <!-- 配当金モチベーションカード -->
             <div class="bg-gradient-to-br from-yellow-50 to-orange-50 p-5 rounded-xl shadow-sm border border-yellow-200">
                 <p class="text-sm text-yellow-700 font-bold mb-1"><i class="fas fa-seedling mr-1"></i> 予想される不労所得（年間配当）</p>
                 <div class="flex items-baseline gap-2">
@@ -51,14 +49,111 @@
             </div>
         </div>
 
-        <!-- アクションボタン -->
-        <div class="flex flex-wrap gap-3 mb-6">
-            <button onclick="openTradeModal('JP')" class="flex-1 bg-blue-600 text-white font-bold py-3 px-4 rounded-lg shadow hover:bg-blue-700 transition">
-                <i class="fas fa-plus-circle mr-1"></i> 取引の追加
-            </button>
-            <button onclick="openFundRuleModal()" class="flex-1 bg-teal-500 text-white font-bold py-3 px-4 rounded-lg shadow hover:bg-teal-600 transition">
-                <i class="fas fa-sync-alt mr-1"></i> 投信・自動積立
-            </button>
+        <!-- 🌟 UI復旧：取引の追加セクション -->
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
+            <h3 class="text-lg font-extrabold text-gray-800 mb-4">取引の追加</h3>
+            <div class="mb-4">
+                <label class="block text-sm font-bold text-gray-700 mb-1">資産タイプ</label>
+                <select id="trade-asset-type" class="w-full border border-gray-300 rounded p-2 bg-gray-50" onchange="resetSearch('trade')">
+                    <option value="JP">日本株</option>
+                    <option value="US">米国株</option>
+                </select>
+            </div>
+            
+            <div class="bg-[#fcfbf6] p-4 rounded-lg border border-[#f0ece1] mb-4 relative">
+                <label class="block text-sm font-bold text-gray-700 mb-2"><i class="fas fa-search"></i> 銘柄検索（自動入力）</label>
+                <input type="text" id="trade-search" class="w-full border border-gray-300 rounded p-2" placeholder="例: 7203 または トヨタ" autocomplete="off">
+                <div id="trade-suggest" class="absolute z-10 w-full bg-white border border-gray-200 shadow-lg rounded-b hidden max-h-48 overflow-y-auto"></div>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">銘柄コード</label>
+                    <input type="text" id="trade-ticker" class="w-full border border-gray-300 rounded p-2 bg-gray-50" readonly>
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-bold text-gray-700 mb-1">銘柄名</label>
+                    <input type="text" id="trade-name" class="w-full border border-gray-300 rounded p-2 bg-gray-50" readonly>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">取引種別</label>
+                    <select id="trade-type" class="w-full border border-gray-300 rounded p-2">
+                        <option value="BUY">買付</option>
+                        <option value="SELL">売却</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">取引日</label>
+                    <input type="date" id="trade-date" class="w-full border border-gray-300 rounded p-2">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">株数指定 (株)</label>
+                    <input type="number" step="0.01" id="trade-qty" class="w-full border border-gray-300 rounded p-2">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">単価 (円)</label>
+                    <input type="number" step="0.01" id="trade-price" class="w-full border border-gray-300 rounded p-2">
+                </div>
+                <div class="md:col-span-1">
+                    <button onclick="submitTrade('trade')" class="w-full bg-[#52c2d0] text-white font-bold py-2 rounded hover:bg-[#3eaab7] transition shadow">保存する</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 🌟 UI復旧：自動積立ルール設定セクション -->
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
+            <h3 class="text-lg font-extrabold text-gray-800 mb-4">自動積立ルール設定</h3>
+            <div class="bg-[#fcfbf6] p-4 rounded-lg border border-[#f0ece1] mb-4 relative">
+                <label class="block text-sm font-bold text-gray-700 mb-2"><i class="fas fa-search"></i> ファンド検索（自動入力）</label>
+                <input type="text" id="fund-search" class="w-full border border-gray-300 rounded p-2" placeholder="例: オルカン または eMAXIS" autocomplete="off">
+                <div id="fund-suggest" class="absolute z-10 w-full bg-white border border-gray-200 shadow-lg rounded-b hidden max-h-48 overflow-y-auto"></div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">投信コード</label>
+                    <input type="text" id="fund-ticker" class="w-full border border-gray-300 rounded p-2 bg-gray-50" readonly>
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-bold text-gray-700 mb-1">ファンド名</label>
+                    <input type="text" id="fund-name" class="w-full border border-gray-300 rounded p-2 bg-gray-50" readonly>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">積立コース</label>
+                    <select id="fund-freq" class="w-full border border-gray-300 rounded p-2">
+                        <option value="MONTHLY">毎月コース</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">積立日 (毎月)</label>
+                    <select id="fund-day" class="w-full border border-gray-300 rounded p-2">
+                        <option value="1">1日</option>
+                        <option value="15">15日</option>
+                        <option value="25">25日</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">積立金額 (円)</label>
+                    <input type="number" id="fund-amount" class="w-full border border-gray-300 rounded p-2" value="30000">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">基準価額 (1万口) <input type="checkbox" id="fund-manual" onchange="toggleFundPrice()"> 手入力</label>
+                    <input type="number" step="0.01" id="fund-price" class="w-full border border-gray-300 rounded p-2 bg-gray-100" readonly placeholder="例: 28459">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-gray-700 mb-1">開始日</label>
+                    <input type="date" id="fund-start" class="w-full border border-gray-300 rounded p-2">
+                </div>
+                <div class="md:col-span-2">
+                    <button onclick="submitFund()" class="w-full bg-[#52c2d0] text-white font-bold py-2 rounded hover:bg-[#3eaab7] transition shadow">積立を開始する</button>
+                </div>
+            </div>
         </div>
 
         <!-- タブナビゲーション -->
@@ -68,94 +163,22 @@
             <button onclick="switchTab('news')" id="tab-news" class="py-2 px-4 tab-inactive">関連ニュース</button>
         </div>
 
-        <!-- タブコンテンツ：保有資産 -->
         <div id="content-portfolio">
             <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                <ul id="portfolio-list" class="divide-y divide-gray-100">
-                    <li class="p-4 text-center text-gray-500">読み込み中...</li>
-                </ul>
+                <ul id="portfolio-list" class="divide-y divide-gray-100"><li class="p-4 text-center text-gray-500">読み込み中...</li></ul>
             </div>
         </div>
 
-        <!-- タブコンテンツ：取引履歴 -->
         <div id="content-history" class="hidden">
             <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                <ul id="history-list" class="divide-y divide-gray-100">
-                    <li class="p-4 text-center text-gray-500">履歴がありません</li>
-                </ul>
+                <ul id="history-list" class="divide-y divide-gray-100"><li class="p-4 text-center text-gray-500">履歴がありません</li></ul>
             </div>
         </div>
 
-        <!-- タブコンテンツ：ニュース -->
         <div id="content-news" class="hidden">
             <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden p-4" id="news-container">
                 <p class="text-center text-gray-500">ニュースを読み込んでいます...</p>
             </div>
-        </div>
-    </div>
-
-    <!-- モーダル：取引の追加 -->
-    <div id="trade-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50 px-4">
-        <div class="bg-white rounded-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-xl font-bold">取引の追加</h2>
-                <button onclick="closeModals()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
-            </div>
-            
-            <div class="mb-4">
-                <label class="block text-sm font-bold text-gray-700 mb-1">資産タイプ</label>
-                <select id="trade-asset-type" class="w-full border rounded-lg p-2 bg-gray-50" onchange="resetSearch()">
-                    <option value="JP">日本株</option>
-                    <option value="US">米国株</option>
-                    <option value="FUND">投資信託</option>
-                </select>
-            </div>
-
-            <div class="mb-4 relative">
-                <label class="block text-sm font-bold text-gray-700 mb-1"><i class="fas fa-search"></i> 銘柄検索（自動入力）</label>
-                <input type="text" id="trade-search" class="w-full border rounded-lg p-2" placeholder="例: 7203 または トヨタ" autocomplete="off">
-                <div id="suggest-box" class="absolute z-10 w-full bg-white border border-gray-200 shadow-lg rounded-b-lg hidden max-h-48 overflow-y-auto"></div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-3 mb-4">
-                <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">ティッカー/コード</label>
-                    <input type="text" id="trade-ticker" class="w-full border rounded-lg p-2 bg-gray-100" readonly>
-                </div>
-                <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">銘柄名</label>
-                    <input type="text" id="trade-name" class="w-full border rounded-lg p-2 bg-gray-100" readonly>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-3 mb-4">
-                <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">取引種別</label>
-                    <select id="trade-type" class="w-full border rounded-lg p-2">
-                        <option value="BUY">買付</option>
-                        <option value="SELL">売却</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">取引日</label>
-                    <input type="date" id="trade-date" class="w-full border rounded-lg p-2">
-                </div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-3 mb-6">
-                <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">数量（株/口）</label>
-                    <input type="number" step="0.01" id="trade-quantity" class="w-full border rounded-lg p-2">
-                </div>
-                <div>
-                    <label class="block text-sm font-bold text-gray-700 mb-1">単価/基準価額</label>
-                    <input type="number" step="0.01" id="trade-price" class="w-full border rounded-lg p-2">
-                </div>
-            </div>
-
-            <button onclick="submitTrade()" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg shadow hover:bg-blue-700 transition">
-                保存する
-            </button>
         </div>
     </div>
 
@@ -164,16 +187,14 @@
         const userId = window.location.pathname.replace('/', '') || 'GUEST';
         document.getElementById('display-user-id').textContent = userId;
         document.getElementById('trade-date').valueAsDate = new Date();
+        document.getElementById('fund-start').valueAsDate = new Date();
 
-        let searchTimeout = null;
-
-        // --- 初期ロード ---
         window.onload = () => {
             loadDashboard();
-            setupSearch();
+            setupSearch('trade-search', 'trade-suggest', 'trade-ticker', 'trade-name', 'trade-asset-type');
+            setupSearch('fund-search', 'fund-suggest', 'fund-ticker', 'fund-name', 'FUND', 'fund-price');
         };
 
-        // --- タブ切り替え ---
         function switchTab(tabName) {
             ['portfolio', 'history', 'news'].forEach(t => {
                 document.getElementById(`content-${t}`).classList.add('hidden');
@@ -186,23 +207,17 @@
             if (tabName === 'news') loadNews();
         }
 
-        // --- ダッシュボード（保有資産）読み込み ---
         async function loadDashboard() {
             try {
                 const res = await fetch(`/api/${userId}/portfolio`);
                 const data = await res.json();
-
-                // 資産額の表示
                 document.getElementById('total-assets').textContent = `¥${Math.floor(data.total_assets).toLocaleString()}`;
-                
                 const totalProfit = data.total_assets - data.total_book;
                 const profitEl = document.getElementById('total-profit');
                 profitEl.textContent = `${totalProfit >= 0 ? '+' : ''}¥${Math.floor(totalProfit).toLocaleString()}`;
                 profitEl.className = totalProfit >= 0 ? 'text-green-600' : 'text-red-600';
-                
                 document.getElementById('usdjpy-rate').textContent = `${data.usdjpy_rate}円 (${data.usdjpy_time})`;
 
-                // 🌟 配当金の計算と表示
                 const yearlyDiv = data.est_dividend_jpy || 0;
                 const monthlyDiv = Math.floor(yearlyDiv / 12);
                 document.getElementById('yearly-dividend').textContent = `¥${Math.floor(yearlyDiv).toLocaleString()}`;
@@ -218,11 +233,10 @@
                 else if (monthlyDiv > 0) levelText = "銀行の利息より圧倒的にお得！チロルチョコが買えるレベル🍫";
                 document.getElementById('dividend-level-text').textContent = levelText;
 
-                // 保有リストの描画
                 const listEl = document.getElementById('portfolio-list');
                 listEl.innerHTML = '';
                 if (data.portfolio.length === 0) {
-                    listEl.innerHTML = '<li class="p-4 text-center text-gray-500">保有資産がありません。<br>「取引の追加」から登録してください。</li>';
+                    listEl.innerHTML = '<li class="p-4 text-center text-gray-500">保有資産がありません。</li>';
                     return;
                 }
 
@@ -234,17 +248,11 @@
                     const priceUnit = isFund ? '円 (1万口)' : (item.currency === 'USD' ? '$' : '円');
 
                     listEl.innerHTML += `
-                        <li class="p-4 hover:bg-gray-50 transition flex justify-between items-center">
+                        <li class="p-4 hover:bg-gray-50 flex justify-between items-center">
                             <div>
                                 <div class="font-bold text-gray-800">${item.name}</div>
-                                <div class="text-xs text-gray-500 mt-1">
-                                    <span class="bg-gray-100 px-2 py-0.5 rounded mr-1">${item.category}</span>
-                                    ${item.ticker}
-                                </div>
-                                <div class="text-xs text-gray-500 mt-1">
-                                    保有: ${item.quantity.toLocaleString()} ${isFund ? '口' : '株'} | 
-                                    現在値: ${item.current_price.toLocaleString()} ${priceUnit}
-                                </div>
+                                <div class="text-xs text-gray-500 mt-1"><span class="bg-gray-100 px-2 py-0.5 rounded mr-1">${item.category}</span>${item.ticker}</div>
+                                <div class="text-xs text-gray-500 mt-1">保有: ${item.quantity.toLocaleString()} ${isFund ? '口' : '株'} | 現在値: ${item.current_price.toLocaleString()} ${priceUnit}</div>
                             </div>
                             <div class="text-right">
                                 <div class="font-bold text-gray-900">¥${Math.floor(item.current_value_jpy).toLocaleString()}</div>
@@ -254,26 +262,16 @@
                         </li>
                     `;
                 });
-            } catch (e) {
-                console.error(e);
-            }
+            } catch (e) { console.error(e); }
         }
 
-        // --- 🌟 取引履歴の読み込み（削除ボタン完全対応） ---
         async function loadHistory() {
             const listEl = document.getElementById('history-list');
             listEl.innerHTML = '<li class="p-4 text-center text-gray-500">読み込み中...</li>';
-            
             try {
-                // ALLカテゴリーで履歴を一括取得
                 const res = await fetch(`/api/${userId}/transactions/ALL`);
                 const trades = await res.json();
-
-                if (trades.length === 0) {
-                    listEl.innerHTML = '<li class="p-4 text-center text-gray-500">取引履歴がありません</li>';
-                    return;
-                }
-
+                if (trades.length === 0) { listEl.innerHTML = '<li class="p-4 text-center text-gray-500">取引履歴がありません</li>'; return; }
                 listEl.innerHTML = '';
                 trades.forEach(t => {
                     const typeLabel = t.type.includes('BUY') ? '<span class="text-red-500 font-bold">買付</span>' : '<span class="text-blue-500 font-bold">売却</span>';
@@ -284,166 +282,110 @@
                                 <div class="text-xs text-gray-500 mt-1">${t.trade_date} | ${typeLabel}</div>
                                 <div class="text-xs text-gray-500 mt-1">数量: ${t.quantity} | 単価: ${t.price.toLocaleString()}</div>
                             </div>
-                            <button onclick="deleteTransaction(${t.id})" class="bg-gray-100 hover:bg-red-100 text-gray-500 hover:text-red-600 px-3 py-1 rounded transition">
-                                <i class="fas fa-trash-alt"></i> 削除
-                            </button>
+                            <button onclick="deleteTransaction(${t.id})" class="bg-gray-100 hover:bg-red-100 text-gray-500 hover:text-red-600 px-3 py-1 rounded transition"><i class="fas fa-trash-alt"></i> 削除</button>
                         </li>
                     `;
                 });
-            } catch (e) {
-                console.error(e);
-                listEl.innerHTML = '<li class="p-4 text-center text-red-500">読み込みエラー</li>';
-            }
+            } catch (e) { listEl.innerHTML = '<li class="p-4 text-center text-red-500">読み込みエラー</li>'; }
         }
 
-        // --- 🌟 履歴削除APIを叩く関数 ---
         async function deleteTransaction(txId) {
-            if (!confirm("この取引履歴を削除しますか？\n（※残りの保有数量や平均取得単価も再計算されます）")) return;
+            if (!confirm("この取引履歴を削除しますか？\n（残りの保有数量や取得単価も再計算されます）")) return;
             try {
                 const res = await fetch(`/api/${userId}/transaction/${txId}`, { method: 'DELETE' });
-                if (res.ok) {
-                    loadHistory(); // 履歴タブをリロード
-                    loadDashboard(); // 保有資産タブもリロード
-                } else {
-                    alert("削除に失敗しました。");
-                }
-            } catch (e) {
-                console.error(e);
-                alert("通信エラーが発生しました。");
-            }
+                if (res.ok) { loadHistory(); loadDashboard(); }
+            } catch (e) { alert("通信エラーが発生しました。"); }
         }
 
-        // --- 銘柄の完全削除 ---
         async function deleteStock(ticker) {
-            if (!confirm(`【${ticker}】のデータをすべて削除しますか？\n（※取引履歴もすべて消去されます）`)) return;
+            if (!confirm(`【${ticker}】のデータをすべて削除しますか？\n（取引履歴もすべて消去されます）`)) return;
             try {
                 const res = await fetch(`/api/${userId}/delete_stock/${ticker}`, { method: 'DELETE' });
                 if (res.ok) loadDashboard();
-            } catch (e) {
-                console.error(e);
-            }
+            } catch (e) { console.error(e); }
         }
 
-        // --- ニュースの読み込み ---
         async function loadNews() {
             const container = document.getElementById('news-container');
             container.innerHTML = '<p class="text-center text-gray-500">読み込み中...</p>';
             try {
                 const res = await fetch(`/api/${userId}/news`);
                 const news = await res.json();
-                if (news.length === 0) {
-                    container.innerHTML = '<p class="text-center text-gray-500">関連ニュースがありません</p>';
-                    return;
-                }
+                if (news.length === 0) { container.innerHTML = '<p class="text-center text-gray-500">関連ニュースがありません</p>'; return; }
                 container.innerHTML = '<ul class="space-y-4"></ul>';
                 const ul = container.querySelector('ul');
                 news.forEach(n => {
-                    ul.innerHTML += `
-                        <li class="border-b pb-3 last:border-0">
-                            <span class="text-xs font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded">${n.stock_name}</span>
-                            <span class="text-xs text-gray-400 ml-2">${n.pub_time}</span>
-                            <a href="${n.link}" target="_blank" class="block mt-1 text-sm font-bold text-blue-600 hover:underline">${n.title}</a>
-                        </li>
-                    `;
+                    ul.innerHTML += `<li class="border-b pb-3 last:border-0"><span class="text-xs font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded">${n.stock_name}</span><span class="text-xs text-gray-400 ml-2">${n.pub_time}</span><a href="${n.link}" target="_blank" class="block mt-1 text-sm font-bold text-blue-600 hover:underline">${n.title}</a></li>`;
                 });
-            } catch (e) {
-                container.innerHTML = '<p class="text-center text-red-500">ニュースの取得に失敗しました</p>';
-            }
+            } catch (e) { container.innerHTML = '<p class="text-center text-red-500">ニュースの取得に失敗しました</p>'; }
         }
 
-        // --- 🌟 サジェスト検索（自動入力）の実装 ---
-        function setupSearch() {
-            const input = document.getElementById('trade-search');
-            const suggestBox = document.getElementById('suggest-box');
+        // --- 汎用サジェスト関数 ---
+        function setupSearch(inputId, suggestId, tickerId, nameId, typeSource, priceId = null) {
+            const input = document.getElementById(inputId);
+            const suggest = document.getElementById(suggestId);
+            let timeout = null;
 
             input.addEventListener('input', () => {
-                clearTimeout(searchTimeout);
+                clearTimeout(timeout);
                 const query = input.value.trim();
-                const assetType = document.getElementById('trade-asset-type').value;
+                const assetType = typeSource === 'FUND' ? 'FUND' : document.getElementById(typeSource).value;
+                if (query.length < 1) { suggest.classList.add('hidden'); return; }
 
-                if (query.length < 1) {
-                    suggestBox.classList.add('hidden');
-                    return;
-                }
-
-                searchTimeout = setTimeout(async () => {
-                    try {
-                        const res = await fetch(`/api/search_stock?q=${encodeURIComponent(query)}&asset_type=${assetType}`);
-                        const results = await res.json();
-                        
-                        suggestBox.innerHTML = '';
-                        if (results.length > 0) {
-                            results.forEach(item => {
-                                const div = document.createElement('div');
-                                div.className = 'suggest-item p-3 border-b text-sm text-gray-800';
-                                div.innerHTML = `<span class="font-bold mr-2 text-gray-500">${item.ticker}</span>${item.name}`;
-                                div.onclick = () => {
-                                    document.getElementById('trade-ticker').value = item.ticker;
-                                    document.getElementById('trade-name').value = item.name;
-                                    input.value = item.name;
-                                    suggestBox.classList.add('hidden');
-                                    
-                                    // 投信の場合は価格を自動取得してみる
-                                    if(assetType === 'FUND') fetchFundPrice(item.ticker);
-                                };
-                                suggestBox.appendChild(div);
-                            });
-                            suggestBox.classList.remove('hidden');
-                        } else {
-                            suggestBox.innerHTML = '<div class="p-3 text-sm text-gray-500">見つかりませんでした</div>';
-                            suggestBox.classList.remove('hidden');
-                        }
-                    } catch (e) {
-                        console.error(e);
+                timeout = setTimeout(async () => {
+                    const res = await fetch(`/api/search_stock?q=${encodeURIComponent(query)}&asset_type=${assetType}`);
+                    const results = await res.json();
+                    suggest.innerHTML = '';
+                    if (results.length > 0) {
+                        results.forEach(item => {
+                            const div = document.createElement('div');
+                            div.className = 'p-3 border-b text-sm text-gray-800 hover:bg-gray-100 cursor-pointer';
+                            div.innerHTML = `<span class="font-bold text-gray-500 mr-2">${item.ticker}</span>${item.name}`;
+                            div.onclick = () => {
+                                document.getElementById(tickerId).value = item.ticker;
+                                document.getElementById(nameId).value = item.name;
+                                input.value = item.name;
+                                suggest.classList.add('hidden');
+                                if(priceId) fetchFundPrice(item.ticker, priceId);
+                            };
+                            suggest.appendChild(div);
+                        });
+                    } else {
+                        suggest.innerHTML = '<div class="p-3 text-sm text-gray-500">見つかりませんでした</div>';
                     }
-                }, 400); // 400ミリ秒待ってから検索
+                    suggest.classList.remove('hidden');
+                }, 400);
             });
-
-            // 外側をクリックしたらサジェストを閉じる
             document.addEventListener('click', (e) => {
-                if (e.target !== input && e.target !== suggestBox) {
-                    suggestBox.classList.add('hidden');
-                }
+                if (e.target !== input && e.target !== suggest) suggest.classList.add('hidden');
             });
         }
 
-        async function fetchFundPrice(ticker) {
-            document.getElementById('trade-price').placeholder = "基準価額を取得中...";
+        async function fetchFundPrice(ticker, priceId) {
+            const el = document.getElementById(priceId);
+            el.placeholder = "取得中...";
             try {
                 const res = await fetch(`/api/fund_info/${ticker}`);
                 const data = await res.json();
-                if(data.price > 0) {
-                    document.getElementById('trade-price').value = data.price;
-                } else {
-                    document.getElementById('trade-price').placeholder = "手入力してください";
-                }
-            } catch (e) {
-                document.getElementById('trade-price').placeholder = "取得失敗";
-            }
+                if(data.price > 0) el.value = data.price;
+                else el.placeholder = "取得失敗・手入力してください";
+            } catch (e) { el.placeholder = "取得失敗"; }
         }
 
-        function resetSearch() {
-            document.getElementById('trade-search').value = '';
-            document.getElementById('trade-ticker').value = '';
-            document.getElementById('trade-name').value = '';
-            document.getElementById('trade-price').value = '';
+        function toggleFundPrice() {
+            const el = document.getElementById('fund-price');
+            const isManual = document.getElementById('fund-manual').checked;
+            el.readOnly = !isManual;
+            el.className = isManual ? "w-full border border-gray-300 rounded p-2 bg-white" : "w-full border border-gray-300 rounded p-2 bg-gray-100";
         }
 
-        // --- モーダル制御 ---
-        function openTradeModal(type) {
-            document.getElementById('trade-asset-type').value = type;
-            resetSearch();
-            document.getElementById('trade-modal').classList.remove('hidden');
-        }
-        function openFundRuleModal() {
-            // 投資信託用の入力としてモーダルを開く
-            openTradeModal('FUND');
-        }
-        function closeModals() {
-            document.getElementById('trade-modal').classList.add('hidden');
+        function resetSearch(prefix) {
+            document.getElementById(`${prefix}-search`).value = '';
+            document.getElementById(`${prefix}-ticker`).value = '';
+            document.getElementById(`${prefix}-name`).value = '';
+            if(document.getElementById(`${prefix}-price`)) document.getElementById(`${prefix}-price`).value = '';
         }
 
-        // --- 取引の保存 ---
         async function submitTrade() {
             const data = {
                 asset_type: document.getElementById('trade-asset-type').value,
@@ -451,34 +393,37 @@
                 name: document.getElementById('trade-name').value,
                 trade_type: document.getElementById('trade-type').value,
                 trade_date: document.getElementById('trade-date').value,
-                quantity: parseFloat(document.getElementById('trade-quantity').value),
+                quantity: parseFloat(document.getElementById('trade-qty').value),
                 price: parseFloat(document.getElementById('trade-price').value)
             };
+            if (!data.ticker || !data.quantity || !data.price) { alert("必須項目が入力されていません！"); return; }
+            await postData('/api/' + userId + '/trade', data);
+        }
 
-            if (!data.ticker || !data.quantity || !data.price) {
-                alert("必須項目が入力されていません！");
-                return;
-            }
+        async function submitFund() {
+            const data = {
+                ticker: document.getElementById('fund-ticker').value,
+                name: document.getElementById('fund-name').value,
+                frequency: document.getElementById('fund-freq').value,
+                monthly_day: parseInt(document.getElementById('fund-day').value),
+                amount: parseFloat(document.getElementById('fund-amount').value),
+                avg_price: parseFloat(document.getElementById('fund-price').value),
+                start_date: document.getElementById('fund-start').value
+            };
+            if (!data.ticker || !data.amount || !data.avg_price) { alert("必須項目が入力されていません！"); return; }
+            await postData('/api/' + userId + '/fund_rule', data);
+        }
 
+        async function postData(url, data) {
             try {
-                const res = await fetch(`/api/${userId}/trade`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(data)
-                });
+                const res = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
                 if (res.ok) {
-                    closeModals();
+                    resetSearch('trade'); resetSearch('fund');
                     loadDashboard();
-                    if(!document.getElementById('content-history').classList.contains('hidden')) {
-                        loadHistory();
-                    }
-                } else {
-                    alert("保存に失敗しました。");
-                }
-            } catch (e) {
-                console.error(e);
-                alert("通信エラーが発生しました。");
-            }
+                    if(!document.getElementById('content-history').classList.contains('hidden')) loadHistory();
+                    alert("保存しました！");
+                } else alert("保存に失敗しました。");
+            } catch (e) { alert("通信エラーが発生しました。"); }
         }
     </script>
 </body>
