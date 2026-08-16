@@ -43,7 +43,6 @@
 
     <!-- ダッシュボード全体 -->
     <div id="main-dashboard" class="max-w-4xl mx-auto px-4 py-6 hidden">
-        <!-- ヘッダー -->
         <header class="flex justify-between items-center mb-6">
             <h1 class="text-2xl font-extrabold text-main"><i class="fas fa-chart-pie text-turquoise mr-2"></i>My Portfolio</h1>
             <div class="flex items-center gap-3">
@@ -67,16 +66,26 @@
                 <p class="text-xs text-stone mt-2 text-right opacity-70">USD/JPY: <span id="usdjpy-rate">--</span></p>
             </div>
 
-            <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light relative overflow-hidden">
+            <!-- 🌟 パワーアップ：配当金プログレスバー追加 -->
+            <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light relative overflow-hidden flex flex-col justify-between">
                 <div class="absolute right-0 top-0 w-16 h-16 bg-[#F8F6ED] rounded-bl-full -z-10"></div>
-                <p class="text-sm text-stone font-bold mb-1"><i class="fas fa-seedling text-turquoise mr-1"></i> 予想される不労所得（年間配当）</p>
-                <div class="flex items-baseline gap-2">
-                    <span class="text-3xl font-extrabold text-[#C4BF4D]" id="yearly-dividend">¥0</span>
-                    <span class="text-sm text-stone font-bold">/ 年</span>
+                <div>
+                    <p class="text-sm text-stone font-bold mb-1"><i class="fas fa-seedling text-turquoise mr-1"></i> 予想される不労所得（年間配当）</p>
+                    <div class="flex items-baseline gap-2">
+                        <span class="text-3xl font-extrabold text-[#C4BF4D]" id="yearly-dividend">¥0</span>
+                        <span class="text-sm text-stone font-bold">/ 年</span>
+                    </div>
                 </div>
-                <div class="mt-3 p-2 bg-[#F8F6ED] rounded-lg">
-                    <p class="text-sm font-bold text-main">月のお小遣い: 約 <span id="monthly-dividend" class="text-lg text-[#C4BF4D]">0</span> 円</p>
-                    <p class="text-xs text-stone mt-1 font-medium" id="dividend-level-text">コツコツ投資して不労所得を育てましょう🌱</p>
+                <div class="mt-3 p-3 bg-[#F8F6ED] rounded-lg">
+                    <div class="flex justify-between items-baseline mb-1">
+                        <p class="text-sm font-bold text-main">月のお小遣い: <span id="monthly-dividend" class="text-lg text-[#C4BF4D]">0</span> 円</p>
+                        <span id="dividend-percent" class="text-xs font-bold text-stone">0%</span>
+                    </div>
+                    <!-- プログレスバー -->
+                    <div class="w-full bg-white rounded-full h-2.5 border border-light mb-2">
+                        <div id="dividend-progress" class="bg-[#C4BF4D] h-2.5 rounded-full transition-all duration-1000" style="width: 0%"></div>
+                    </div>
+                    <p class="text-xs text-stone font-medium" id="dividend-level-text">コツコツ投資して不労所得を育てましょう🌱</p>
                 </div>
             </div>
         </div>
@@ -86,7 +95,6 @@
             <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
                 <h3 class="text-sm font-bold text-stone">📈 資産推移</h3>
                 <div class="flex flex-wrap gap-2" id="chart-filters">
-                    <!-- 🌟 修正: 日次データで綺麗に波形が出る期間のみに絞る -->
                     <button onclick="filterChart('1M')" class="chart-filter-btn filter-inactive" id="filter-1M">1ヶ月</button>
                     <button onclick="filterChart('3M')" class="chart-filter-btn filter-inactive" id="filter-3M">3ヶ月</button>
                     <button onclick="filterChart('1Y')" class="chart-filter-btn filter-inactive" id="filter-1Y">1年</button>
@@ -213,26 +221,30 @@
             </div>
         </div>
 
-        <!-- タブナビゲーション -->
+        <!-- 🌟 タブナビゲーション（経済指標カレンダーを追加） -->
         <div class="flex border-b border-light mb-6 overflow-x-auto whitespace-nowrap">
             <button onclick="switchTab('portfolio')" id="tab-portfolio" class="py-2 px-4 tab-active">保有資産</button>
             <button onclick="switchTab('history')" id="tab-history" class="py-2 px-4 tab-inactive">取引履歴</button>
             <button onclick="switchTab('watchlist')" id="tab-watchlist" class="py-2 px-4 tab-inactive">気になるリスト</button>
             <button onclick="switchTab('news')" id="tab-news" class="py-2 px-4 tab-inactive">関連ニュース</button>
+            <button onclick="switchTab('calendar')" id="tab-calendar" class="py-2 px-4 tab-inactive text-mint"><i class="fas fa-calendar-alt mr-1"></i>経済指標</button>
         </div>
 
+        <!-- 保有資産 -->
         <div id="content-portfolio">
             <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
                 <ul id="portfolio-list" class="divide-y border-light"><li class="p-4 text-center text-stone">読み込み中...</li></ul>
             </div>
         </div>
 
+        <!-- 取引履歴 -->
         <div id="content-history" class="hidden">
             <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
                 <ul id="history-list" class="divide-y border-light"><li class="p-4 text-center text-stone">履歴がありません</li></ul>
             </div>
         </div>
 
+        <!-- 気になるリスト -->
         <div id="content-watchlist" class="hidden">
             <div class="bg-white-card p-6 rounded-xl shadow-sm border border-light mb-6">
                 <h3 class="text-lg font-extrabold text-main mb-4">気になる銘柄の追加</h3>
@@ -261,9 +273,23 @@
             </div>
         </div>
 
+        <!-- ニュース -->
         <div id="content-news" class="hidden">
             <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden p-4" id="news-container">
                 <p class="text-center text-stone">ニュースを読み込んでいます...</p>
+            </div>
+        </div>
+
+        <!-- 🌟 追加：経済指標カレンダー -->
+        <div id="content-calendar" class="hidden">
+            <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden p-6 text-center">
+                <h3 class="text-xl font-extrabold text-main mb-3"><i class="fas fa-calendar-alt text-mint mr-2"></i>世界の重要経済指標</h3>
+                <p class="text-sm text-stone mb-6">相場が大きく動く可能性があるイベントのスケジュールです。<br>投資のタイミングの参考にしましょう！</p>
+                
+                <a href="https://finance.yahoo.co.jp/fx/indicator" target="_blank" class="inline-block bg-mint text-white font-bold py-3 px-8 rounded-full shadow hover:opacity-80 transition">
+                    カレンダーを確認する <i class="fas fa-external-link-alt ml-1"></i>
+                </a>
+                <p class="text-xs text-stone mt-4 opacity-70">※Yahoo!ファイナンスの経済指標ページが開きます</p>
             </div>
         </div>
     </div>
@@ -318,7 +344,7 @@
         function logout() { window.location.href = '/'; }
 
         function switchTab(tabName) {
-            ['portfolio', 'history', 'watchlist', 'news'].forEach(t => {
+            ['portfolio', 'history', 'watchlist', 'news', 'calendar'].forEach(t => {
                 document.getElementById(`content-${t}`).classList.add('hidden');
                 document.getElementById(`tab-${t}`).classList.replace('tab-active', 'tab-inactive');
             });
@@ -341,10 +367,31 @@
                 profitEl.className = totalProfit >= 0 ? 'text-mint' : 'text-orange';
                 document.getElementById('usdjpy-rate').textContent = `${data.usdjpy_rate}円 (${data.usdjpy_time})`;
 
+                // 🌟 追加：配当金のプログレスバー計算
                 const yearlyDiv = data.est_dividend_jpy || 0;
                 const monthlyDiv = Math.floor(yearlyDiv / 12);
                 document.getElementById('yearly-dividend').textContent = `¥${Math.floor(yearlyDiv).toLocaleString()}`;
                 document.getElementById('monthly-dividend').textContent = monthlyDiv.toLocaleString();
+
+                const levels = [
+                    { t: 0, text: "チロルチョコが買えるレベル🍫", next: 1000 },
+                    { t: 1000, text: "毎月スタバの新作が飲めるレベル☕️", next: 5000 },
+                    { t: 5000, text: "ちょっと豪華なランチに行けるレベル🍣", next: 10000 },
+                    { t: 10000, text: "格安SIMのスマホ代が払えるレベル📱", next: 30000 },
+                    { t: 30000, text: "光熱費と水道代が全額まかなえるレベル💡", next: 100000 },
+                    { t: 100000, text: "家賃がまるまる払えるレベル🏠✨", next: 300000 },
+                    { t: 300000, text: "もはや完全な不労所得生活レベル！FIRE達成🌴✨", next: 1000000 } // 上限
+                ];
+
+                let currentLevel = levels[0];
+                for (let i = 0; i < levels.length; i++) {
+                    if (monthlyDiv >= levels[i].t) currentLevel = levels[i];
+                }
+
+                document.getElementById('dividend-level-text').textContent = currentLevel.text;
+                let percent = Math.min(100, Math.floor((monthlyDiv / currentLevel.next) * 100));
+                document.getElementById('dividend-progress').style.width = percent + '%';
+                document.getElementById('dividend-percent').textContent = `次のレベルまで ${percent}%`;
 
                 const listEl = document.getElementById('portfolio-list');
                 listEl.innerHTML = '';
@@ -381,12 +428,11 @@
             try {
                 const res = await fetch(`/api/${userId}/history`);
                 fullChartData = await res.json();
-                filterChart('1Y'); // 🌟 デフォルト表示を1年に変更
+                filterChart('1Y'); 
             } catch(e) { console.error(e); }
         }
 
         function filterChart(period) {
-            // 🌟 修正: 期間フィルターボタンから「1D」「1W」を削除し、レイアウト調整
             const buttons = ['1M', '3M', '1Y', '3Y', 'ALL', 'CUSTOM'];
             buttons.forEach(p => {
                 const btn = document.getElementById(`filter-${p}`);
