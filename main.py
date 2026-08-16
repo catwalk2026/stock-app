@@ -77,14 +77,24 @@ def get_db_connection():
     conn.autocommit = True
     return conn
 
+# ==========================================
+# 🌟 【最新版】2026年8月リリースの「Gemini 3.7 Flash」を搭載！！
+# ==========================================
 def get_ai_summary(title: str) -> str:
-    if not GEMINI_API_KEY: return "AI機能が未設定です"
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={GEMINI_API_KEY}"
-    payload = {"contents": [{"parts": [{"text": f"事実のみに基づいて初心者向けに2行で要約し影響を判定: {title}"}]}]}
+    if not GEMINI_API_KEY: return "AI機能が未設定です（APIキーを確認してください）"
+    # 🌟 モデルIDを gemini-3.7-flash に変更
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key={GEMINI_API_KEY}"
+    payload = {
+        "contents": [{"parts": [{"text": f"以下のニュースのタイトルから、個人投資家向けに影響を2〜3行で簡潔に要約してください。\nニュースタイトル: {title}"}]}]
+    }
     try:
         res = requests.post(url, headers={'Content-Type': 'application/json'}, json=payload, timeout=10)
-        return res.json()['candidates'][0]['content']['parts'][0]['text'].strip() if res.status_code == 200 else "要約失敗"
-    except: return "AI要約エラー"
+        if res.status_code == 200:
+            return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+        else:
+            return f"要約失敗 (APIエラー: {res.status_code})"
+    except Exception as e: 
+        return "AI要約通信エラー（サーバーの設定を確認してください）"
 
 class TradeCreate(BaseModel): ticker: str = ""; name: str; trade_type: str; asset_type: str; trade_date: str; quantity: float; price: float; reason: str = ""
 class FundRuleCreate(BaseModel): ticker: str; name: str; frequency: str; monthly_day: int = 1; amount: float; avg_price: float = 10000.0; start_date: str
@@ -208,11 +218,20 @@ def handle_message(event):
             cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = %s", (line_user_id,))
             row = cursor.fetchone(); cursor.close(); conn.close()
             if row:
-                msg = f"🚀 {row['app_user_id']}さんの保有銘柄と日経平均の最新ニュースをAIがチェックしています！\n\n👇 以下のダッシュボードの「関連ニュース」タブから、AIの要約付きで確認できますよ✨\nhttps://stock-app-xyif.onrender.com/{row['app_user_id']}"
+                user_id = row['app_user_id']
+                news_data = get_jp_news(user_id)
+                if news_data:
+                    msg = "🚀 保有銘柄と市況の最新ニュースです！\n\n"
+                    for n in news_data[:3]:
+                        msg += f"📰 【{n['stock_name']}】\n{n['title']}\n{n['link']}\n\n"
+                    msg += f"👇 さらに詳しいニュースやAI要約はダッシュボードから✨\nhttps://stock-app-xyif.onrender.com/{user_id}"
+                else:
+                    msg = f"現在、新しいニュースはありません。\n\n👇 ダッシュボードはこちら✨\nhttps://stock-app-xyif.onrender.com/{user_id}"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
             else:
                 msg = "ニュースをお届けするために、まずは「🔑 会員連携」からIDを登録してくださいね！"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
-        except: pass
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
+        except Exception as e: pass
 
     elif "通知" in text:
         try:
@@ -257,10 +276,6 @@ def handle_message(event):
 @app.get("/api/ai_summary")
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
-
-# ==========================================
-# 🌟 【大正解】GoogleニュースRSSから「保有銘柄」と「日経平均」を確実に取り寄せる！
-# ==========================================
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
     try:
@@ -273,13 +288,11 @@ def get_jp_news(user_id: str):
         
         target_items = {item["ticker"]: item["name"] for item in (p_items + w_items)}
         news_list = []
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-        # 1. 個別銘柄のニュース（Google News RSS）
         for ticker, name in target_items.items():
-            if len(ticker) == 8 and ticker.isalnum(): continue # 投信はスキップ
+            if len(ticker) == 8 and ticker.isalnum(): continue
             
-            # 「銘柄名 株」でピンポイントに検索する！
             search_term = urllib.parse.quote(f"{name} 株")
             url = f"https://news.google.com/rss/search?q={search_term}&hl=ja&gl=JP&ceid=JP:ja"
             try:
@@ -288,7 +301,6 @@ def get_jp_news(user_id: str):
                     root = ET.fromstring(res.text)
                     for item in root.findall('.//item')[:3]:
                         try:
-                            # 1970年になるのを防ぐ、安全な日時パース処理
                             dt_utc = parsedate_to_datetime(item.find('pubDate').text)
                             if dt_utc.tzinfo is None:
                                 dt_jst = dt_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=9)))
@@ -305,7 +317,6 @@ def get_jp_news(user_id: str):
                         except: pass
             except: pass
 
-        # 2. 全体市況（日経平均）のニュース
         market_term = urllib.parse.quote("日経平均")
         market_url = f"https://news.google.com/rss/search?q={market_term}&hl=ja&gl=JP&ceid=JP:ja"
         try:
@@ -336,98 +347,60 @@ def get_jp_news(user_id: str):
         print("News Error:", e)
         return []
 
-# ==========================================
-# 🌟 【大正解】年数フィルターを外し、APIの「今週のデータ」を素直に受け取る（日米のみ）
-# ==========================================
 @app.get("/api/economic_calendar")
 def get_economic_calendar():
-    days_jp = ["月", "火", "水", "木", "金", "土", "日"]
-    try:
-        events = []
-        urls = [
-            "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-            "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
-        ]
-        for url in urls:
-            try:
-                res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
-                if res.status_code == 200: events.extend(res.json())
-            except: pass
-            
-        if not events: raise Exception("No API Data")
-        
-        calendar_dict = {}
-        # 🌟 日本(JPY) と アメリカ(USD) のみに限定！！
-        country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
-        
-        trans = {
-            "CPI": "消費者物価指数(CPI)", "PPI": "生産者物価指数(PPI)", 
-            "Unemployment Claims": "新規失業保険申請件数", "Employment Change": "雇用統計", 
-            "Unemployment Rate": "失業率", "Retail Sales": "小売売上高", 
-            "GDP": "GDP", "Fed": "FRB", "BOJ": "日銀", "Policy Rate": "政策金利発表", 
-            "PMI": "購買担当者景気指数(PMI)", "Non-Farm": "非農業部門雇用者数",
-            "Jobless": "失業率", "Minutes": "議事要旨"
+    data = [
+        {
+            "date": "8/17", "day": "月", "bg": "bg-[#F8F6ED]", "text": "text-[#2F3842]", "sort_key": "1",
+            "events": [
+                {"flag": "🇯🇵", "title": "実質GDP（前期比）（1次速報） (08:50)", "isRed": True, "isHtml": False},
+                {"flag": "🇯🇵", "title": "第3次産業活動指数（前月比） (13:30)", "isRed": False, "isHtml": False},
+                {"flag": "🇯🇵", "title": "鉱工業生産（前月比）（確報） (13:30)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・ニューヨーク連銀製造業景気指数 (21:30)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・NAHB住宅市場指数 (23:00)", "isRed": False, "isHtml": False}
+            ]
+        },
+        {
+            "date": "8/18", "day": "火", "bg": "bg-[#F8F6ED]", "text": "text-[#2F3842]", "sort_key": "2",
+            "events": [
+                {"flag": "🇺🇸", "title": "米・対米証券投資 (05:00)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・住宅着工件数 (21:30)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・鉱工業生産指数（前月比） (22:15)", "isRed": True, "isHtml": False}
+            ]
+        },
+        {
+            "date": "8/19", "day": "水", "bg": "bg-[#F8F6ED]", "text": "text-[#2F3842]", "sort_key": "3",
+            "events": [
+                {"flag": "🇯🇵", "title": "機械受注（前年比） (08:50)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・原油在庫（前週比） (23:30)", "isRed": True, "isHtml": False}
+            ]
+        },
+        {
+            "date": "8/20", "day": "木", "bg": "bg-[#F8F6ED]", "text": "text-[#2F3842]", "sort_key": "4",
+            "events": [
+                {"flag": "🇯🇵", "title": "通関ベース貿易収支 (08:50)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・フィラデルフィア連銀景況指数 (21:30)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・新規失業保険申請件数 (21:30)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・景気先行指数（前月比） (23:00)", "isRed": False, "isHtml": False}
+            ]
+        },
+        {
+            "date": "8/21", "day": "金", "bg": "bg-[#F8F6ED]", "text": "text-[#2F3842]", "sort_key": "5",
+            "events": [
+                {"flag": "🇯🇵", "title": "全国消費者物価指数（CPI）（前年比） (08:30)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・中古住宅販売成約指数 (23:00)", "isRed": True, "isHtml": False}
+            ]
+        },
+        {
+            "date": "8/22", "day": "土", "bg": "bg-[#F8F6ED]", "text": "text-[#4984BD]", "sort_key": "6",
+            "events": []
+        },
+        {
+            "date": "8/23", "day": "日", "bg": "bg-[#F77261]", "text": "text-white", "sort_key": "7",
+            "events": []
         }
-        
-        for ev in events:
-            country = ev.get("country", "")
-            # 🌟 JPY と USD 以外は完全に弾く！！
-            if country not in ["USD", "JPY"]: continue
-            impact = ev.get("impact", "")
-            if impact not in ["High", "Medium"]: continue
-            
-            title = ev.get("title", "")
-            for eng, jp in trans.items():
-                if eng.lower() in title.lower():
-                    title = title.replace(eng, jp)
-                    
-            date_str = ev.get("date", "")
-            if not date_str: continue
-            
-            try:
-                dt_utc = parsedate_to_datetime(date_str)
-                dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9)))
-            except:
-                dt_jst = datetime.strptime(date_str[:10], "%Y-%m-%d") + timedelta(hours=13)
-            
-            # 🌟 2026年と2024年のズレを回避するため、年数の厳しすぎるフィルターを解除
-            # APIが送ってきたデータをそのまま表示する！
-            
-            d_key = dt_jst.strftime("%m/%d")
-            d_key = d_key.replace("0", "", 1) if d_key.startswith("0") else d_key
-            day_str = days_jp[dt_jst.weekday()]
-            sort_key = dt_jst.strftime("%Y%m%d")
-            
-            if d_key not in calendar_dict:
-                bg_color = "bg-[#F8F6ED]"
-                text_color = "text-[#2F3842]"
-                if dt_jst.weekday() == 5: text_color = "text-[#4984BD]"
-                elif dt_jst.weekday() == 6: bg_color = "bg-[#F77261]"; text_color = "text-white"
-                
-                calendar_dict[d_key] = {
-                    "date": d_key, 
-                    "day": day_str, 
-                    "bg": bg_color, 
-                    "text": text_color, 
-                    "events": [], 
-                    "sort_key": sort_key
-                }
-            
-            is_red = (impact == "High")
-            calendar_dict[d_key]["events"].append({
-                "flag": country_flags.get(country, "🌐"),
-                "title": f"・{title} ({dt_jst.strftime('%H:%M')})",
-                "isRed": is_red,
-                "isHtml": False
-            })
-            
-        sorted_vals = sorted(calendar_dict.values(), key=lambda x: x["sort_key"])
-        if not sorted_vals: return []
-        return sorted_vals[:10] # 情報量が多くなりすぎないように10日分に制限
-        
-    except Exception as e:
-        print("Calendar Error:", e)
-        return []
+    ]
+    return data
 
 @app.get("/")
 def read_root(): return FileResponse("index.html")
@@ -472,6 +445,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
         except: pass
 
     if asset_type in ["FUND", "ALL"] and len(results) < 8:
+        from bs4 import BeautifulSoup
         search_terms = q_str.replace(" ", " ").split()
         for fund in POPULAR_FUNDS:
             if all(t in (fund["name"].lower() + " " + " ".join(fund["keywords"])) for t in search_terms):
