@@ -8,7 +8,6 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* 🌟 ABCash カラーパレット */
         body { background-color: #F8F6ED; color: #2F3842; }
         .bg-white-card { background-color: #FFFFFF; }
         .text-main { color: #2F3842; }
@@ -23,7 +22,6 @@
         .tab-active { border-bottom: 2px solid #25B2C7; color: #25B2C7; font-weight: bold; }
         .tab-inactive { color: #596572; }
         
-        /* グラフフィルターボタン */
         .chart-filter-btn { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: bold; cursor: pointer; transition: all 0.2s; }
         .filter-active { background-color: #60C7D5; color: #FFFFFF; }
         .filter-inactive { background-color: #F8F6ED; color: #596572; border: 1px solid #F7F7F8; }
@@ -32,22 +30,18 @@
 </head>
 <body class="font-sans antialiased">
 
-    <!-- 🌟 追加：ID認証（ログイン）画面 -->
+    <!-- ログイン画面 -->
     <div id="login-screen" class="fixed inset-0 bg-[#F8F6ED] z-50 flex flex-col items-center justify-center px-4 hidden">
         <div class="bg-white-card p-8 rounded-2xl shadow-sm border border-light w-full max-w-sm text-center">
             <h1 class="text-3xl font-extrabold text-main mb-2"><i class="fas fa-chart-pie text-turquoise mr-2"></i>My Portfolio</h1>
             <p class="text-stone text-sm mb-6 font-medium leading-relaxed">ご自身の会員番号（英数字6桁）<br>を入力してスタートしてください✨</p>
-
             <input type="text" id="login-id-input" class="w-full border border-light bg-[#F8F6ED] rounded-xl p-4 text-center text-2xl font-extrabold text-main mb-2 tracking-widest uppercase focus:outline-none focus:border-[#60C7D5] transition" placeholder="AB1234" maxlength="6">
             <p id="login-error" class="text-orange text-xs font-bold mb-4 hidden opacity-0 transition-opacity">※ 6桁の英数字を正しく入力してください</p>
-
-            <button onclick="login()" class="w-full bg-turquoise text-white font-bold py-3.5 rounded-xl hover-bg-turquoise transition shadow-sm text-lg">
-                ポートフォリオを開く
-            </button>
+            <button onclick="login()" class="w-full bg-turquoise text-white font-bold py-3.5 rounded-xl hover-bg-turquoise transition shadow-sm text-lg">ポートフォリオを開く</button>
         </div>
     </div>
 
-    <!-- ダッシュボード全体（初期状態は非表示） -->
+    <!-- ダッシュボード全体 -->
     <div id="main-dashboard" class="max-w-4xl mx-auto px-4 py-6 hidden">
         <!-- ヘッダー -->
         <header class="flex justify-between items-center mb-6">
@@ -117,7 +111,7 @@
             <h3 class="text-lg font-extrabold text-main mb-4">取引の追加</h3>
             <div class="mb-4">
                 <label class="block text-sm font-bold text-stone mb-1">資産タイプ</label>
-                <select id="trade-asset-type" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" onchange="resetSearch('trade')">
+                <select id="trade-asset-type" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" onchange="handleAssetTypeChange()">
                     <option value="JP">日本株</option>
                     <option value="US">米国株</option>
                 </select>
@@ -157,7 +151,7 @@
                     <input type="number" step="0.01" id="trade-qty" class="w-full border border-light rounded p-2 text-main">
                 </div>
                 <div>
-                    <label class="block text-sm font-bold text-stone mb-1">単価 (円)</label>
+                    <label id="trade-price-label" class="block text-sm font-bold text-stone mb-1">単価 (円)</label>
                     <input type="number" step="0.01" id="trade-price" class="w-full border border-light rounded p-2 text-main">
                 </div>
                 <div class="md:col-span-1">
@@ -220,9 +214,11 @@
         </div>
 
         <!-- タブナビゲーション -->
-        <div class="flex border-b border-light mb-6">
+        <!-- 🌟 追加：気になるリスト（ウォッチリスト）タブを復活 -->
+        <div class="flex border-b border-light mb-6 overflow-x-auto whitespace-nowrap">
             <button onclick="switchTab('portfolio')" id="tab-portfolio" class="py-2 px-4 tab-active">保有資産</button>
-            <button onclick="switchTab('history')" id="tab-history" class="py-2 px-4 tab-inactive">取引履歴 <span class="text-xs text-orange ml-1">※一括削除もこちら</span></button>
+            <button onclick="switchTab('history')" id="tab-history" class="py-2 px-4 tab-inactive">取引履歴</button>
+            <button onclick="switchTab('watchlist')" id="tab-watchlist" class="py-2 px-4 tab-inactive">気になるリスト</button>
             <button onclick="switchTab('news')" id="tab-news" class="py-2 px-4 tab-inactive">関連ニュース</button>
         </div>
 
@@ -238,6 +234,36 @@
             </div>
         </div>
 
+        <!-- 🌟 追加：気になるリストコンテンツ -->
+        <div id="content-watchlist" class="hidden">
+            <div class="bg-white-card p-6 rounded-xl shadow-sm border border-light mb-6">
+                <h3 class="text-lg font-extrabold text-main mb-4">気になる銘柄の追加</h3>
+                <div class="bg-[#F8F6ED] p-4 rounded-lg border border-light mb-4 relative">
+                    <label class="block text-sm font-bold text-stone mb-2"><i class="fas fa-search text-turquoise"></i> 銘柄検索（自動入力）</label>
+                    <input type="text" id="watch-search" class="w-full border border-light rounded p-2 text-main bg-white" placeholder="例: 7203 または トヨタ" autocomplete="off">
+                    <div id="watch-suggest" class="absolute z-10 w-full bg-white border border-light shadow-lg rounded-b hidden max-h-48 overflow-y-auto"></div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                    <div>
+                        <label class="block text-sm font-bold text-stone mb-1">銘柄コード</label>
+                        <input type="text" id="watch-ticker" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-stone mb-1">銘柄名</label>
+                        <input type="text" id="watch-name" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly>
+                    </div>
+                    <div>
+                        <button onclick="submitWatchlist()" class="w-full bg-turquoise text-white font-bold py-2 rounded hover-bg-turquoise transition shadow">リストに追加</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
+                <ul id="watchlist-list" class="divide-y border-light"><li class="p-4 text-center text-stone">読み込み中...</li></ul>
+            </div>
+        </div>
+
+        <!-- ニュースコンテンツ -->
         <div id="content-news" class="hidden">
             <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden p-4" id="news-container">
                 <p class="text-center text-stone">ニュースを読み込んでいます...</p>
@@ -252,52 +278,51 @@
         let fullChartData = []; 
 
         window.onload = () => {
-            // URLのパスからIDを取得
             const pathId = window.location.pathname.replace('/', '').toUpperCase();
             const idRegex = /^[A-Z0-9]{6}$/i;
 
             if (idRegex.test(pathId)) {
-                // 正しい6桁のIDならダッシュボードを表示
                 userId = pathId;
                 document.getElementById('login-screen').classList.add('hidden');
                 document.getElementById('main-dashboard').classList.remove('hidden');
                 document.getElementById('display-user-id').textContent = userId;
 
-                // 初期設定とデータ読み込み
                 document.getElementById('trade-date').valueAsDate = new Date();
                 document.getElementById('fund-start').valueAsDate = new Date();
                 loadDashboard();
                 loadGraph();
+                
+                // 🌟 ウォッチリスト用のサジェスト（ALL）も追加
                 setupSearch('trade-search', 'trade-suggest', 'trade-ticker', 'trade-name', 'trade-asset-type');
                 setupSearch('fund-search', 'fund-suggest', 'fund-ticker', 'fund-name', 'FUND', 'fund-price');
+                setupSearch('watch-search', 'watch-suggest', 'watch-ticker', 'watch-name', 'ALL');
             } else {
-                // 不正なIDやルートURL（/）の場合はログイン画面を表示
                 document.getElementById('login-screen').classList.remove('hidden');
             }
         };
 
-        // 🌟 ログイン処理
+        function handleAssetTypeChange() {
+            const type = document.getElementById('trade-asset-type').value;
+            document.getElementById('trade-price-label').textContent = type === 'US' ? '単価 ($)' : '単価 (円)';
+            resetSearch('trade');
+        }
+
         function login() {
             const input = document.getElementById('login-id-input').value.toUpperCase().trim();
             const idRegex = /^[A-Z0-9]{6}$/i;
             const errorText = document.getElementById('login-error');
 
-            if (idRegex.test(input)) {
-                window.location.href = '/' + input; // 正しいURLへ遷移
-            } else {
+            if (idRegex.test(input)) window.location.href = '/' + input;
+            else {
                 errorText.classList.remove('hidden', 'opacity-0');
                 errorText.classList.add('opacity-100');
             }
         }
 
-        // 🌟 ログアウト（ID切り替え）処理
-        function logout() {
-            window.location.href = '/';
-        }
+        function logout() { window.location.href = '/'; }
 
-        // --- タブやデータ読み込みの関数群 ---
         function switchTab(tabName) {
-            ['portfolio', 'history', 'news'].forEach(t => {
+            ['portfolio', 'history', 'watchlist', 'news'].forEach(t => {
                 document.getElementById(`content-${t}`).classList.add('hidden');
                 document.getElementById(`tab-${t}`).classList.replace('tab-active', 'tab-inactive');
             });
@@ -305,6 +330,7 @@
             document.getElementById(`tab-${tabName}`).classList.replace('tab-inactive', 'tab-active');
 
             if (tabName === 'history') loadHistory();
+            if (tabName === 'watchlist') loadWatchlist(); // 🌟 ウォッチリスト読み込み
             if (tabName === 'news') loadNews();
         }
 
@@ -460,13 +486,64 @@
                         const typeLabel = t.type.includes('BUY') ? '<span class="text-orange font-bold">買付</span>' : '<span class="text-turquoise font-bold">売却</span>';
                         listEl.innerHTML += `
                             <li class="p-3 pl-6 border-b border-light hover:bg-[#F8F6ED] flex justify-between items-center transition bg-white text-sm">
-                                <div><span class="text-stone font-mono mr-3">${t.trade_date}</span> ${typeLabel} <span class="text-stone ml-3 font-medium">数量: ${t.quantity} | 単価: ¥${t.price.toLocaleString()}</span></div>
+                                <div><span class="text-stone font-mono mr-3">${t.trade_date}</span> ${typeLabel} <span class="text-stone ml-3 font-medium">数量: ${t.quantity} | 単価: ${t.price.toLocaleString()}</span></div>
                                 <button onclick="deleteTransaction(${t.id})" class="text-stone hover:text-orange transition px-2"><i class="fas fa-times"></i></button>
                             </li>
                         `;
                     });
                 }
             } catch (e) { listEl.innerHTML = '<li class="p-4 text-center text-orange">読み込みエラー</li>'; }
+        }
+
+        // 🌟 追加：気になるリスト（ウォッチリスト）の読み込み
+        async function loadWatchlist() {
+            const listEl = document.getElementById('watchlist-list');
+            listEl.innerHTML = '<li class="p-4 text-center text-stone">読み込み中...</li>';
+            try {
+                const res = await fetch(`/api/${userId}/watchlist`);
+                const items = await res.json();
+                if (items.length === 0) { listEl.innerHTML = '<li class="p-4 text-center text-stone">気になる銘柄がありません。</li>'; return; }
+                
+                listEl.innerHTML = '';
+                items.forEach(item => {
+                    const priceUnit = (item.currency === '$') ? '$' : (item.ticker.length === 8 ? '円(1万口)' : '円');
+                    listEl.innerHTML += `
+                        <li class="p-4 hover:bg-[#F8F6ED] flex justify-between items-center transition">
+                            <div>
+                                <div class="font-bold text-main">${item.name}</div>
+                                <div class="text-xs text-stone mt-1"><span class="bg-[#F8F6ED] px-2 py-0.5 rounded border border-light mr-1">銘柄コード</span>${item.ticker}</div>
+                            </div>
+                            <div class="text-right">
+                                <div class="font-extrabold text-main">現在値: ${item.current_price.toLocaleString()} ${priceUnit}</div>
+                                <button onclick="deleteWatchlist('${item.ticker}')" class="text-xs text-orange hover:opacity-70 mt-2 transition"><i class="fas fa-trash-alt"></i> リストから削除</button>
+                            </div>
+                        </li>
+                    `;
+                });
+            } catch (e) { listEl.innerHTML = '<li class="p-4 text-center text-orange">読み込みエラー</li>'; }
+        }
+
+        async function submitWatchlist() {
+            const ticker = document.getElementById('watch-ticker').value;
+            const name = document.getElementById('watch-name').value;
+            if (!ticker) { alert("銘柄を検索して選択してください！"); return; }
+            
+            try {
+                const res = await fetch(`/api/${userId}/watchlist`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ticker, name }) });
+                if (res.ok) {
+                    resetSearch('watch');
+                    loadWatchlist();
+                    alert("気になるリストに追加しました！");
+                }
+            } catch (e) { alert("通信エラーが発生しました。"); }
+        }
+
+        async function deleteWatchlist(ticker) {
+            if (!confirm(`【${ticker}】を気になるリストから削除しますか？`)) return;
+            try {
+                const res = await fetch(`/api/${userId}/watchlist/${ticker}`, { method: 'DELETE' });
+                if (res.ok) loadWatchlist();
+            } catch (e) { alert("通信エラーが発生しました。"); }
         }
 
         async function deleteTransaction(txId) {
@@ -494,12 +571,45 @@
                 if (news.length === 0) { container.innerHTML = '<p class="text-center text-stone">関連ニュースがありません</p>'; return; }
                 container.innerHTML = '<ul class="space-y-4"></ul>';
                 const ul = container.querySelector('ul');
-                news.forEach(n => {
-                    ul.innerHTML += `<li class="border-b border-light pb-3 last:border-0"><span class="text-xs font-bold bg-[#F8F6ED] border border-light text-turquoise px-2 py-0.5 rounded">${n.stock_name}</span><span class="text-xs text-stone ml-2 font-medium">${n.pub_time}</span><a href="${n.link}" target="_blank" class="block mt-1.5 text-sm font-bold text-main hover:text-turquoise transition leading-relaxed">${n.title}</a></li>`;
+                
+                // 🌟 追加：AI要約ボタン付きでニュースを描画
+                news.forEach((n, index) => {
+                    ul.innerHTML += `
+                        <li class="border-b border-light pb-4 last:border-0">
+                            <div class="flex items-center mb-1">
+                                <span class="text-xs font-bold bg-[#F8F6ED] border border-light text-turquoise px-2 py-0.5 rounded">${n.stock_name}</span>
+                                <span class="text-xs text-stone ml-2 font-medium">${n.pub_time}</span>
+                            </div>
+                            <a href="${n.link}" target="_blank" class="block mt-1.5 text-sm font-bold text-main hover:text-turquoise transition leading-relaxed">${n.title}</a>
+                            
+                            <div class="mt-2">
+                                <button onclick="getAiSummary('${encodeURIComponent(n.title)}', 'summary-${index}')" class="text-xs font-bold bg-turquoise text-white px-3 py-1.5 rounded-full shadow-sm hover:opacity-80 transition flex items-center">
+                                    <i class="fas fa-robot mr-1"></i> AIで要約
+                                </button>
+                                <div id="summary-${index}" class="mt-2 text-sm text-stone bg-[#F8F6ED] p-3 rounded-lg hidden border border-light leading-relaxed"></div>
+                            </div>
+                        </li>
+                    `;
                 });
             } catch (e) { container.innerHTML = '<p class="text-center text-orange font-bold">ニュースの取得に失敗しました</p>'; }
         }
 
+        // 🌟 追加：AI要約を取得して表示する関数
+        async function getAiSummary(encodedTitle, elemId) {
+            const elem = document.getElementById(elemId);
+            elem.classList.remove('hidden');
+            elem.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Gemini AI が要約を作成中...';
+            try {
+                const res = await fetch(`/api/ai_summary?title=${encodedTitle}`);
+                const data = await res.json();
+                // \n を <br> に変換して改行を反映
+                elem.innerHTML = data.summary.replace(/\n/g, '<br>');
+            } catch(e) {
+                elem.innerHTML = '<span class="text-orange"><i class="fas fa-exclamation-triangle mr-1"></i>要約に失敗しました</span>';
+            }
+        }
+
+        // 🌟 修正：typeSourceに'ALL'（ウォッチリスト用）を対応
         function setupSearch(inputId, suggestId, tickerId, nameId, typeSource, priceId = null) {
             const input = document.getElementById(inputId);
             const suggest = document.getElementById(suggestId);
@@ -508,7 +618,7 @@
             input.addEventListener('input', () => {
                 clearTimeout(timeout);
                 const query = input.value.trim();
-                const assetType = typeSource === 'FUND' ? 'FUND' : document.getElementById(typeSource).value;
+                const assetType = (typeSource === 'FUND' || typeSource === 'ALL') ? typeSource : document.getElementById(typeSource).value;
                 if (query.length < 1) { suggest.classList.add('hidden'); return; }
 
                 timeout = setTimeout(async () => {
