@@ -278,7 +278,7 @@
         <div id="content-calendar" class="hidden">
             <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
                 <div class="p-4 border-b border-light bg-white flex items-center">
-                    <h3 class="text-lg font-extrabold text-main"><i class="fas fa-calendar-alt text-mint mr-2"></i>海外APIから取得した今週の重要指標</h3>
+                    <h3 class="text-lg font-extrabold text-main"><i class="fas fa-calendar-alt text-mint mr-2"></i>今週の重要経済指標</h3>
                 </div>
                 
                 <div id="economic-calendar-container" class="text-sm">
@@ -286,9 +286,9 @@
                 </div>
                 
                 <div class="p-4 bg-[#F8F6ED] border-t border-light text-center">
-                    <!-- 🌟 修正：みんかぶの正しいリンク -->
-                    <a href="https://minkabu.jp/economy/indicator" target="_blank" class="text-turquoise text-sm font-bold hover:underline">
-                        みんかぶで国内・海外の詳細な指標を確認する <i class="fas fa-external-link-alt ml-1"></i>
+                    <!-- 🌟 修正：マネックス証券の経済指標カレンダーリンク -->
+                    <a href="https://mst.monex.co.jp/pc/servlet/ITS/report/EconomyIndexCalendar" target="_blank" class="text-turquoise text-sm font-bold hover:underline">
+                        マネックス証券で詳細な経済指標カレンダーを確認する <i class="fas fa-external-link-alt ml-1"></i>
                     </a>
                 </div>
             </div>
@@ -320,14 +320,12 @@
                 setupSearch('fund-search', 'fund-suggest', 'fund-ticker', 'fund-name', 'FUND', 'fund-price');
                 setupSearch('watch-search', 'watch-suggest', 'watch-ticker', 'watch-name', 'ALL');
                 
-                // 🌟 カレンダー描画関数を呼び出し
                 renderEconomicCalendar();
             } else {
                 document.getElementById('login-screen').classList.remove('hidden');
             }
         };
 
-        // 🌟 修正：Python APIからリアルなデータを取得して描画
         async function renderEconomicCalendar() {
             const container = document.getElementById('economic-calendar-container');
             container.innerHTML = '<div class="p-6 text-center text-stone"><i class="fas fa-spinner fa-spin mr-2"></i>最新の経済指標を取得中...</div>';
@@ -337,7 +335,7 @@
                 const data = await res.json();
                 
                 container.innerHTML = '';
-                if (data.length === 0) {
+                if (!data || data.length === 0) {
                     container.innerHTML = '<div class="p-6 text-center text-stone">今週のスケジュールは見つかりませんでした。<br>下のリンクから確認してください。</div>';
                     return;
                 }
