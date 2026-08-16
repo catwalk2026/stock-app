@@ -11,6 +11,7 @@ import jpholiday
 import re
 import math
 import urllib.parse
+import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 import csv
 
@@ -200,6 +201,7 @@ def handle_message(event):
     if "会員連携" in text:
         msg = "ABCashのアプリで使っている【6桁の会員ID（英数字）】をそのままメッセージで送信してください！🔑\n\n連携すると、あなただけのポートフォリオやニュースがいつでもLINEからワンタップで見れるようになります✨"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
+
     elif "最新ニュース" in text:
         try:
             conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -211,6 +213,7 @@ def handle_message(event):
                 msg = "ニュースをお届けするために、まずは「🔑 会員連携」からIDを登録してくださいね！"
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
         except: pass
+
     elif "通知" in text:
         try:
             conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -228,6 +231,7 @@ def handle_message(event):
             cursor.close(); conn.close()
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
         except: pass
+
     elif "ダッシュボード" in text:
         try:
             conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -240,6 +244,7 @@ def handle_message(event):
                 msg = "まずは「🔑 会員連携」からIDを登録してくださいね！"
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
         except: pass
+
     elif re.match(r"^[a-zA-Z0-9]{6}$", text):
         try:
             conn = get_db_connection(); cursor = conn.cursor()
@@ -252,8 +257,9 @@ def handle_message(event):
 @app.get("/api/ai_summary")
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
+
 # ==========================================
-# 🌟 【完全修復】通信エラーに負けないモックAPI（保有銘柄・日経ニュース）
+# 🌟 【大正解】GoogleニュースRSSから「保有銘柄」と「日経平均」を確実に取り寄せる！
 # ==========================================
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
@@ -267,42 +273,63 @@ def get_jp_news(user_id: str):
         
         target_items = {item["ticker"]: item["name"] for item in (p_items + w_items)}
         news_list = []
-        now = datetime.now(timezone(timedelta(hours=9)))
-        
-        # 1. 個別銘柄のダミーニュース
-        for ticker, name in target_items.items():
-            if len(ticker) == 8 and ticker.isalnum(): continue
-            news_list.append({
-                "stock_name": name,
-                "title": f"【速報】{name}、今期の業績見通しを上方修正 市場の期待高まる",
-                "link": "https://kabutan.jp/news/marketnews/",
-                "pub_time": (now - timedelta(hours=1, minutes=15)).strftime("%Y/%m/%d %H:%M"),
-                "timestamp": (now - timedelta(hours=1, minutes=15)).timestamp()
-            })
-            news_list.append({
-                "stock_name": name,
-                "title": f"{name}の最新アナリストレポート：目標株価を引き上げ",
-                "link": "https://kabutan.jp/news/marketnews/",
-                "pub_time": (now - timedelta(hours=5)).strftime("%Y/%m/%d %H:%M"),
-                "timestamp": (now - timedelta(hours=5)).timestamp()
-            })
+        headers = {"User-Agent": "Mozilla/5.0"}
 
-        # 2. 日経平均のダミーニュース
-        news_list.append({
-            "stock_name": "日経平均・市況",
-            "title": "日経平均は反発、米株高を好感し半導体関連に買い集まる",
-            "link": "https://kabutan.jp/news/marketnews/",
-            "pub_time": (now - timedelta(minutes=30)).strftime("%Y/%m/%d %H:%M"),
-            "timestamp": (now - timedelta(minutes=30)).timestamp()
-        })
-        news_list.append({
-            "stock_name": "日経平均・市況",
-            "title": "為替は1ドル150円台後半で推移、輸出関連銘柄には追い風か",
-            "link": "https://kabutan.jp/news/marketnews/",
-            "pub_time": (now - timedelta(hours=2)).strftime("%Y/%m/%d %H:%M"),
-            "timestamp": (now - timedelta(hours=2)).timestamp()
-        })
-        
+        # 1. 個別銘柄のニュース（Google News RSS）
+        for ticker, name in target_items.items():
+            if len(ticker) == 8 and ticker.isalnum(): continue # 投信はスキップ
+            
+            # 「銘柄名 株」でピンポイントに検索する！
+            search_term = urllib.parse.quote(f"{name} 株")
+            url = f"https://news.google.com/rss/search?q={search_term}&hl=ja&gl=JP&ceid=JP:ja"
+            try:
+                res = requests.get(url, headers=headers, timeout=5)
+                if res.status_code == 200:
+                    root = ET.fromstring(res.text)
+                    for item in root.findall('.//item')[:3]:
+                        try:
+                            # 1970年になるのを防ぐ、安全な日時パース処理
+                            dt_utc = parsedate_to_datetime(item.find('pubDate').text)
+                            if dt_utc.tzinfo is None:
+                                dt_jst = dt_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=9)))
+                            else:
+                                dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9)))
+                                
+                            news_list.append({
+                                "stock_name": name,
+                                "title": item.find('title').text,
+                                "link": item.find('link').text,
+                                "pub_time": dt_jst.strftime("%Y/%m/%d %H:%M"),
+                                "timestamp": dt_jst.timestamp()
+                            })
+                        except: pass
+            except: pass
+
+        # 2. 全体市況（日経平均）のニュース
+        market_term = urllib.parse.quote("日経平均")
+        market_url = f"https://news.google.com/rss/search?q={market_term}&hl=ja&gl=JP&ceid=JP:ja"
+        try:
+            res = requests.get(market_url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                root = ET.fromstring(res.text)
+                for item in root.findall('.//item')[:5]:
+                    try:
+                        dt_utc = parsedate_to_datetime(item.find('pubDate').text)
+                        if dt_utc.tzinfo is None:
+                            dt_jst = dt_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=9)))
+                        else:
+                            dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9)))
+                            
+                        news_list.append({
+                            "stock_name": "主要市況",
+                            "title": item.find('title').text,
+                            "link": item.find('link').text,
+                            "pub_time": dt_jst.strftime("%Y/%m/%d %H:%M"),
+                            "timestamp": dt_jst.timestamp()
+                        })
+                    except: pass
+        except: pass
+            
         news_list.sort(key=lambda x: x["timestamp"], reverse=True)
         return news_list[:30]
     except Exception as e:
@@ -310,61 +337,93 @@ def get_jp_news(user_id: str):
         return []
 
 # ==========================================
-# 🌟 【完全修復】今日を基準に日米のリアルなイベントを自動生成するカレンダー
+# 🌟 【大正解】年数フィルターを外し、APIの「今週のデータ」を素直に受け取る（日米のみ）
 # ==========================================
 @app.get("/api/economic_calendar")
 def get_economic_calendar():
+    days_jp = ["月", "火", "水", "木", "金", "土", "日"]
     try:
-        days_jp = ["月", "火", "水", "木", "金", "土", "日"]
-        now = datetime.now(timezone(timedelta(hours=9)))
+        events = []
+        urls = [
+            "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+            "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
+        ]
+        for url in urls:
+            try:
+                res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+                if res.status_code == 200: events.extend(res.json())
+            except: pass
+            
+        if not events: raise Exception("No API Data")
         
         calendar_dict = {}
+        # 🌟 日本(JPY) と アメリカ(USD) のみに限定！！
+        country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
         
-        # 今日を基準に、「過去3日〜未来4日」の1週間分を生成
-        for i in range(-3, 5):
-            dt_jst = now + timedelta(days=i)
-            d_key = dt_jst.strftime("%m/%d").replace("0", "", 1) if dt_jst.strftime("%m/%d").startswith("0") else dt_jst.strftime("%m/%d")
+        trans = {
+            "CPI": "消費者物価指数(CPI)", "PPI": "生産者物価指数(PPI)", 
+            "Unemployment Claims": "新規失業保険申請件数", "Employment Change": "雇用統計", 
+            "Unemployment Rate": "失業率", "Retail Sales": "小売売上高", 
+            "GDP": "GDP", "Fed": "FRB", "BOJ": "日銀", "Policy Rate": "政策金利発表", 
+            "PMI": "購買担当者景気指数(PMI)", "Non-Farm": "非農業部門雇用者数",
+            "Jobless": "失業率", "Minutes": "議事要旨"
+        }
+        
+        for ev in events:
+            country = ev.get("country", "")
+            # 🌟 JPY と USD 以外は完全に弾く！！
+            if country not in ["USD", "JPY"]: continue
+            impact = ev.get("impact", "")
+            if impact not in ["High", "Medium"]: continue
+            
+            title = ev.get("title", "")
+            for eng, jp in trans.items():
+                if eng.lower() in title.lower():
+                    title = title.replace(eng, jp)
+                    
+            date_str = ev.get("date", "")
+            if not date_str: continue
+            
+            try:
+                dt_utc = parsedate_to_datetime(date_str)
+                dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9)))
+            except:
+                dt_jst = datetime.strptime(date_str[:10], "%Y-%m-%d") + timedelta(hours=13)
+            
+            # 🌟 2026年と2024年のズレを回避するため、年数の厳しすぎるフィルターを解除
+            # APIが送ってきたデータをそのまま表示する！
+            
+            d_key = dt_jst.strftime("%m/%d")
+            d_key = d_key.replace("0", "", 1) if d_key.startswith("0") else d_key
             day_str = days_jp[dt_jst.weekday()]
             sort_key = dt_jst.strftime("%Y%m%d")
             
-            bg_color = "bg-[#F8F6ED]"
-            text_color = "text-[#2F3842]"
-            if dt_jst.weekday() == 5: text_color = "text-[#4984BD]"
-            elif dt_jst.weekday() == 6: bg_color = "bg-[#F77261]"; text_color = "text-white"
-            
-            events = []
-            # 曜日ごとに日米のリアルなイベントを配置
-            if dt_jst.weekday() == 0: # 月
-                events.append({"flag": "🇯🇵", "title": "日銀・金融政策決定会合 主な意見 (08:50)", "isRed": False, "isHtml": False})
-                events.append({"flag": "🇯🇵", "title": "実質GDP (速報値) (08:50)", "isRed": True, "isHtml": False})
-            elif dt_jst.weekday() == 1: # 火
-                events.append({"flag": "🇺🇸", "title": "米・小売売上高 (21:30)", "isRed": True, "isHtml": False})
-                events.append({"flag": "🇺🇸", "title": "米・鉱工業生産指数 (22:15)", "isRed": False, "isHtml": False})
-            elif dt_jst.weekday() == 2: # 水
-                events.append({"flag": "🇺🇸", "title": "米・FOMC 議事要旨 (03:00)", "isRed": True, "isHtml": False})
-                events.append({"flag": "🇺🇸", "title": "米・中古住宅販売件数 (23:00)", "isRed": False, "isHtml": False})
-            elif dt_jst.weekday() == 3: # 木
-                events.append({"flag": "🇯🇵", "title": "通関ベース貿易収支 (08:50)", "isRed": False, "isHtml": False})
-                events.append({"flag": "🇺🇸", "title": "米・新規失業保険申請件数 (21:30)", "isRed": False, "isHtml": False})
-            elif dt_jst.weekday() == 4: # 金
-                events.append({"flag": "🇯🇵", "title": "全国消費者物価指数(CPI) (08:30)", "isRed": True, "isHtml": False})
-                events.append({"flag": "🇺🇸", "title": "米・ミシガン大学消費者信頼感指数 (23:00)", "isRed": False, "isHtml": False})
-            elif dt_jst.weekday() == 5: # 土
-                pass
-            elif dt_jst.weekday() == 6: # 日
-                pass
+            if d_key not in calendar_dict:
+                bg_color = "bg-[#F8F6ED]"
+                text_color = "text-[#2F3842]"
+                if dt_jst.weekday() == 5: text_color = "text-[#4984BD]"
+                elif dt_jst.weekday() == 6: bg_color = "bg-[#F77261]"; text_color = "text-white"
                 
-            calendar_dict[d_key] = {
-                "date": d_key, 
-                "day": day_str, 
-                "bg": bg_color, 
-                "text": text_color, 
-                "events": events, 
-                "sort_key": sort_key
-            }
+                calendar_dict[d_key] = {
+                    "date": d_key, 
+                    "day": day_str, 
+                    "bg": bg_color, 
+                    "text": text_color, 
+                    "events": [], 
+                    "sort_key": sort_key
+                }
+            
+            is_red = (impact == "High")
+            calendar_dict[d_key]["events"].append({
+                "flag": country_flags.get(country, "🌐"),
+                "title": f"・{title} ({dt_jst.strftime('%H:%M')})",
+                "isRed": is_red,
+                "isHtml": False
+            })
             
         sorted_vals = sorted(calendar_dict.values(), key=lambda x: x["sort_key"])
-        return sorted_vals
+        if not sorted_vals: return []
+        return sorted_vals[:10] # 情報量が多くなりすぎないように10日分に制限
         
     except Exception as e:
         print("Calendar Error:", e)
