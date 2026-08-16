@@ -12,7 +12,6 @@ import jpholiday
 import re
 import math
 import urllib.parse
-import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 import csv
 
@@ -192,13 +191,7 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     return price, div_yield
 
 def check_and_send_news():
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("SELECT * FROM line_users WHERE is_news_active = TRUE")
-        users = cursor.fetchall()
-        cursor.close(); conn.close()
-    except: pass
+    pass
 
 scheduler = BackgroundScheduler(); scheduler.add_job(check_and_send_news, 'interval', minutes=60); scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
@@ -215,7 +208,7 @@ def handle_message(event):
     text = event.message.text.strip()
     line_user_id = event.source.user_id
     if text == "最新ニュース取得":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="🚀 最新の市況とニュースを集めています..."))
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="🚀 最新の市況と保有銘柄のニュースを集めています..."))
     elif text == "通知設定変更":
         try:
             conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -248,44 +241,102 @@ def handle_message(event):
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
 # ==========================================
-# 🌟 【完全版】絶対に落ちない！最強のRSSニュース取得API
+# 🌟 【最強】「日経平均」と「個別銘柄」のニュースをみんかぶから直接スクレイピング！
 # ==========================================
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
-    news_list = []
-    # サーバーからブロックされないYahoo公式のRSSフィードを使用
-    rss_urls = [
-        ("市況・経済", "https://news.yahoo.co.jp/rss/topics/business.xml"),
-        ("国内ニュース", "https://news.yahoo.co.jp/rss/topics/top-picks.xml")
-    ]
-    
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    for category, url in rss_urls:
-        try:
-            res = requests.get(url, headers=headers, timeout=5)
-            if res.status_code == 200:
-                root = ET.fromstring(res.text)
-                # 各カテゴリから最新の10件ずつ取得
-                for item in root.findall('.//channel/item')[:10]:
-                    pub_date = item.find('pubDate').text
-                    dt = parsedate_to_datetime(pub_date).astimezone(timezone(timedelta(hours=9)))
-                    news_list.append({
-                        "stock_name": category,
-                        "title": item.find('title').text,
-                        "link": item.find('link').text,
-                        "pub_time": dt.strftime("%Y/%m/%d %H:%M"),
-                        "timestamp": dt.timestamp()
-                    })
-        except Exception as e:
-            print("RSS Error:", e)
-            pass
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT ticker, name FROM portfolio WHERE user_id = %s AND quantity > 0", (user_id,))
+        p_items = cursor.fetchall()
+        cursor.execute("SELECT ticker, name FROM watchlist WHERE user_id = %s", (user_id,))
+        w_items = cursor.fetchall()
+        cursor.close(); conn.close()
+        
+        # 重複を排除して対象銘柄リストを作成
+        target_items = {item["ticker"]: item["name"] for item in (p_items + w_items)}
+        news_list = []
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        
+        # 1. 銘柄ごとの個別ニュース（みんかぶの各銘柄ニュースページからスクレイピング）
+        for ticker, name in target_items.items():
+            if len(ticker) == 8 and ticker.isalnum(): continue # 投信はスキップ
             
-    # 時間順にソートして最新30件を返す
-    news_list.sort(key=lambda x: x["timestamp"], reverse=True)
-    return news_list[:30]
+            # 銘柄コードのみ抽出（7203.T -> 7203）
+            search_code = ticker.replace(".T", "") if ticker.endswith(".T") else ticker
+            
+            # みんかぶのニュースタブ
+            url = f"https://minkabu.jp/stock/{search_code}/news"
+            try:
+                res = requests.get(url, headers=headers, timeout=5)
+                if res.status_code == 200:
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    # みんかぶのニュースリストを取得
+                    news_items = soup.select('.news_list .news_item')
+                    for item in news_items[:3]: # 最新3件
+                        title_tag = item.select_one('.fwb a')
+                        time_tag = item.select_one('.news_time')
+                        if title_tag and time_tag:
+                            title = title_tag.text.strip()
+                            link = title_tag['href']
+                            if not link.startswith('http'): link = "https://minkabu.jp" + link
+                            time_text = time_tag.text.strip()
+                            
+                            # みんかぶの時刻表記「12:34」や「08/17 12:34」を現在日時に変換
+                            now = datetime.now(timezone(timedelta(hours=9)))
+                            if "/" in time_text:
+                                dt_str = f"{now.year}/{time_text}"
+                                dt = datetime.strptime(dt_str, "%Y/%m/%d %H:%M")
+                            else:
+                                dt_str = f"{now.strftime('%Y/%m/%d')} {time_text}"
+                                dt = datetime.strptime(dt_str, "%Y/%m/%d %H:%M")
+                                
+                            news_list.append({
+                                "stock_name": name,
+                                "title": title,
+                                "link": link,
+                                "pub_time": dt.strftime("%Y/%m/%d %H:%M"),
+                                "timestamp": dt.timestamp()
+                            })
+            except: pass
+            
+        # 2. 全体市況（日経平均）のニュース
+        try:
+            res = requests.get("https://minkabu.jp/news/market", headers=headers, timeout=5)
+            if res.status_code == 200:
+                soup = BeautifulSoup(res.text, 'html.parser')
+                for item in soup.select('.news_list .news_item')[:5]:
+                    title_tag = item.select_one('.fwb a')
+                    time_tag = item.select_one('.news_time')
+                    if title_tag and time_tag:
+                        title = title_tag.text.strip()
+                        link = title_tag['href']
+                        if not link.startswith('http'): link = "https://minkabu.jp" + link
+                        time_text = time_tag.text.strip()
+                        
+                        now = datetime.now(timezone(timedelta(hours=9)))
+                        if "/" in time_text:
+                            dt = datetime.strptime(f"{now.year}/{time_text}", "%Y/%m/%d %H:%M")
+                        else:
+                            dt = datetime.strptime(f"{now.strftime('%Y/%m/%d')} {time_text}", "%Y/%m/%d %H:%M")
+                            
+                        news_list.append({
+                            "stock_name": "日経平均・市況",
+                            "title": title,
+                            "link": link,
+                            "pub_time": dt.strftime("%Y/%m/%d %H:%M"),
+                            "timestamp": dt.timestamp()
+                        })
+        except: pass
+            
+        news_list.sort(key=lambda x: x["timestamp"], reverse=True)
+        return news_list[:30]
+    except Exception as e:
+        print("News Error:", e)
+        return []
 
 # ==========================================
-# 🌟 【完全版】週末の空白を撲滅した経済カレンダーAPI
+# 🌟 【修正】日米（JPY・USD）のみに絞り込んだ経済カレンダーAPI
 # ==========================================
 @app.get("/api/economic_calendar")
 def get_economic_calendar():
@@ -305,7 +356,8 @@ def get_economic_calendar():
         if not events: raise Exception("No API Data")
         
         calendar_dict = {}
-        country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日", "EUR": "🇪🇺 欧", "GBP": "🇬🇧 英", "CNY": "🇨🇳 中"}
+        # 🌟 JPY（日本）とUSD（アメリカ）だけ抽出！
+        country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
         
         trans = {
             "CPI": "消費者物価指数(CPI)", "PPI": "生産者物価指数(PPI)", 
@@ -317,14 +369,13 @@ def get_economic_calendar():
         }
         
         now = datetime.now(timezone(timedelta(hours=9)))
-        
-        # 🌟 日曜日でも空っぽにならないよう「3日前から7日後」までのイベントをすべて抽出
         start_str = (now - timedelta(days=3)).strftime("%Y-%m-%d")
         end_str = (now + timedelta(days=7)).strftime("%Y-%m-%d")
         
         for ev in events:
             country = ev.get("country", "")
-            if country not in ["USD", "JPY", "EUR", "GBP", "CNY"]: continue
+            # 🌟 JPY と USD 以外はスキップ！
+            if country not in ["USD", "JPY"]: continue
             impact = ev.get("impact", "")
             if impact not in ["High", "Medium"]: continue
             
@@ -344,7 +395,6 @@ def get_economic_calendar():
             
             target_date_str = dt_jst.strftime("%Y-%m-%d")
             
-            # 🌟 「過去3日〜未来7日」の期間に含まれないイベントはスキップ
             if not (start_str <= target_date_str <= end_str): continue
                 
             d_key = dt_jst.strftime("%m/%d")
@@ -433,6 +483,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
                 if len(results) >= 8: break
         if len(results) < 8 and len(q_str) == 8 and q_str.isalnum():
             try:
+                from bs4 import BeautifulSoup
                 res = requests.get(f"https://itf.minkabu.jp/fund/{q_str.upper()}", headers=headers, timeout=3)
                 if res.status_code == 200:
                     soup = BeautifulSoup(res.text, 'html.parser')
