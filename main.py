@@ -412,17 +412,17 @@ def delete_stock_api(user_id: str, ticker: str):
     return {"message": "Deleted"}
 
 # ==========================================
-# 🌟 【完全版】Googleファイナンス風「リアルな変動グラフ」の生成ロジック
+# 🌟 【完成版】営業日（値動きがあった日）のみを繋ぐリアルな波形グラフ
 # ==========================================
 @app.get("/api/{user_id}/history")
 def get_history(user_id: str):
     try:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        # 取引を古い順に取得
         cursor.execute("SELECT * FROM transactions WHERE user_id = %s ORDER BY trade_date ASC", (user_id,))
         trades = cursor.fetchall()
         
-        # 最終日のDB価格（手入力価格やスクレイピング価格）を取得
         cursor.execute("SELECT ticker, manual_price, average_price FROM portfolio WHERE user_id = %s", (user_id,))
         portfolio_prices = {r["ticker"]: r["manual_price"] or r["average_price"] for r in cursor.fetchall()}
         cursor.close()
@@ -430,45 +430,49 @@ def get_history(user_id: str):
         
         if not trades: return []
     except Exception as e:
-        print("History DB Error:", e)
         return []
     
     usdjpy = get_usdjpy_rate()["rate"]
     tickers = list(set(t["ticker"] for t in trades))
     
-    # 1. すべての銘柄の「過去の毎日の株価」を辞書にまとめる
     prices_by_date = {}
+    start_date_obj = datetime.strptime(trades[0]["trade_date"], "%Y-%m-%d")
     
-    # 全期間をカバーするため、3年前から今日までの日付リストを作成
-    start_date = datetime.strptime(trades[0]["trade_date"], "%Y-%m-%d")
-    today = datetime.now()
+    # 5年以上前はカットしてサーバー負荷を抑える
+    min_start = datetime.now() - timedelta(days=365*5)
+    if start_date_obj < min_start: start_date_obj = min_start
     
-    # yfinanceから株価履歴を一括ダウンロード（超高速）
+    # 🌟 営業日だけを抽出するための「日付セット」
+    all_dates_set = set()
+
     for ticker in tickers:
         is_fund = len(ticker) == 8 and ticker.isalnum()
-        if is_fund: continue # 投資信託はyfinanceにないのでスキップ
+        if is_fund: continue
         
         try:
             yf_ticker = ticker if ticker.endswith(".T") else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
-            df = yf.Ticker(yf_ticker).history(start=start_date.strftime("%Y-%m-%d"))
+            df = yf.Ticker(yf_ticker).history(start=start_date_obj.strftime("%Y-%m-%d"))
             for idx, row in df.iterrows():
                 if not math.isnan(row["Close"]):
                     d_str = idx.strftime("%Y-%m-%d")
+                    all_dates_set.add(d_str) # 値動きがあった日だけ追加！
                     if d_str not in prices_by_date: prices_by_date[d_str] = {}
                     prices_by_date[d_str][ticker] = float(row["Close"])
         except: pass
 
-    # 2. 過去から今日まで「1日ずつ」進めながら、リアルな資産額を計算する
-    all_dates = []
-    current_date = start_date
-    while current_date <= today:
-        all_dates.append(current_date.strftime("%Y-%m-%d"))
-        current_date += timedelta(days=1)
+    # 取引があった日も一応プロット日として追加
+    for t in trades:
+        all_dates_set.add(t["trade_date"])
+    # 今日も追加
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    all_dates_set.add(today_str)
+    
+    # 日付順にソート（ここで土日のフラットラインが完全に消え去ります）
+    all_dates = sorted(list(all_dates_set))
 
     current_holdings = {t: 0.0 for t in tickers}
     last_known_price = {t: 0.0 for t in tickers}
     
-    # 初日の価格をセット
     for t in trades:
         if last_known_price[t["ticker"]] == 0: last_known_price[t["ticker"]] = t["price"]
 
@@ -476,7 +480,6 @@ def get_history(user_id: str):
     result = []
     
     for date_str in all_dates:
-        # その日に取引があったら、保有数量と価格を更新
         while trade_index < len(trades) and trades[trade_index]["trade_date"] <= date_str:
             tr = trades[trade_index]
             t = tr["ticker"]
@@ -485,17 +488,14 @@ def get_history(user_id: str):
             last_known_price[t] = tr["price"]
             trade_index += 1
         
-        # もしその日の「実際の株価」があれば、価格を更新（波打つグラフの源泉！）
         if date_str in prices_by_date:
             for t, p in prices_by_date[date_str].items():
                 last_known_price[t] = p
                 
-        # 最終日（今日）だけは、ポートフォリオ画面と全く同じ価格になるようにDBデータで上書き
-        if date_str == today.strftime("%Y-%m-%d"):
+        if date_str == today_str:
             for t in tickers:
                 if t in portfolio_prices: last_known_price[t] = portfolio_prices[t]
 
-        # その日の総資産を計算
         day_total = 0.0
         for t, qty in current_holdings.items():
             if qty > 0:
@@ -505,11 +505,9 @@ def get_history(user_id: str):
                 val = (qty * price) / (10000.0 if is_fund else 1.0)
                 day_total += val * (1.0 if is_jpy else usdjpy)
                 
-        # 資産が1円以上ある日だけグラフにプロット
-        if day_total > 0:
+        if day_total > 0 or date_str == today_str:
             result.append({"date": date_str, "total_assets": round(day_total, 2)})
             
-    # スマホが重くならないようにデータ間引き（最大100件に圧縮）
     if len(result) > 100:
         step = len(result) // 100
         result = result[::step] + [result[-1]] if result[-1] != result[::step][-1] else result[::step]
@@ -560,9 +558,6 @@ def get_watchlist(user_id: str):
         return rows
     except: return []
 
-# ==========================================
-# 🌟 Admin用API群（完全復旧）
-# ==========================================
 @app.get("/api/admin/users")
 def get_all_users():
     try:
@@ -570,9 +565,7 @@ def get_all_users():
         cursor.execute("SELECT p.user_id, COUNT(DISTINCT p.ticker) as portfolio_count, (SELECT COUNT(*) FROM transactions t WHERE t.user_id = p.user_id) as transaction_count FROM portfolio p GROUP BY p.user_id")
         rows = cursor.fetchall(); cursor.close(); conn.close()
         return rows
-    except Exception as e:
-        print("Admin Users Error:", e)
-        raise HTTPException(status_code=500, detail="Database Error")
+    except Exception as e: raise HTTPException(status_code=500, detail="Database Error")
 
 @app.delete("/api/admin/user/{user_id}")
 def delete_all_user_data(user_id: str):
@@ -584,6 +577,4 @@ def delete_all_user_data(user_id: str):
         cursor.execute("DELETE FROM watchlist WHERE user_id = %s", (user_id,))
         cursor.close(); conn.close()
         return {"message": f"User {user_id} deleted"}
-    except Exception as e:
-        print("Admin Delete Error:", e)
-        raise HTTPException(status_code=500, detail="Database Error")
+    except Exception as e: raise HTTPException(status_code=500, detail="Database Error")
