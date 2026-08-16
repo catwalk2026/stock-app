@@ -11,7 +11,7 @@ import jpholiday
 import re
 import math
 import urllib.parse
-import xml.etree.ElementTree as ET  # 🌟【修正1】Claude先生指摘のimport漏れを追加！
+import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 import csv
 
@@ -78,16 +78,39 @@ def get_db_connection():
     return conn
 
 # ==========================================
-# AI要約API（安定モデル gemini-2.5-flash 指定＋安全なパース）
+# 🌟 1. AI要約（動的モデル取得＆強固なエラーハンドリング）
 # ==========================================
+_gemini_model_cache = {"name": None, "checked_at": None}
+
+def get_working_gemini_model():
+    now = datetime.now()
+    if _gemini_model_cache["name"] and _gemini_model_cache["checked_at"] and (now - _gemini_model_cache["checked_at"]).seconds < 3600:
+        return _gemini_model_cache["name"]
+    try:
+        res = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}", timeout=10)
+        if res.status_code == 200:
+            candidates = [
+                m["name"].replace("models/", "") for m in res.json().get("models", [])
+                if "generateContent" in m.get("supportedGenerationMethods", [])
+                and "flash" in m["name"] and "lite" not in m["name"]
+                and "image" not in m["name"] and "preview" not in m["name"]
+            ]
+            candidates.sort(reverse=True)  # バージョン番号が大きい＝新しいものを優先
+            if candidates:
+                _gemini_model_cache["name"] = candidates[0]
+                _gemini_model_cache["checked_at"] = now
+                return candidates[0]
+    except Exception as e:
+        print("Model list error:", e)
+    return "gemini-2.5-flash"  # 最終フォールバック
+
 def get_ai_summary(title: str) -> str:
     if not GEMINI_API_KEY:
         return "AI機能が未設定です（APIキーを確認してください）"
-    
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-    payload = {
-        "contents": [{"parts": [{"text": f"以下のニュースタイトルから、個人投資家向けの影響を2〜3行で簡潔に要約してください。\nニュースタイトル: {title}"}]}]
-    }
+
+    model = get_working_gemini_model()
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+    payload = {"contents": [{"parts": [{"text": f"以下のニュースタイトルから、個人投資家向けの影響を2〜3行で簡潔に要約してください。\nニュースタイトル: {title}"}]}]}
     try:
         res = requests.post(url, headers={'Content-Type': 'application/json'}, json=payload, timeout=10)
         if res.status_code == 200:
@@ -97,6 +120,11 @@ def get_ai_summary(title: str) -> str:
                 reason = data.get("promptFeedback", {}).get("blockReason", "不明")
                 return f"要約失敗（生成がブロックされました: {reason}）"
             return candidates[0]["content"]["parts"][0]["text"].strip()
+        elif res.status_code == 404:
+            # モデルが失効した瞬間はキャッシュを破棄して次回再取得させる
+            _gemini_model_cache["name"] = None
+            print("Gemini 404, model invalidated:", model)
+            return "要約失敗 (APIエラー: 404 モデル切替待ち。もう一度お試しください)"
         else:
             print("Gemini API error:", res.status_code, res.text)
             return f"要約失敗 (APIエラー: {res.status_code})"
@@ -284,9 +312,6 @@ def handle_message(event):
 @app.get("/api/ai_summary")
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
-# ==========================================
-# ニュース取得
-# ==========================================
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
     try:
@@ -312,7 +337,6 @@ def get_jp_news(user_id: str):
                     root = ET.fromstring(res.text)
                     for item in root.findall('.//item')[:3]:
                         try:
-                            # ニュース側のパースはRFC形式なので parsedate_to_datetime を使用
                             dt_utc = parsedate_to_datetime(item.find('pubDate').text)
                             dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9))) if dt_utc.tzinfo else dt_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=9)))
                                 
@@ -354,71 +378,60 @@ def get_jp_news(user_id: str):
         return []
 
 # ==========================================
-# 🌟 2. 経済指標カレンダー（自動リアルタイム抽出・ISO形式パース修正版）
+# 🌟 2. 経済指標カレンダー（キャッシュバスター＆ISO対応＆今日以降の緩いフィルター）
 # ==========================================
 @app.get("/api/economic_calendar")
 def get_economic_calendar():
     days_jp = ["月", "火", "水", "木", "金", "土", "日"]
     trans = {
-        "CPI": "消費者物価指数(CPI)", "PPI": "生産者物価指数(PPI)", 
-        "Unemployment Claims": "新規失業保険申請件数", "Employment Change": "雇用統計", 
-        "Unemployment Rate": "失業率", "Retail Sales": "小売売上高", 
-        "GDP": "GDP", "Fed": "FRB", "BOJ": "日銀", "Policy Rate": "政策金利発表", 
+        "CPI": "消費者物価指数(CPI)", "PPI": "生産者物価指数(PPI)",
+        "Unemployment Claims": "新規失業保険申請件数", "Employment Change": "雇用統計",
+        "Unemployment Rate": "失業率", "Retail Sales": "小売売上高",
+        "GDP": "GDP", "Fed": "FRB", "BOJ": "日銀", "Policy Rate": "政策金利発表",
         "PMI": "購買担当者景気指数(PMI)", "Non-Farm": "非農業部門雇用者数"
     }
     country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
 
     try:
-        urls = [
-            "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-            "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
-        ]
-        raw_events = []
+        # 🌟 nextweek は存在しないURLだったため削除。キャッシュバスターを付与して最新データを強制取得
+        cache_buster = int(datetime.now().timestamp())
+        url = f"https://nfs.faireconomy.media/ff_calendar_thisweek.json?v={cache_buster}"
         headers = {"User-Agent": "Mozilla/5.0"}
-        
-        for url in urls:
-            try:
-                res = requests.get(url, headers=headers, timeout=5)
-                if res.status_code == 200:
-                    raw_events.extend(res.json())
-            except Exception as e:
-                print("Calendar fetch sub-error:", e)
+
+        raw_events = []
+        try:
+            res = requests.get(url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                raw_events = res.json()
+        except Exception as e:
+            print("Calendar fetch error:", e)
 
         if not raw_events:
             return []
 
         calendar_dict = {}
         now_jst = datetime.now(timezone(timedelta(hours=9)))
-        
-        # 今日から7日後までのイベントを抽出
-        start_str = now_jst.strftime("%Y-%m-%d")
-        end_str = (now_jst + timedelta(days=7)).strftime("%Y-%m-%d")
-        
+
         for ev in raw_events:
             country = ev.get("country", "")
             if country not in ["USD", "JPY"]:
                 continue
-            
             impact = ev.get("impact", "")
             if impact not in ["High", "Medium"]:
                 continue
-
             date_str = ev.get("date", "")
             if not date_str:
                 continue
-
             try:
-                # 🌟【修正2】Claude先生指摘のISO 8601形式対応パース！
+                # 🌟 ISO形式の文字列をパース
                 dt_utc = datetime.fromisoformat(date_str)
                 dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9)))
             except Exception as e:
                 print("date parse error:", date_str, e)
                 continue
 
-            target_date_str = dt_jst.strftime("%Y-%m-%d")
-            
-            # 今日〜7日後の期間外ならスキップ
-            if not (start_str <= target_date_str <= end_str): 
+            # 🌟 「今日以降」だけの緩いフィルターに変更（+7日の上限は撤廃）
+            if dt_jst.date() < now_jst.date():
                 continue
 
             title = ev.get("title", "")
@@ -431,22 +444,10 @@ def get_economic_calendar():
             sort_key = dt_jst.strftime("%Y%m%d")
 
             if d_key not in calendar_dict:
-                bg_color = "bg-[#F8F6ED]"
-                text_color = "text-[#2F3842]"
-                if dt_jst.weekday() == 5:
-                    text_color = "text-[#4984BD]"
-                elif dt_jst.weekday() == 6:
-                    bg_color = "bg-[#F77261]"
-                    text_color = "text-white"
-
-                calendar_dict[d_key] = {
-                    "date": d_key,
-                    "day": day_str,
-                    "bg": bg_color,
-                    "text": text_color,
-                    "events": [],
-                    "sort_key": sort_key
-                }
+                bg_color, text_color = "bg-[#F8F6ED]", "text-[#2F3842]"
+                if dt_jst.weekday() == 5: text_color = "text-[#4984BD]"
+                elif dt_jst.weekday() == 6: bg_color, text_color = "bg-[#F77261]", "text-white"
+                calendar_dict[d_key] = {"date": d_key, "day": day_str, "bg": bg_color, "text": text_color, "events": [], "sort_key": sort_key}
 
             calendar_dict[d_key]["events"].append({
                 "flag": country_flags.get(country, "🌐"),
