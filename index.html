@@ -13,19 +13,19 @@
         .text-main { color: #2F3842; }
         .text-turquoise { color: #25B2C7; }
         .bg-turquoise { background-color: #60C7D5; }
-        .hover-bg-turquoise:hover { background-color: #25B2C7; }
         .border-light { border-color: #F7F7F8; }
         .text-stone { color: #596572; }
         .text-orange { color: #F77261; }
         .text-mint { color: #42B187; }
         
-        .tab-active { border-bottom: 2px solid #25B2C7; color: #25B2C7; font-weight: bold; }
-        .tab-inactive { color: #596572; }
-        
         .chart-filter-btn { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: bold; cursor: pointer; transition: all 0.2s; }
         .filter-active { background-color: #60C7D5; color: #FFFFFF; }
         .filter-inactive { background-color: #F8F6ED; color: #596572; border: 1px solid #F7F7F8; }
         .filter-inactive:hover { background-color: #E2E8F0; }
+
+        /* カスタムスクロールバー（横スクロール用） */
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="font-sans antialiased">
@@ -37,7 +37,7 @@
             <p class="text-stone text-sm mb-6 font-medium leading-relaxed">ご自身の会員番号（英数字6桁）<br>を入力してスタートしてください✨</p>
             <input type="text" id="login-id-input" class="w-full border border-light bg-[#F8F6ED] rounded-xl p-4 text-center text-2xl font-extrabold text-main mb-2 tracking-widest uppercase focus:outline-none focus:border-[#60C7D5] transition" placeholder="AB1234" maxlength="6">
             <p id="login-error" class="text-orange text-xs font-bold mb-4 hidden opacity-0 transition-opacity">※ 6桁の英数字を正しく入力してください</p>
-            <button onclick="login()" class="w-full bg-turquoise text-white font-bold py-3.5 rounded-xl hover-bg-turquoise transition shadow-sm text-lg">ポートフォリオを開く</button>
+            <button onclick="login()" class="w-full bg-turquoise text-white font-bold py-3.5 rounded-xl transition shadow-sm text-lg hover:opacity-80">ポートフォリオを開く</button>
         </div>
     </div>
 
@@ -66,7 +66,7 @@
                 <p class="text-xs text-stone mt-2 text-right opacity-70">USD/JPY: <span id="usdjpy-rate">--</span></p>
             </div>
 
-            <!-- 🌟 パワーアップ：配当金プログレスバー追加 -->
+            <!-- 配当金プログレスバー -->
             <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light relative overflow-hidden flex flex-col justify-between">
                 <div class="absolute right-0 top-0 w-16 h-16 bg-[#F8F6ED] rounded-bl-full -z-10"></div>
                 <div>
@@ -81,7 +81,6 @@
                         <p class="text-sm font-bold text-main">月のお小遣い: <span id="monthly-dividend" class="text-lg text-[#C4BF4D]">0</span> 円</p>
                         <span id="dividend-percent" class="text-xs font-bold text-stone">0%</span>
                     </div>
-                    <!-- プログレスバー -->
                     <div class="w-full bg-white rounded-full h-2.5 border border-light mb-2">
                         <div id="dividend-progress" class="bg-[#C4BF4D] h-2.5 rounded-full transition-all duration-1000" style="width: 0%"></div>
                     </div>
@@ -95,6 +94,7 @@
             <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
                 <h3 class="text-sm font-bold text-stone">📈 資産推移</h3>
                 <div class="flex flex-wrap gap-2" id="chart-filters">
+                    <!-- 1D, 1W を廃止し、意味のある波形が出る期間に変更 -->
                     <button onclick="filterChart('1M')" class="chart-filter-btn filter-inactive" id="filter-1M">1ヶ月</button>
                     <button onclick="filterChart('3M')" class="chart-filter-btn filter-inactive" id="filter-3M">3ヶ月</button>
                     <button onclick="filterChart('1Y')" class="chart-filter-btn filter-inactive" id="filter-1Y">1年</button>
@@ -119,7 +119,7 @@
             <h3 class="text-lg font-extrabold text-main mb-4">取引の追加</h3>
             <div class="mb-4">
                 <label class="block text-sm font-bold text-stone mb-1">資産タイプ</label>
-                <select id="trade-asset-type" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" onchange="handleAssetTypeChange()">
+                <select id="trade-asset-type" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main focus:outline-none" onchange="handleAssetTypeChange()">
                     <option value="JP">日本株</option>
                     <option value="US">米国株</option>
                 </select>
@@ -127,7 +127,7 @@
             
             <div class="bg-[#F8F6ED] p-4 rounded-lg border border-light mb-4 relative">
                 <label class="block text-sm font-bold text-stone mb-2"><i class="fas fa-search text-turquoise"></i> 銘柄検索（自動入力）</label>
-                <input type="text" id="trade-search" class="w-full border border-light rounded p-2 text-main bg-white" placeholder="例: 7203 または トヨタ" autocomplete="off">
+                <input type="text" id="trade-search" class="w-full border border-light rounded p-2 text-main bg-white focus:outline-none focus:border-turquoise" placeholder="例: 7203 または トヨタ" autocomplete="off">
                 <div id="trade-suggest" class="absolute z-10 w-full bg-white border border-light shadow-lg rounded-b hidden max-h-48 overflow-y-auto"></div>
             </div>
             
@@ -142,7 +142,7 @@
                 </div>
                 <div>
                     <label class="block text-sm font-bold text-stone mb-1">取引種別</label>
-                    <select id="trade-type" class="w-full border border-light rounded p-2 text-main">
+                    <select id="trade-type" class="w-full border border-light rounded p-2 text-main focus:outline-none">
                         <option value="BUY">買付</option>
                         <option value="SELL">売却</option>
                     </select>
@@ -152,18 +152,18 @@
             <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                 <div>
                     <label class="block text-sm font-bold text-stone mb-1">取引日</label>
-                    <input type="date" id="trade-date" class="w-full border border-light rounded p-2 text-main">
+                    <input type="date" id="trade-date" class="w-full border border-light rounded p-2 text-main focus:outline-none">
                 </div>
                 <div>
                     <label class="block text-sm font-bold text-stone mb-1">株数指定 (株)</label>
-                    <input type="number" step="0.01" id="trade-qty" class="w-full border border-light rounded p-2 text-main">
+                    <input type="number" step="0.01" id="trade-qty" class="w-full border border-light rounded p-2 text-main focus:outline-none">
                 </div>
                 <div>
                     <label id="trade-price-label" class="block text-sm font-bold text-stone mb-1">単価 (円)</label>
-                    <input type="number" step="0.01" id="trade-price" class="w-full border border-light rounded p-2 text-main">
+                    <input type="number" step="0.01" id="trade-price" class="w-full border border-light rounded p-2 text-main focus:outline-none">
                 </div>
                 <div class="md:col-span-1">
-                    <button onclick="submitTrade('trade')" class="w-full bg-turquoise text-white font-bold py-2 rounded hover-bg-turquoise transition shadow">保存する</button>
+                    <button onclick="submitTrade('trade')" class="w-full bg-turquoise text-white font-bold py-2 rounded hover:opacity-80 transition shadow">保存する</button>
                 </div>
             </div>
         </div>
@@ -173,7 +173,7 @@
             <h3 class="text-lg font-extrabold text-main mb-4">自動積立ルール設定</h3>
             <div class="bg-[#F8F6ED] p-4 rounded-lg border border-light mb-4 relative">
                 <label class="block text-sm font-bold text-stone mb-2"><i class="fas fa-search text-turquoise"></i> ファンド検索（自動入力）</label>
-                <input type="text" id="fund-search" class="w-full border border-light rounded p-2 text-main bg-white" placeholder="例: オルカン または eMAXIS" autocomplete="off">
+                <input type="text" id="fund-search" class="w-full border border-light rounded p-2 text-main bg-white focus:outline-none focus:border-turquoise" placeholder="例: オルカン または eMAXIS" autocomplete="off">
                 <div id="fund-suggest" class="absolute z-10 w-full bg-white border border-light shadow-lg rounded-b hidden max-h-48 overflow-y-auto"></div>
             </div>
 
@@ -188,13 +188,13 @@
                 </div>
                 <div>
                     <label class="block text-sm font-bold text-stone mb-1">積立コース</label>
-                    <select id="fund-freq" class="w-full border border-light rounded p-2 text-main">
+                    <select id="fund-freq" class="w-full border border-light rounded p-2 text-main focus:outline-none">
                         <option value="MONTHLY">毎月コース</option>
                     </select>
                 </div>
                 <div>
                     <label class="block text-sm font-bold text-stone mb-1">積立日 (毎月)</label>
-                    <select id="fund-day" class="w-full border border-light rounded p-2 text-main">
+                    <select id="fund-day" class="w-full border border-light rounded p-2 text-main focus:outline-none">
                         <option value="1">1日</option>
                         <option value="15">15日</option>
                         <option value="25">25日</option>
@@ -205,52 +205,49 @@
             <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                 <div>
                     <label class="block text-sm font-bold text-stone mb-1">積立金額 (円)</label>
-                    <input type="number" id="fund-amount" class="w-full border border-light rounded p-2 text-main" value="30000">
+                    <input type="number" id="fund-amount" class="w-full border border-light rounded p-2 text-main focus:outline-none" value="30000">
                 </div>
                 <div>
                     <label class="block text-sm font-bold text-stone mb-1">基準価額 (1万口) <input type="checkbox" id="fund-manual" onchange="toggleFundPrice()" class="ml-1 cursor-pointer"> 手入力</label>
-                    <input type="number" step="0.01" id="fund-price" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly placeholder="例: 28459">
+                    <input type="number" step="0.01" id="fund-price" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main focus:outline-none" readonly placeholder="例: 28459">
                 </div>
                 <div>
                     <label class="block text-sm font-bold text-stone mb-1">開始日</label>
-                    <input type="date" id="fund-start" class="w-full border border-light rounded p-2 text-main">
+                    <input type="date" id="fund-start" class="w-full border border-light rounded p-2 text-main focus:outline-none">
                 </div>
                 <div class="md:col-span-2">
-                    <button onclick="submitFund()" class="w-full bg-turquoise text-white font-bold py-2 rounded hover-bg-turquoise transition shadow">積立を開始する</button>
+                    <button onclick="submitFund()" class="w-full bg-turquoise text-white font-bold py-2 rounded hover:opacity-80 transition shadow">積立を開始する</button>
                 </div>
             </div>
         </div>
 
-        <!-- 🌟 タブナビゲーション（経済指標カレンダーを追加） -->
-        <div class="flex border-b border-light mb-6 overflow-x-auto whitespace-nowrap">
-            <button onclick="switchTab('portfolio')" id="tab-portfolio" class="py-2 px-4 tab-active">保有資産</button>
-            <button onclick="switchTab('history')" id="tab-history" class="py-2 px-4 tab-inactive">取引履歴</button>
-            <button onclick="switchTab('watchlist')" id="tab-watchlist" class="py-2 px-4 tab-inactive">気になるリスト</button>
-            <button onclick="switchTab('news')" id="tab-news" class="py-2 px-4 tab-inactive">関連ニュース</button>
-            <button onclick="switchTab('calendar')" id="tab-calendar" class="py-2 px-4 tab-inactive text-mint"><i class="fas fa-calendar-alt mr-1"></i>経済指標</button>
+        <!-- 🌟 タブナビゲーション（スマホで見やすいバッジ型に変更） -->
+        <div class="flex flex-wrap gap-2 border-b border-light pb-4 mb-6" id="main-tabs">
+            <button onclick="switchTab('portfolio')" id="tab-portfolio" class="px-5 py-2 rounded-full font-bold bg-turquoise text-white shadow-sm transition text-sm">保有資産</button>
+            <button onclick="switchTab('history')" id="tab-history" class="px-5 py-2 rounded-full font-bold bg-[#F8F6ED] text-stone border border-light hover:bg-[#E2E8F0] transition text-sm">取引履歴</button>
+            <button onclick="switchTab('watchlist')" id="tab-watchlist" class="px-5 py-2 rounded-full font-bold bg-[#F8F6ED] text-stone border border-light hover:bg-[#E2E8F0] transition text-sm">気になるリスト</button>
+            <button onclick="switchTab('news')" id="tab-news" class="px-5 py-2 rounded-full font-bold bg-[#F8F6ED] text-stone border border-light hover:bg-[#E2E8F0] transition text-sm">関連ニュース</button>
+            <button onclick="switchTab('calendar')" id="tab-calendar" class="px-5 py-2 rounded-full font-bold bg-[#F8F6ED] text-stone border border-light hover:bg-[#E2E8F0] transition text-sm"><i class="fas fa-calendar-alt text-mint mr-1"></i>経済指標</button>
         </div>
 
-        <!-- 保有資産 -->
         <div id="content-portfolio">
             <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
                 <ul id="portfolio-list" class="divide-y border-light"><li class="p-4 text-center text-stone">読み込み中...</li></ul>
             </div>
         </div>
 
-        <!-- 取引履歴 -->
         <div id="content-history" class="hidden">
             <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
                 <ul id="history-list" class="divide-y border-light"><li class="p-4 text-center text-stone">履歴がありません</li></ul>
             </div>
         </div>
 
-        <!-- 気になるリスト -->
         <div id="content-watchlist" class="hidden">
             <div class="bg-white-card p-6 rounded-xl shadow-sm border border-light mb-6">
                 <h3 class="text-lg font-extrabold text-main mb-4">気になる銘柄の追加</h3>
                 <div class="bg-[#F8F6ED] p-4 rounded-lg border border-light mb-4 relative">
                     <label class="block text-sm font-bold text-stone mb-2"><i class="fas fa-search text-turquoise"></i> 銘柄検索（自動入力）</label>
-                    <input type="text" id="watch-search" class="w-full border border-light rounded p-2 text-main bg-white" placeholder="例: 7203 または トヨタ" autocomplete="off">
+                    <input type="text" id="watch-search" class="w-full border border-light rounded p-2 text-main bg-white focus:outline-none" placeholder="例: 7203 または トヨタ" autocomplete="off">
                     <div id="watch-suggest" class="absolute z-10 w-full bg-white border border-light shadow-lg rounded-b hidden max-h-48 overflow-y-auto"></div>
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
@@ -263,7 +260,7 @@
                         <input type="text" id="watch-name" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly>
                     </div>
                     <div>
-                        <button onclick="submitWatchlist()" class="w-full bg-turquoise text-white font-bold py-2 rounded hover-bg-turquoise transition shadow">リストに追加</button>
+                        <button onclick="submitWatchlist()" class="w-full bg-turquoise text-white font-bold py-2 rounded hover:opacity-80 transition shadow">リストに追加</button>
                     </div>
                 </div>
             </div>
@@ -273,23 +270,40 @@
             </div>
         </div>
 
-        <!-- ニュース -->
         <div id="content-news" class="hidden">
             <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden p-4" id="news-container">
                 <p class="text-center text-stone">ニュースを読み込んでいます...</p>
             </div>
         </div>
 
-        <!-- 🌟 追加：経済指標カレンダー -->
+        <!-- 🌟 追加：プロ仕様の経済指標カレンダー（TradingView埋め込み） -->
         <div id="content-calendar" class="hidden">
-            <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden p-6 text-center">
-                <h3 class="text-xl font-extrabold text-main mb-3"><i class="fas fa-calendar-alt text-mint mr-2"></i>世界の重要経済指標</h3>
-                <p class="text-sm text-stone mb-6">相場が大きく動く可能性があるイベントのスケジュールです。<br>投資のタイミングの参考にしましょう！</p>
+            <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden p-6">
+                <h3 class="text-xl font-extrabold text-main mb-3 text-center"><i class="fas fa-calendar-alt text-mint mr-2"></i>世界の重要経済指標</h3>
+                <p class="text-sm text-stone mb-6 text-center">相場が大きく動く可能性があるイベントのスケジュールです。<br>重要度の高い指標（★の数）に注目しましょう！</p>
                 
-                <a href="https://finance.yahoo.co.jp/fx/indicator" target="_blank" class="inline-block bg-mint text-white font-bold py-3 px-8 rounded-full shadow hover:opacity-80 transition">
-                    カレンダーを確認する <i class="fas fa-external-link-alt ml-1"></i>
-                </a>
-                <p class="text-xs text-stone mt-4 opacity-70">※Yahoo!ファイナンスの経済指標ページが開きます</p>
+                <!-- TradingView ウィジェット -->
+                <div class="tradingview-widget-container w-full h-[500px] border border-light rounded-lg overflow-hidden">
+                  <div class="tradingview-widget-container__widget h-full w-full"></div>
+                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>
+                  {
+                  "colorTheme": "light",
+                  "isTransparent": true,
+                  "width": "100%",
+                  "height": "100%",
+                  "locale": "ja",
+                  "importanceFilter": "-1,0,1",
+                  "currencyFilter": "USD,JPY,EUR"
+                  }
+                  </script>
+                </div>
+
+                <div class="text-center mt-6 pt-4 border-t border-light">
+                    <p class="text-xs text-stone mb-3">ウィジェットが表示されない場合はこちら👇</p>
+                    <a href="https://minkabu.jp/economy/indicator" target="_blank" class="inline-block bg-[#F8F6ED] text-stone font-bold py-2.5 px-6 rounded-full border border-light hover:bg-[#E2E8F0] transition text-sm shadow-sm">
+                        別サイト（みんかぶ）で確認する <i class="fas fa-external-link-alt ml-1"></i>
+                    </a>
+                </div>
             </div>
         </div>
     </div>
@@ -343,13 +357,17 @@
 
         function logout() { window.location.href = '/'; }
 
+        // 🌟 バッジ型タブ切り替えロジック
         function switchTab(tabName) {
-            ['portfolio', 'history', 'watchlist', 'news', 'calendar'].forEach(t => {
+            const tabs = ['portfolio', 'history', 'watchlist', 'news', 'calendar'];
+            tabs.forEach(t => {
                 document.getElementById(`content-${t}`).classList.add('hidden');
-                document.getElementById(`tab-${t}`).classList.replace('tab-active', 'tab-inactive');
+                const btn = document.getElementById(`tab-${t}`);
+                btn.className = "px-5 py-2 rounded-full font-bold bg-[#F8F6ED] text-stone border border-light hover:bg-[#E2E8F0] transition text-sm";
             });
             document.getElementById(`content-${tabName}`).classList.remove('hidden');
-            document.getElementById(`tab-${tabName}`).classList.replace('tab-inactive', 'tab-active');
+            const activeBtn = document.getElementById(`tab-${tabName}`);
+            activeBtn.className = "px-5 py-2 rounded-full font-bold bg-turquoise text-white shadow-sm transition text-sm";
 
             if (tabName === 'history') loadHistory();
             if (tabName === 'watchlist') loadWatchlist();
@@ -367,7 +385,6 @@
                 profitEl.className = totalProfit >= 0 ? 'text-mint' : 'text-orange';
                 document.getElementById('usdjpy-rate').textContent = `${data.usdjpy_rate}円 (${data.usdjpy_time})`;
 
-                // 🌟 追加：配当金のプログレスバー計算
                 const yearlyDiv = data.est_dividend_jpy || 0;
                 const monthlyDiv = Math.floor(yearlyDiv / 12);
                 document.getElementById('yearly-dividend').textContent = `¥${Math.floor(yearlyDiv).toLocaleString()}`;
@@ -380,7 +397,7 @@
                     { t: 10000, text: "格安SIMのスマホ代が払えるレベル📱", next: 30000 },
                     { t: 30000, text: "光熱費と水道代が全額まかなえるレベル💡", next: 100000 },
                     { t: 100000, text: "家賃がまるまる払えるレベル🏠✨", next: 300000 },
-                    { t: 300000, text: "もはや完全な不労所得生活レベル！FIRE達成🌴✨", next: 1000000 } // 上限
+                    { t: 300000, text: "もはや完全な不労所得生活レベル！FIRE達成🌴✨", next: 1000000 }
                 ];
 
                 let currentLevel = levels[0];
@@ -428,7 +445,7 @@
             try {
                 const res = await fetch(`/api/${userId}/history`);
                 fullChartData = await res.json();
-                filterChart('1Y'); 
+                filterChart('1M'); 
             } catch(e) { console.error(e); }
         }
 
