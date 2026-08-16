@@ -7,12 +7,10 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta, timezone
 import requests
-from bs4 import BeautifulSoup
 import jpholiday
 import re
 import math
 import urllib.parse
-import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 import csv
 
@@ -159,10 +157,11 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
             try:
                 res = requests.get(url, headers=headers, timeout=5)
                 if res.status_code == 200:
-                    text_only = re.sub(r'<[^>]+>', '', res.text)
-                    idx = text_only.find("基準価額")
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    idx = res.text.find("基準価額")
                     if idx != -1:
-                        snippet = text_only[idx:idx+150]
+                        snippet = re.sub(r'<[^>]+>', '', res.text[idx:idx+150])
                         match = re.search(r'([1-9][0-9]{0,2}(?:,[0-9]{3})+)', snippet)
                         if match: price = float(match.group(1).replace(',', ''))
             except: pass
@@ -248,7 +247,7 @@ def handle_message(event):
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
 # ==========================================
-# 🌟 【修正版】日曜の夜でも空白にならない経済カレンダーAPI
+# 🌟 【完全版】経済カレンダーAPI（ダミー撤廃＆正確な日付抽出）
 # ==========================================
 @app.get("/api/economic_calendar")
 def get_economic_calendar():
@@ -303,7 +302,7 @@ def get_economic_calendar():
             except:
                 dt_jst = datetime.strptime(date_str[:10], "%Y-%m-%d") + timedelta(hours=13)
             
-            # 過去のイベント（昨日より前）はスキップし、今日以降を表示
+            # 🌟 過去のイベント（昨日より前）はスキップし、今日以降を表示！
             if dt_jst.strftime("%Y-%m-%d") < today_str: continue
                 
             d_key = dt_jst.strftime("%m/%d")
@@ -316,7 +315,15 @@ def get_economic_calendar():
                 text_color = "text-[#2F3842]"
                 if dt_jst.weekday() == 5: text_color = "text-[#4984BD]"
                 elif dt_jst.weekday() == 6: bg_color = "bg-[#F77261]"; text_color = "text-white"
-                calendar_dict[d_key] = {"date": d_key, "day": day_str, "bg": bg_color, "text": text_color, "events": [], "sort_key": sort_key}
+                
+                calendar_dict[d_key] = {
+                    "date": d_key, 
+                    "day": day_str, 
+                    "bg": bg_color, 
+                    "text": text_color, 
+                    "events": [], 
+                    "sort_key": sort_key
+                }
             
             is_red = (impact == "High")
             calendar_dict[d_key]["events"].append({
@@ -327,32 +334,13 @@ def get_economic_calendar():
             })
             
         sorted_vals = sorted(calendar_dict.values(), key=lambda x: x["sort_key"])
-        if not sorted_vals: raise Exception("No future events found")
+        if not sorted_vals: return []
         # 直近7日間分のスケジュールを返す
         return sorted_vals[:7]
         
     except Exception as e:
-        # 🌟 APIが全滅した時用の「鉄壁のフォールバック（ダミーデータ）」
-        calendar_dict = {}
-        today = datetime.now(timezone(timedelta(hours=9)))
-        for i in range(7):
-            dt_jst = today + timedelta(days=i)
-            d_key = dt_jst.strftime("%m/%d").replace("0", "", 1) if dt_jst.strftime("%m/%d").startswith("0") else dt_jst.strftime("%m/%d")
-            day_str = days_jp[dt_jst.weekday()]
-            
-            bg_color = "bg-[#F8F6ED]"
-            text_color = "text-[#2F3842]"
-            if dt_jst.weekday() == 5: text_color = "text-[#4984BD]"
-            elif dt_jst.weekday() == 6: bg_color = "bg-[#F77261]"; text_color = "text-white"
-            
-            events = []
-            if dt_jst.weekday() == 2: events.append({"flag": "🇺🇸", "title": "米・消費者物価指数(CPI) (21:30)", "isRed": True, "isHtml": False})
-            elif dt_jst.weekday() == 3: events.append({"flag": "🇺🇸", "title": "米・新規失業保険申請件数 (21:30)", "isRed": False, "isHtml": False})
-            elif dt_jst.weekday() == 4: events.append({"flag": "🇯🇵", "title": "日銀・金融政策決定会合", "isRed": True, "isHtml": False})
-            
-            calendar_dict[d_key] = {"date": d_key, "day": day_str, "bg": bg_color, "text": text_color, "events": events}
-            
-        return list(calendar_dict.values())
+        print("Calendar Error:", e)
+        return []
 
 @app.get("/")
 def read_root(): return FileResponse("index.html")
@@ -404,6 +392,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
                 if len(results) >= 8: break
         if len(results) < 8 and len(q_str) == 8 and q_str.isalnum():
             try:
+                from bs4 import BeautifulSoup
                 res = requests.get(f"https://itf.minkabu.jp/fund/{q_str.upper()}", headers=headers, timeout=3)
                 if res.status_code == 200:
                     soup = BeautifulSoup(res.text, 'html.parser')
@@ -636,7 +625,67 @@ def get_history(user_id: str):
             
     return result
 
-# 🌟 修正: ウォッチリストの通信エラー完全修正
+# 🌟 【最強代替API】Yahoo!ファイナンス公式の非公開JSONから直接ニュースを奪取！
+@app.get("/api/{user_id}/news")
+def get_jp_news(user_id: str):
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT ticker, name FROM portfolio WHERE user_id = %s AND quantity > 0", (user_id,))
+        p_items = cursor.fetchall()
+        cursor.execute("SELECT ticker, name FROM watchlist WHERE user_id = %s", (user_id,))
+        w_items = cursor.fetchall()
+        cursor.close(); conn.close()
+        
+        all_items = p_items + w_items
+        news_list = []
+        headers = {"User-Agent": "Mozilla/5.0"}
+        
+        # 1. 銘柄ごとの個別ニュース（Yahooの隠しAPIから直接取得）
+        for item in all_items:
+            ticker = item["ticker"]
+            name = item["name"]
+            if len(ticker) == 8 and ticker.isalnum(): continue # 投信はスキップ
+            
+            # 日本株の場合は .T を外して 4桁コード だけにする
+            search_code = ticker.replace(".T", "") if ticker.endswith(".T") else ticker
+            
+            url = f"https://finance.yahoo.co.jp/api/v1/news/timeline?code={search_code}&limit=3"
+            try:
+                res = requests.get(url, headers=headers, timeout=5)
+                if res.status_code == 200:
+                    for news in res.json().get("data", {}).get("items", [])[:3]:
+                        dt = datetime.fromtimestamp(news.get("pubDate", 0), timezone(timedelta(hours=9)))
+                        news_list.append({
+                            "stock_name": name,
+                            "title": news.get("title", ""),
+                            "link": news.get("link", ""),
+                            "pub_time": dt.strftime("%Y/%m/%d %H:%M"),
+                            "timestamp": dt.timestamp()
+                        })
+            except: pass
+            
+        # 2. 全体市況（日経平均・ドル円）のニュースを補完
+        market_url = "https://finance.yahoo.co.jp/api/v1/news/timeline?category=market&limit=3"
+        try:
+            res = requests.get(market_url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                for news in res.json().get("data", {}).get("items", [])[:3]:
+                    dt = datetime.fromtimestamp(news.get("pubDate", 0), timezone(timedelta(hours=9)))
+                    news_list.append({
+                        "stock_name": "主要市況",
+                        "title": news.get("title", ""),
+                        "link": news.get("link", ""),
+                        "pub_time": dt.strftime("%Y/%m/%d %H:%M"),
+                        "timestamp": dt.timestamp()
+                    })
+        except: pass
+            
+        news_list.sort(key=lambda x: x["timestamp"], reverse=True)
+        return news_list[:30] # 重くならないように最新30件を返す
+    except Exception as e:
+        print("News Error:", e)
+        return []
+
 @app.get("/api/{user_id}/watchlist")
 def get_watchlist(user_id: str):
     try:
@@ -649,14 +698,13 @@ def get_watchlist(user_id: str):
         
         result = []
         for r in rows:
-            item = dict(r) # ←ここで完全に辞書型に変換
+            item = dict(r)
             price, _ = get_asset_data(item["ticker"], item["ticker"].endswith(".T") or (len(item["ticker"])==4 and item["ticker"].isalnum()), False)
             item["current_price"] = price
             item["currency"] = "¥" if item["ticker"].endswith(".T") or (len(item["ticker"])==4 and item["ticker"].isalnum()) else "$"
             result.append(item)
         return result
     except Exception as e:
-        print("Watchlist Error:", e)
         return []
 
 @app.post("/api/{user_id}/watchlist")
