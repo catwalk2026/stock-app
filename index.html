@@ -274,11 +274,11 @@
             </div>
         </div>
 
-        <!-- 🌟 カレンダー表示枠 -->
+        <!-- 🌟 経済指標カレンダー -->
         <div id="content-calendar" class="hidden">
             <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
                 <div class="p-4 border-b border-light bg-white flex items-center">
-                    <h3 class="text-lg font-extrabold text-main"><i class="fas fa-calendar-alt text-mint mr-2"></i>今週の経済指標</h3>
+                    <h3 class="text-lg font-extrabold text-main"><i class="fas fa-calendar-alt text-mint mr-2"></i>海外APIから取得した今週の重要指標</h3>
                 </div>
                 
                 <div id="economic-calendar-container" class="text-sm">
@@ -286,8 +286,9 @@
                 </div>
                 
                 <div class="p-4 bg-[#F8F6ED] border-t border-light text-center">
-                    <a href="https://finance.yahoo.co.jp/fx/indicator" target="_blank" class="text-turquoise text-sm font-bold hover:underline">
-                        Yahoo!ファイナンスで最新を確認する <i class="fas fa-external-link-alt ml-1"></i>
+                    <!-- 🌟 修正：みんかぶの正しいリンク -->
+                    <a href="https://minkabu.jp/economy/indicator" target="_blank" class="text-turquoise text-sm font-bold hover:underline">
+                        みんかぶで国内・海外の詳細な指標を確認する <i class="fas fa-external-link-alt ml-1"></i>
                     </a>
                 </div>
             </div>
@@ -337,7 +338,7 @@
                 
                 container.innerHTML = '';
                 if (data.length === 0) {
-                    container.innerHTML = '<div class="p-6 text-center text-stone">今週のスケジュールは見つかりませんでした。</div>';
+                    container.innerHTML = '<div class="p-6 text-center text-stone">今週のスケジュールは見つかりませんでした。<br>下のリンクから確認してください。</div>';
                     return;
                 }
 
@@ -468,7 +469,7 @@
             try {
                 const res = await fetch(`/api/${userId}/history`);
                 fullChartData = await res.json();
-                filterChart('1M'); 
+                filterChart('1Y'); 
             } catch(e) { console.error(e); }
         }
 
