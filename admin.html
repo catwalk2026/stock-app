@@ -3,105 +3,96 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>【管理者専用】ユーザー管理パネル</title>
+    <title>【管理画面】ユーザーデータ管理</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
-        body { 
-            font-family: "Helvetica Neue", Arial, sans-serif; 
-            background-color: #F8F6ED; 
-            color: #2F3842; 
-            padding: 40px; 
-            margin: 0;
-        }
-        .container { 
-            max-width: 800px; 
-            margin: 0 auto; 
-            background: #FFFFFF; 
-            padding: 40px; 
-            border-radius: 12px; 
-            box-shadow: 0 4px 20px rgba(0,0,0,0.05); 
-        }
-        h1 { color: #25B2C7; border-bottom: 2px solid #F7F7F8; padding-bottom: 10px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { padding: 12px; text-align: center; border-bottom: 1px solid #F7F7F8; }
-        th { background: #60C7D5; color: white; }
-        .btn-delete { 
-            background: #F77261; color: white; border: none; padding: 6px 12px; 
-            border-radius: 6px; cursor: pointer; transition: 0.2s; font-weight: bold;
-        }
-        .btn-delete:hover { background: #D56C76; }
+        body { background-color: #F8F6ED; color: #2F3842; }
+        .text-main { color: #2F3842; }
+        .text-turquoise { color: #25B2C7; }
+        .bg-turquoise { background-color: #60C7D5; }
+        .bg-white-card { background-color: #FFFFFF; }
+        .border-light { border-color: #F7F7F8; }
+        .text-stone { color: #596572; }
+        .text-orange { color: #F77261; }
     </style>
 </head>
-<body>
-    <div class="container">
-        <h1>🔒 システム管理者パネル</h1>
-        <p style="color: #596572;">利用を停止した生徒さんのデータを完全に削除できます。（※元には戻せません）</p>
-        
-        <table>
-            <thead>
-                <tr>
-                    <th>会員ID</th>
-                    <th>保有資産数</th>
-                    <th>取引履歴数</th>
-                    <th>操作</th>
-                </tr>
-            </thead>
-            <tbody id="user-table-body">
-                <tr><td colspan="4">読み込み中...</td></tr>
-            </tbody>
-        </table>
+<body class="font-sans antialiased p-8">
+    <div class="max-w-4xl mx-auto bg-white-card rounded-xl shadow-sm border border-light p-8">
+        <h1 class="text-2xl font-extrabold text-main mb-2"><i class="fas fa-lock text-turquoise mr-2"></i>システム管理者パネル</h1>
+        <p class="text-sm text-stone mb-8 border-b border-light pb-4">利用を停止した生徒さんのデータを完全に削除できます。（※元には戻せません）</p>
+
+        <div class="overflow-x-auto">
+            <table class="min-w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-turquoise text-white text-sm">
+                        <th class="p-4 font-bold border-r border-white/20">会員ID</th>
+                        <th class="p-4 font-bold border-r border-white/20 text-center">保有資産数</th>
+                        <th class="p-4 font-bold border-r border-white/20 text-center">取引履歴数</th>
+                        <th class="p-4 font-bold text-center">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="user-list" class="divide-y border-light text-sm">
+                    <tr><td colspan="4" class="p-6 text-center text-stone">読み込み中...</td></tr>
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <script>
         async function loadUsers() {
-            const tbody = document.getElementById('user-table-body');
+            const listEl = document.getElementById('user-list');
             try {
                 const res = await fetch('/api/admin/users');
+                if (!res.ok) throw new Error("API Error");
                 const users = await res.json();
                 
+                listEl.innerHTML = '';
                 if (users.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4">登録されているユーザーデータはありません。</td></tr>';
+                    listEl.innerHTML = '<tr><td colspan="4" class="p-6 text-center text-stone">登録ユーザーがいません。</td></tr>';
                     return;
                 }
-                
-                let html = '';
-                users.forEach(u => {
-                    html += `
-                        <tr>
-                            <td style="font-weight:bold;">${u.user_id}</td>
-                            <td>${u.portfolio_count} 件</td>
-                            <td>${u.tx_count} 件</td>
-                            <td>
-                                <button class="btn-delete" onclick="deleteUser('${u.user_id}')">データを全削除</button>
+
+                users.forEach(user => {
+                    listEl.innerHTML += `
+                        <tr class="hover:bg-[#F8F6ED] transition">
+                            <td class="p-4 font-mono font-bold text-main border-r border-light">${user.user_id}</td>
+                            <td class="p-4 text-center text-stone border-r border-light">${user.portfolio_count} 件</td>
+                            <td class="p-4 text-center text-stone border-r border-light">${user.transaction_count} 件</td>
+                            <td class="p-4 text-center">
+                                <button onclick="deleteUser('${user.user_id}')" class="bg-white border border-orange text-orange hover:bg-orange hover:text-white px-4 py-1.5 rounded font-bold transition shadow-sm">
+                                    <i class="fas fa-trash-alt mr-1"></i> データ完全消去
+                                </button>
                             </td>
                         </tr>
                     `;
                 });
-                tbody.innerHTML = html;
-            } catch (e) {
-                tbody.innerHTML = '<tr><td colspan="4" style="color:red;">エラーが発生しました。</td></tr>';
+            } catch (error) {
+                listEl.innerHTML = '<tr><td colspan="4" class="p-6 text-center text-orange font-bold">エラーが発生しました。</td></tr>';
             }
         }
 
         async function deleteUser(userId) {
-            const code = prompt(`【警告】\nID: ${userId} のすべての資産データ・取引履歴・積立設定を完全に削除します。\n実行する場合は「削除」と入力してください。`);
-            if (code !== "削除") {
-                alert("削除をキャンセルしました。");
+            const code = prompt(`【警告】\n会員「${userId}」の全データを完全に削除します。\n実行する場合は、削除確認のために「${userId}」と入力してください。`);
+            if (code !== userId) {
+                alert("入力が一致しませんでした。削除をキャンセルします。");
                 return;
             }
-            
+
             try {
-                const res = await fetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
+                const res = await fetch(`/api/admin/user/${userId}`, { method: 'DELETE' });
                 if (res.ok) {
-                    alert(`ID: ${userId} のデータを完全に削除しました。`);
-                    loadUsers(); // リストを再読み込み
+                    alert('削除が完了しました。');
+                    loadUsers();
+                } else {
+                    alert('削除に失敗しました。');
                 }
-            } catch (e) {
-                alert("削除中にエラーが発生しました。");
+            } catch (error) {
+                alert('通信エラーが発生しました。');
             }
         }
 
-        // ページ読み込み時に実行
-        loadUsers();
+        window.onload = loadUsers;
     </script>
 </body>
 </html>
