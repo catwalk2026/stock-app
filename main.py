@@ -78,12 +78,11 @@ def get_db_connection():
     return conn
 
 # ==========================================
-# 🌟 【最新版】2026年8月リリースの「Gemini 3.7 Flash」を搭載！！
+# 🌟 【完全復旧】AI要約API通信（正しく存在する最新モデル gemini-1.5-flash を指定）
 # ==========================================
 def get_ai_summary(title: str) -> str:
     if not GEMINI_API_KEY: return "AI機能が未設定です（APIキーを確認してください）"
-    # 🌟 モデルIDを gemini-3.7-flash に変更
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     payload = {
         "contents": [{"parts": [{"text": f"以下のニュースのタイトルから、個人投資家向けに影響を2〜3行で簡潔に要約してください。\nニュースタイトル: {title}"}]}]
     }
@@ -347,15 +346,23 @@ def get_jp_news(user_id: str):
         print("News Error:", e)
         return []
 
+# ==========================================
+# 🌟 【完全反映】ユーザー様から頂いた日米のリストを全て搭載した経済カレンダー！
+# ==========================================
 @app.get("/api/economic_calendar")
 def get_economic_calendar():
+    # ユーロ圏を除外し、いただいたテキストを一言一句全て完全反映しています！
     data = [
         {
             "date": "8/17", "day": "月", "bg": "bg-[#F8F6ED]", "text": "text-[#2F3842]", "sort_key": "1",
             "events": [
                 {"flag": "🇯🇵", "title": "実質GDP（前期比）（1次速報） (08:50)", "isRed": True, "isHtml": False},
+                {"flag": "🇯🇵", "title": "実質GDP（前期比年率）（1次速報） (08:50)", "isRed": True, "isHtml": False},
+                {"flag": "🇯🇵", "title": "GDPデフレータ（前年比）（1次速報） (08:50)", "isRed": False, "isHtml": False},
                 {"flag": "🇯🇵", "title": "第3次産業活動指数（前月比） (13:30)", "isRed": False, "isHtml": False},
-                {"flag": "🇯🇵", "title": "鉱工業生産（前月比）（確報） (13:30)", "isRed": True, "isHtml": False},
+                {"flag": "🇯🇵", "title": "設備稼働率（前月比） (13:30)", "isRed": True, "isHtml": False},
+                {"flag": "🇯🇵", "title": "鉱工業生産（前月比）（確報） (13:30)", "isRed": False, "isHtml": False},
+                {"flag": "🇯🇵", "title": "鉱工業生産（前年比）（確報） (13:30)", "isRed": True, "isHtml": False},
                 {"flag": "🇺🇸", "title": "米・ニューヨーク連銀製造業景気指数 (21:30)", "isRed": True, "isHtml": False},
                 {"flag": "🇺🇸", "title": "米・NAHB住宅市場指数 (23:00)", "isRed": False, "isHtml": False}
             ]
@@ -364,21 +371,35 @@ def get_economic_calendar():
             "date": "8/18", "day": "火", "bg": "bg-[#F8F6ED]", "text": "text-[#2F3842]", "sort_key": "2",
             "events": [
                 {"flag": "🇺🇸", "title": "米・対米証券投資 (05:00)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・住宅建築許可件数（速報） (21:30)", "isRed": True, "isHtml": False},
                 {"flag": "🇺🇸", "title": "米・住宅着工件数 (21:30)", "isRed": True, "isHtml": False},
-                {"flag": "🇺🇸", "title": "米・鉱工業生産指数（前月比） (22:15)", "isRed": True, "isHtml": False}
+                {"flag": "🇺🇸", "title": "米・輸入物価指数（前月比） (21:30)", "isRed": False, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・輸入物価指数（前年比） (21:30)", "isRed": False, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・設備稼働率 (22:15)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・鉱工業生産指数（前月比） (22:15)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・中古住宅販売成約指数（前月比） (23:00)", "isRed": True, "isHtml": False}
             ]
         },
         {
             "date": "8/19", "day": "水", "bg": "bg-[#F8F6ED]", "text": "text-[#2F3842]", "sort_key": "3",
             "events": [
                 {"flag": "🇯🇵", "title": "機械受注（前年比） (08:50)", "isRed": True, "isHtml": False},
-                {"flag": "🇺🇸", "title": "米・原油在庫（前週比） (23:30)", "isRed": True, "isHtml": False}
+                {"flag": "🇯🇵", "title": "機械受注（前月比） (08:50)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・MBA住宅ローン申請指数（前週比） (20:00)", "isRed": False, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・原油在庫（前週比） (23:30)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・ガソリン在庫（前週比） (23:30)", "isRed": True, "isHtml": False},
+                {"flag": "🇺🇸", "title": "米・留出油在庫（前週比） (23:30)", "isRed": True, "isHtml": False}
             ]
         },
         {
             "date": "8/20", "day": "木", "bg": "bg-[#F8F6ED]", "text": "text-[#2F3842]", "sort_key": "4",
             "events": [
                 {"flag": "🇯🇵", "title": "通関ベース貿易収支 (08:50)", "isRed": True, "isHtml": False},
+                {"flag": "🇯🇵", "title": "通関ベース貿易収支（季調済） (08:50)", "isRed": False, "isHtml": False},
+                {"flag": "🇯🇵", "title": "対内証券投資-株式ネット (08:50)", "isRed": False, "isHtml": False},
+                {"flag": "🇯🇵", "title": "対外証券投資-株式ネット (08:50)", "isRed": False, "isHtml": False},
+                {"flag": "🇯🇵", "title": "対内証券投資-中長期ネット (08:50)", "isRed": False, "isHtml": False},
+                {"flag": "🇯🇵", "title": "対外証券投資-中長期ネット (08:50)", "isRed": False, "isHtml": False},
                 {"flag": "🇺🇸", "title": "米・フィラデルフィア連銀景況指数 (21:30)", "isRed": True, "isHtml": False},
                 {"flag": "🇺🇸", "title": "米・新規失業保険申請件数 (21:30)", "isRed": True, "isHtml": False},
                 {"flag": "🇺🇸", "title": "米・景気先行指数（前月比） (23:00)", "isRed": False, "isHtml": False}
@@ -388,7 +409,7 @@ def get_economic_calendar():
             "date": "8/21", "day": "金", "bg": "bg-[#F8F6ED]", "text": "text-[#2F3842]", "sort_key": "5",
             "events": [
                 {"flag": "🇯🇵", "title": "全国消費者物価指数（CPI）（前年比） (08:30)", "isRed": True, "isHtml": False},
-                {"flag": "🇺🇸", "title": "米・中古住宅販売成約指数 (23:00)", "isRed": True, "isHtml": False}
+                {"flag": "🇯🇵", "title": "全国消費者物価指数（CPI）（生鮮食料品除くコア）（前年比） (08:30)", "isRed": True, "isHtml": False}
             ]
         },
         {
@@ -445,7 +466,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
         except: pass
 
     if asset_type in ["FUND", "ALL"] and len(results) < 8:
-        from bs4 import BeautifulSoup
         search_terms = q_str.replace(" ", " ").split()
         for fund in POPULAR_FUNDS:
             if all(t in (fund["name"].lower() + " " + " ".join(fund["keywords"])) for t in search_terms):
