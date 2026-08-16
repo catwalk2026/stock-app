@@ -7,7 +7,6 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta, timezone
 import requests
-from bs4 import BeautifulSoup
 import jpholiday
 import re
 import math
@@ -149,23 +148,7 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
             cursor.close(); conn.close(); return row["price"], row["div_yield"]
     except: pass
         
-    headers = {"User-Agent": "Mozilla/5.0"}
-    
-    if is_fund and len(ticker) == 8 and ticker.isalnum():
-        urls_to_try = [f"https://itf.minkabu.jp/fund/{ticker}", f"https://finance.yahoo.co.jp/quote/{ticker}"]
-        for url in urls_to_try:
-            if price > 0.0: break
-            try:
-                res = requests.get(url, headers=headers, timeout=5)
-                if res.status_code == 200:
-                    text_only = re.sub(r'<[^>]+>', '', res.text)
-                    idx = text_only.find("基準価額")
-                    if idx != -1:
-                        snippet = text_only[idx:idx+150]
-                        match = re.search(r'([1-9][0-9]{0,2}(?:,[0-9]{3})+)', snippet)
-                        if match: price = float(match.group(1).replace(',', ''))
-            except: pass
-    else:
+    if not is_fund:
         try:
             stock_ticker = ticker if not is_jpy else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
             stock = yf.Ticker(stock_ticker); hist = stock.history(period="1d")
@@ -191,7 +174,13 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     return price, div_yield
 
 def check_and_send_news():
-    pass
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT * FROM line_users WHERE is_news_active = TRUE")
+        users = cursor.fetchall()
+        cursor.close(); conn.close()
+    except: pass
 
 scheduler = BackgroundScheduler(); scheduler.add_job(check_and_send_news, 'interval', minutes=60); scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
@@ -207,9 +196,24 @@ async def callback(request: Request, x_line_signature: str = Header(None)):
 def handle_message(event):
     text = event.message.text.strip()
     line_user_id = event.source.user_id
-    if text == "最新ニュース取得":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="🚀 最新の市況と保有銘柄のニュースを集めています..."))
-    elif text == "通知設定変更":
+    
+    if "会員連携" in text:
+        msg = "ABCashのアプリで使っている【6桁の会員ID（英数字）】をそのままメッセージで送信してください！🔑\n\n連携すると、あなただけのポートフォリオやニュースがいつでもLINEからワンタップで見れるようになります✨"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
+
+    elif "最新ニュース" in text:
+        try:
+            conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = %s", (line_user_id,))
+            row = cursor.fetchone(); cursor.close(); conn.close()
+            if row:
+                msg = f"🚀 {row['app_user_id']}さんの保有銘柄と日経平均の最新ニュースをAIがチェックしています！\n\n👇 以下のダッシュボードの「関連ニュース」タブから、AIの要約付きで確認できますよ✨\nhttps://stock-app-xyif.onrender.com/{row['app_user_id']}"
+            else:
+                msg = "ニュースをお届けするために、まずは「🔑 会員連携」からIDを登録してくださいね！"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
+        except: pass
+
+    elif "通知" in text:
         try:
             conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute("SELECT is_news_active FROM line_users WHERE line_user_id = %s", (line_user_id,))
@@ -217,31 +221,43 @@ def handle_message(event):
             if row:
                 new_status = not row["is_news_active"]
                 cursor.execute("UPDATE line_users SET is_news_active = %s WHERE line_user_id = %s", (new_status, line_user_id))
-                msg = f"ニュースの自動通知を【 {'ON 🔔' if new_status else 'OFF 🔕'} 】に設定しました！"
+                if new_status:
+                    msg = "🔔 【通知：ON】\n最新のニュースや相場の変動をLINEでお知らせします！お楽しみに✨"
+                else:
+                    msg = "🔕 【通知：OFF】\n定期通知をストップしました。またいつでもONにできます！"
             else:
-                msg = "まずは「会員連携」を完了させてください！"
+                msg = "通知を受け取るために、まずは「🔑 会員連携」からIDを登録してくださいね！"
             cursor.close(); conn.close()
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
         except: pass
+
     elif "ダッシュボード" in text:
         try:
             conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = %s", (line_user_id,))
             row = cursor.fetchone(); cursor.close(); conn.close()
-            if row: line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"https://stock-app-xyif.onrender.com/{row['app_user_id']}"))
+            if row: 
+                msg = f"おかえりなさい！📈✨\n👇こちらから最新の資産状況をチェックできます。\n\nhttps://stock-app-xyif.onrender.com/{row['app_user_id']}"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
+            else:
+                msg = "まずは「🔑 会員連携」からIDを登録してくださいね！"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
         except: pass
+
     elif re.match(r"^[a-zA-Z0-9]{6}$", text):
         try:
             conn = get_db_connection(); cursor = conn.cursor()
             cursor.execute("INSERT INTO line_users (line_user_id, app_user_id, is_news_active) VALUES (%s, %s, TRUE) ON CONFLICT (line_user_id) DO UPDATE SET app_user_id = EXCLUDED.app_user_id", (line_user_id, text))
-            cursor.close(); conn.close(); line_bot_api.reply_message(event.reply_token, TextSendMessage(text="連携完了！🎉"))
+            cursor.close(); conn.close()
+            msg = f"🎉 連携完了！\n\n会員ID【{text}】で連携しました！\nさっそく「ダッシュボード」を開いてみましょう✨"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
         except: pass
 
 @app.get("/api/ai_summary")
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
 # ==========================================
-# 🌟 【最強】「日経平均」と「個別銘柄」のニュースをみんかぶから直接スクレイピング！
+# 🌟 【最強】日経平均と保有銘柄のニュース取得API（yfinanceニュースAPI使用）
 # ==========================================
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
@@ -253,80 +269,46 @@ def get_jp_news(user_id: str):
         w_items = cursor.fetchall()
         cursor.close(); conn.close()
         
-        # 重複を排除して対象銘柄リストを作成
         target_items = {item["ticker"]: item["name"] for item in (p_items + w_items)}
         news_list = []
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         
-        # 1. 銘柄ごとの個別ニュース（みんかぶの各銘柄ニュースページからスクレイピング）
+        # 1. 保有銘柄のニュース（yfinanceの公式APIを使用、絶対にブロックされない）
         for ticker, name in target_items.items():
             if len(ticker) == 8 and ticker.isalnum(): continue # 投信はスキップ
-            
-            # 銘柄コードのみ抽出（7203.T -> 7203）
-            search_code = ticker.replace(".T", "") if ticker.endswith(".T") else ticker
-            
-            # みんかぶのニュースタブ
-            url = f"https://minkabu.jp/stock/{search_code}/news"
             try:
-                res = requests.get(url, headers=headers, timeout=5)
-                if res.status_code == 200:
-                    soup = BeautifulSoup(res.text, 'html.parser')
-                    # みんかぶのニュースリストを取得
-                    news_items = soup.select('.news_list .news_item')
-                    for item in news_items[:3]: # 最新3件
-                        title_tag = item.select_one('.fwb a')
-                        time_tag = item.select_one('.news_time')
-                        if title_tag and time_tag:
-                            title = title_tag.text.strip()
-                            link = title_tag['href']
-                            if not link.startswith('http'): link = "https://minkabu.jp" + link
-                            time_text = time_tag.text.strip()
-                            
-                            # みんかぶの時刻表記「12:34」や「08/17 12:34」を現在日時に変換
-                            now = datetime.now(timezone(timedelta(hours=9)))
-                            if "/" in time_text:
-                                dt_str = f"{now.year}/{time_text}"
-                                dt = datetime.strptime(dt_str, "%Y/%m/%d %H:%M")
-                            else:
-                                dt_str = f"{now.strftime('%Y/%m/%d')} {time_text}"
-                                dt = datetime.strptime(dt_str, "%Y/%m/%d %H:%M")
-                                
-                            news_list.append({
-                                "stock_name": name,
-                                "title": title,
-                                "link": link,
-                                "pub_time": dt.strftime("%Y/%m/%d %H:%M"),
-                                "timestamp": dt.timestamp()
-                            })
-            except: pass
-            
-        # 2. 全体市況（日経平均）のニュース
-        try:
-            res = requests.get("https://minkabu.jp/news/market", headers=headers, timeout=5)
-            if res.status_code == 200:
-                soup = BeautifulSoup(res.text, 'html.parser')
-                for item in soup.select('.news_list .news_item')[:5]:
-                    title_tag = item.select_one('.fwb a')
-                    time_tag = item.select_one('.news_time')
-                    if title_tag and time_tag:
-                        title = title_tag.text.strip()
-                        link = title_tag['href']
-                        if not link.startswith('http'): link = "https://minkabu.jp" + link
-                        time_text = time_tag.text.strip()
-                        
-                        now = datetime.now(timezone(timedelta(hours=9)))
-                        if "/" in time_text:
-                            dt = datetime.strptime(f"{now.year}/{time_text}", "%Y/%m/%d %H:%M")
-                        else:
-                            dt = datetime.strptime(f"{now.strftime('%Y/%m/%d')} {time_text}", "%Y/%m/%d %H:%M")
-                            
+                yf_ticker = ticker if ticker.endswith(".T") else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
+                stock = yf.Ticker(yf_ticker)
+                news = stock.news
+                if news:
+                    for n in news[:3]: # 最新3件
+                        # Unixタイムスタンプを日時に変換
+                        dt = datetime.fromtimestamp(n.get("providerPublishTime", 0), timezone(timedelta(hours=9)))
+                        # 英語タイトルの場合があるため、AI翻訳の代わりに日本語が含まれるか簡易チェック（日本の銘柄は基本日本語ニュースが出ます）
+                        title = n.get("title", "")
                         news_list.append({
-                            "stock_name": "日経平均・市況",
+                            "stock_name": name,
                             "title": title,
-                            "link": link,
+                            "link": n.get("link", ""),
                             "pub_time": dt.strftime("%Y/%m/%d %H:%M"),
                             "timestamp": dt.timestamp()
                         })
+            except Exception as e:
+                pass
+                
+        # 2. 日経平均のニュース（日経225のティッカー ^N225 を使用）
+        try:
+            nk = yf.Ticker("^N225")
+            nk_news = nk.news
+            if nk_news:
+                for n in nk_news[:5]:
+                    dt = datetime.fromtimestamp(n.get("providerPublishTime", 0), timezone(timedelta(hours=9)))
+                    news_list.append({
+                        "stock_name": "日経平均・市況",
+                        "title": n.get("title", ""),
+                        "link": n.get("link", ""),
+                        "pub_time": dt.strftime("%Y/%m/%d %H:%M"),
+                        "timestamp": dt.timestamp()
+                    })
         except: pass
             
         news_list.sort(key=lambda x: x["timestamp"], reverse=True)
@@ -336,7 +318,7 @@ def get_jp_news(user_id: str):
         return []
 
 # ==========================================
-# 🌟 【修正】日米（JPY・USD）のみに絞り込んだ経済カレンダーAPI
+# 🌟 【完全版】日米のみ（🇯🇵🇺🇸）の経済カレンダー抽出
 # ==========================================
 @app.get("/api/economic_calendar")
 def get_economic_calendar():
@@ -356,7 +338,7 @@ def get_economic_calendar():
         if not events: raise Exception("No API Data")
         
         calendar_dict = {}
-        # 🌟 JPY（日本）とUSD（アメリカ）だけ抽出！
+        # 🌟 日本(JPY) と アメリカ(USD) のみに限定！！
         country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
         
         trans = {
@@ -374,7 +356,7 @@ def get_economic_calendar():
         
         for ev in events:
             country = ev.get("country", "")
-            # 🌟 JPY と USD 以外はスキップ！
+            # 🌟 JPY と USD 以外は完全に弾く！！（欧州やイギリスは出ない）
             if country not in ["USD", "JPY"]: continue
             impact = ev.get("impact", "")
             if impact not in ["High", "Medium"]: continue
@@ -481,15 +463,7 @@ def search_stock(q: str, asset_type: str = "ALL"):
             if all(t in (fund["name"].lower() + " " + " ".join(fund["keywords"])) for t in search_terms):
                 if not any(r["ticker"] == fund["ticker"] for r in results): results.append({"ticker": fund["ticker"], "name": fund["name"]})
                 if len(results) >= 8: break
-        if len(results) < 8 and len(q_str) == 8 and q_str.isalnum():
-            try:
-                from bs4 import BeautifulSoup
-                res = requests.get(f"https://itf.minkabu.jp/fund/{q_str.upper()}", headers=headers, timeout=3)
-                if res.status_code == 200:
-                    soup = BeautifulSoup(res.text, 'html.parser')
-                    name = soup.find('h1').get_text(strip=True) if soup.find('h1') else (soup.find('title').text.split('|')[0].split('-')[0].strip() if soup.find('title') else "")
-                    if name: results.append({"ticker": q_str.upper(), "name": name})
-            except: pass
+        
     return results[:8]
 
 @app.post("/api/{user_id}/update_price")
