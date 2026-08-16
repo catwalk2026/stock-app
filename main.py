@@ -7,10 +7,12 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta, timezone
 import requests
+from bs4 import BeautifulSoup
 import jpholiday
 import re
 import math
 import urllib.parse
+import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 import csv
 
@@ -157,11 +159,10 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
             try:
                 res = requests.get(url, headers=headers, timeout=5)
                 if res.status_code == 200:
-                    from bs4 import BeautifulSoup
-                    soup = BeautifulSoup(res.text, 'html.parser')
-                    idx = res.text.find("基準価額")
+                    text_only = re.sub(r'<[^>]+>', '', res.text)
+                    idx = text_only.find("基準価額")
                     if idx != -1:
-                        snippet = re.sub(r'<[^>]+>', '', res.text[idx:idx+150])
+                        snippet = text_only[idx:idx+150]
                         match = re.search(r'([1-9][0-9]{0,2}(?:,[0-9]{3})+)', snippet)
                         if match: price = float(match.group(1).replace(',', ''))
             except: pass
@@ -214,7 +215,7 @@ def handle_message(event):
     text = event.message.text.strip()
     line_user_id = event.source.user_id
     if text == "最新ニュース取得":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="🚀 最新の市況と保有銘柄のニュースを集めています..."))
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="🚀 最新の市況とニュースを集めています..."))
     elif text == "通知設定変更":
         try:
             conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -247,14 +248,50 @@ def handle_message(event):
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
 # ==========================================
-# 🌟 【完全版】経済カレンダーAPI（ダミー撤廃＆正確な日付抽出）
+# 🌟 【完全版】絶対に落ちない！最強のRSSニュース取得API
+# ==========================================
+@app.get("/api/{user_id}/news")
+def get_jp_news(user_id: str):
+    news_list = []
+    # サーバーからブロックされないYahoo公式のRSSフィードを使用
+    rss_urls = [
+        ("市況・経済", "https://news.yahoo.co.jp/rss/topics/business.xml"),
+        ("国内ニュース", "https://news.yahoo.co.jp/rss/topics/top-picks.xml")
+    ]
+    
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    for category, url in rss_urls:
+        try:
+            res = requests.get(url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                root = ET.fromstring(res.text)
+                # 各カテゴリから最新の10件ずつ取得
+                for item in root.findall('.//channel/item')[:10]:
+                    pub_date = item.find('pubDate').text
+                    dt = parsedate_to_datetime(pub_date).astimezone(timezone(timedelta(hours=9)))
+                    news_list.append({
+                        "stock_name": category,
+                        "title": item.find('title').text,
+                        "link": item.find('link').text,
+                        "pub_time": dt.strftime("%Y/%m/%d %H:%M"),
+                        "timestamp": dt.timestamp()
+                    })
+        except Exception as e:
+            print("RSS Error:", e)
+            pass
+            
+    # 時間順にソートして最新30件を返す
+    news_list.sort(key=lambda x: x["timestamp"], reverse=True)
+    return news_list[:30]
+
+# ==========================================
+# 🌟 【完全版】週末の空白を撲滅した経済カレンダーAPI
 # ==========================================
 @app.get("/api/economic_calendar")
 def get_economic_calendar():
     days_jp = ["月", "火", "水", "木", "金", "土", "日"]
     try:
         events = []
-        # 日曜日で「今週」が終わっていても大丈夫なように「今週」と「来週」のデータを両方取得
         urls = [
             "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
             "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
@@ -276,11 +313,14 @@ def get_economic_calendar():
             "Unemployment Rate": "失業率", "Retail Sales": "小売売上高", 
             "GDP": "GDP", "Fed": "FRB", "BOJ": "日銀", "Policy Rate": "政策金利発表", 
             "PMI": "購買担当者景気指数(PMI)", "Non-Farm": "非農業部門雇用者数",
-            "Jobless": "失業率"
+            "Jobless": "失業率", "Minutes": "議事要旨"
         }
         
         now = datetime.now(timezone(timedelta(hours=9)))
-        today_str = now.strftime("%Y-%m-%d")
+        
+        # 🌟 日曜日でも空っぽにならないよう「3日前から7日後」までのイベントをすべて抽出
+        start_str = (now - timedelta(days=3)).strftime("%Y-%m-%d")
+        end_str = (now + timedelta(days=7)).strftime("%Y-%m-%d")
         
         for ev in events:
             country = ev.get("country", "")
@@ -302,8 +342,10 @@ def get_economic_calendar():
             except:
                 dt_jst = datetime.strptime(date_str[:10], "%Y-%m-%d") + timedelta(hours=13)
             
-            # 🌟 過去のイベント（昨日より前）はスキップし、今日以降を表示！
-            if dt_jst.strftime("%Y-%m-%d") < today_str: continue
+            target_date_str = dt_jst.strftime("%Y-%m-%d")
+            
+            # 🌟 「過去3日〜未来7日」の期間に含まれないイベントはスキップ
+            if not (start_str <= target_date_str <= end_str): continue
                 
             d_key = dt_jst.strftime("%m/%d")
             d_key = d_key.replace("0", "", 1) if d_key.startswith("0") else d_key
@@ -335,7 +377,6 @@ def get_economic_calendar():
             
         sorted_vals = sorted(calendar_dict.values(), key=lambda x: x["sort_key"])
         if not sorted_vals: return []
-        # 直近7日間分のスケジュールを返す
         return sorted_vals[:7]
         
     except Exception as e:
@@ -392,7 +433,6 @@ def search_stock(q: str, asset_type: str = "ALL"):
                 if len(results) >= 8: break
         if len(results) < 8 and len(q_str) == 8 and q_str.isalnum():
             try:
-                from bs4 import BeautifulSoup
                 res = requests.get(f"https://itf.minkabu.jp/fund/{q_str.upper()}", headers=headers, timeout=3)
                 if res.status_code == 200:
                     soup = BeautifulSoup(res.text, 'html.parser')
@@ -624,67 +664,6 @@ def get_history(user_id: str):
             result.append({"date": date_str, "total_assets": round(day_total, 2)})
             
     return result
-
-# 🌟 【最強代替API】Yahoo!ファイナンス公式の非公開JSONから直接ニュースを奪取！
-@app.get("/api/{user_id}/news")
-def get_jp_news(user_id: str):
-    try:
-        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("SELECT ticker, name FROM portfolio WHERE user_id = %s AND quantity > 0", (user_id,))
-        p_items = cursor.fetchall()
-        cursor.execute("SELECT ticker, name FROM watchlist WHERE user_id = %s", (user_id,))
-        w_items = cursor.fetchall()
-        cursor.close(); conn.close()
-        
-        all_items = p_items + w_items
-        news_list = []
-        headers = {"User-Agent": "Mozilla/5.0"}
-        
-        # 1. 銘柄ごとの個別ニュース（Yahooの隠しAPIから直接取得）
-        for item in all_items:
-            ticker = item["ticker"]
-            name = item["name"]
-            if len(ticker) == 8 and ticker.isalnum(): continue # 投信はスキップ
-            
-            # 日本株の場合は .T を外して 4桁コード だけにする
-            search_code = ticker.replace(".T", "") if ticker.endswith(".T") else ticker
-            
-            url = f"https://finance.yahoo.co.jp/api/v1/news/timeline?code={search_code}&limit=3"
-            try:
-                res = requests.get(url, headers=headers, timeout=5)
-                if res.status_code == 200:
-                    for news in res.json().get("data", {}).get("items", [])[:3]:
-                        dt = datetime.fromtimestamp(news.get("pubDate", 0), timezone(timedelta(hours=9)))
-                        news_list.append({
-                            "stock_name": name,
-                            "title": news.get("title", ""),
-                            "link": news.get("link", ""),
-                            "pub_time": dt.strftime("%Y/%m/%d %H:%M"),
-                            "timestamp": dt.timestamp()
-                        })
-            except: pass
-            
-        # 2. 全体市況（日経平均・ドル円）のニュースを補完
-        market_url = "https://finance.yahoo.co.jp/api/v1/news/timeline?category=market&limit=3"
-        try:
-            res = requests.get(market_url, headers=headers, timeout=5)
-            if res.status_code == 200:
-                for news in res.json().get("data", {}).get("items", [])[:3]:
-                    dt = datetime.fromtimestamp(news.get("pubDate", 0), timezone(timedelta(hours=9)))
-                    news_list.append({
-                        "stock_name": "主要市況",
-                        "title": news.get("title", ""),
-                        "link": news.get("link", ""),
-                        "pub_time": dt.strftime("%Y/%m/%d %H:%M"),
-                        "timestamp": dt.timestamp()
-                    })
-        except: pass
-            
-        news_list.sort(key=lambda x: x["timestamp"], reverse=True)
-        return news_list[:30] # 重くならないように最新30件を返す
-    except Exception as e:
-        print("News Error:", e)
-        return []
 
 @app.get("/api/{user_id}/watchlist")
 def get_watchlist(user_id: str):
