@@ -412,14 +412,13 @@ def delete_stock_api(user_id: str, ticker: str):
     return {"message": "Deleted"}
 
 # ==========================================
-# 🌟 【完成版】営業日（値動きがあった日）のみを繋ぐリアルな波形グラフ
+# 🌟 【修正版】グラフ用データ間引き処理を撤廃し、全データを出力
 # ==========================================
 @app.get("/api/{user_id}/history")
 def get_history(user_id: str):
     try:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        # 取引を古い順に取得
         cursor.execute("SELECT * FROM transactions WHERE user_id = %s ORDER BY trade_date ASC", (user_id,))
         trades = cursor.fetchall()
         
@@ -437,12 +436,9 @@ def get_history(user_id: str):
     
     prices_by_date = {}
     start_date_obj = datetime.strptime(trades[0]["trade_date"], "%Y-%m-%d")
-    
-    # 5年以上前はカットしてサーバー負荷を抑える
     min_start = datetime.now() - timedelta(days=365*5)
     if start_date_obj < min_start: start_date_obj = min_start
     
-    # 🌟 営業日だけを抽出するための「日付セット」
     all_dates_set = set()
 
     for ticker in tickers:
@@ -455,19 +451,16 @@ def get_history(user_id: str):
             for idx, row in df.iterrows():
                 if not math.isnan(row["Close"]):
                     d_str = idx.strftime("%Y-%m-%d")
-                    all_dates_set.add(d_str) # 値動きがあった日だけ追加！
+                    all_dates_set.add(d_str) 
                     if d_str not in prices_by_date: prices_by_date[d_str] = {}
                     prices_by_date[d_str][ticker] = float(row["Close"])
         except: pass
 
-    # 取引があった日も一応プロット日として追加
     for t in trades:
         all_dates_set.add(t["trade_date"])
-    # 今日も追加
     today_str = datetime.now().strftime("%Y-%m-%d")
     all_dates_set.add(today_str)
     
-    # 日付順にソート（ここで土日のフラットラインが完全に消え去ります）
     all_dates = sorted(list(all_dates_set))
 
     current_holdings = {t: 0.0 for t in tickers}
@@ -505,13 +498,10 @@ def get_history(user_id: str):
                 val = (qty * price) / (10000.0 if is_fund else 1.0)
                 day_total += val * (1.0 if is_jpy else usdjpy)
                 
-        if day_total > 0 or date_str == today_str:
+        if day_total > 0:
             result.append({"date": date_str, "total_assets": round(day_total, 2)})
             
-    if len(result) > 100:
-        step = len(result) // 100
-        result = result[::step] + [result[-1]] if result[-1] != result[::step][-1] else result[::step]
-        
+    # 🌟 変更: 間引き処理を完全撤廃し、取得できた営業日データをすべてフロントに送る
     return result
 
 @app.get("/api/{user_id}/news")
