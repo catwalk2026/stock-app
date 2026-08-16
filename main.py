@@ -137,7 +137,7 @@ def get_usdjpy_rate():
 
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = datetime.now().strftime("%Y-%m-%d-v11")
     price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
     
     try:
@@ -220,8 +220,10 @@ def get_next_business_day(dt: datetime) -> datetime:
 
 @app.get("/")
 def read_root(): return FileResponse("index.html")
+
 @app.get("/admin")
 def read_admin(): return FileResponse("admin.html")
+
 @app.get("/{user_id}")
 def read_user_dashboard(user_id: str):
     if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
@@ -409,31 +411,46 @@ def delete_stock_api(user_id: str, ticker: str):
     except: pass
     return {"message": "Deleted"}
 
-# 🌟 重すぎるバグ（O(N^2)）を完全に排除した爆速ロジック！
+# ==========================================
+# 🌟 【完全版】Googleファイナンス風「リアルな変動グラフ」の生成ロジック
+# ==========================================
 @app.get("/api/{user_id}/history")
 def get_history(user_id: str):
     try:
-        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute("SELECT * FROM transactions WHERE user_id = %s ORDER BY trade_date ASC", (user_id,))
-        trades = cursor.fetchall(); cursor.close(); conn.close()
+        trades = cursor.fetchall()
+        
+        # 最終日のDB価格（手入力価格やスクレイピング価格）を取得
+        cursor.execute("SELECT ticker, manual_price, average_price FROM portfolio WHERE user_id = %s", (user_id,))
+        portfolio_prices = {r["ticker"]: r["manual_price"] or r["average_price"] for r in cursor.fetchall()}
+        cursor.close()
+        conn.close()
+        
         if not trades: return []
-    except: return []
+    except Exception as e:
+        print("History DB Error:", e)
+        return []
     
     usdjpy = get_usdjpy_rate()["rate"]
     tickers = list(set(t["ticker"] for t in trades))
     
-    # 1. 過去の価格データを一括取得（サーバー負荷を極限までカット）
+    # 1. すべての銘柄の「過去の毎日の株価」を辞書にまとめる
     prices_by_date = {}
-    start_date_obj = datetime.strptime(trades[0]["trade_date"], "%Y-%m-%d")
-    min_start = datetime.now() - timedelta(days=365*5) # 負荷対策: 最大5年前まで
-    if start_date_obj < min_start: start_date_str = min_start.strftime("%Y-%m-%d")
-    else: start_date_str = trades[0]["trade_date"]
-
+    
+    # 全期間をカバーするため、3年前から今日までの日付リストを作成
+    start_date = datetime.strptime(trades[0]["trade_date"], "%Y-%m-%d")
+    today = datetime.now()
+    
+    # yfinanceから株価履歴を一括ダウンロード（超高速）
     for ticker in tickers:
-        if len(ticker) == 8 and ticker.isalnum(): continue # 投信はYFでエラーになるためスキップ
+        is_fund = len(ticker) == 8 and ticker.isalnum()
+        if is_fund: continue # 投資信託はyfinanceにないのでスキップ
+        
         try:
             yf_ticker = ticker if ticker.endswith(".T") else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
-            df = yf.Ticker(yf_ticker).history(start=start_date_str)
+            df = yf.Ticker(yf_ticker).history(start=start_date.strftime("%Y-%m-%d"))
             for idx, row in df.iterrows():
                 if not math.isnan(row["Close"]):
                     d_str = idx.strftime("%Y-%m-%d")
@@ -441,34 +458,25 @@ def get_history(user_id: str):
                     prices_by_date[d_str][ticker] = float(row["Close"])
         except: pass
 
-    # 2. 全日付のリストを作成し、順番に1回だけループ（これでフリーズしません！）
-    all_dates = set(prices_by_date.keys())
-    all_dates.update(t["trade_date"] for t in trades)
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    all_dates.add(today_str)
-    all_dates = sorted(list(all_dates))
+    # 2. 過去から今日まで「1日ずつ」進めながら、リアルな資産額を計算する
+    all_dates = []
+    current_date = start_date
+    while current_date <= today:
+        all_dates.append(current_date.strftime("%Y-%m-%d"))
+        current_date += timedelta(days=1)
 
     current_holdings = {t: 0.0 for t in tickers}
     last_known_price = {t: 0.0 for t in tickers}
     
-    # 初期価格をセット
+    # 初日の価格をセット
     for t in trades:
         if last_known_price[t["ticker"]] == 0: last_known_price[t["ticker"]] = t["price"]
-
-    # 最終日用の最新DB価格を取得
-    latest_db_prices = {}
-    try:
-        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("SELECT ticker, price FROM asset_cache")
-        for r in cursor.fetchall(): latest_db_prices[r["ticker"]] = r["price"]
-        cursor.close(); conn.close()
-    except: pass
 
     trade_index = 0
     result = []
     
     for date_str in all_dates:
-        # 取引があれば保有量と最新価格を更新
+        # その日に取引があったら、保有数量と価格を更新
         while trade_index < len(trades) and trades[trade_index]["trade_date"] <= date_str:
             tr = trades[trade_index]
             t = tr["ticker"]
@@ -477,15 +485,15 @@ def get_history(user_id: str):
             last_known_price[t] = tr["price"]
             trade_index += 1
         
-        # 市場データがあれば価格を更新
+        # もしその日の「実際の株価」があれば、価格を更新（波打つグラフの源泉！）
         if date_str in prices_by_date:
             for t, p in prices_by_date[date_str].items():
                 last_known_price[t] = p
                 
-        # 最終日だけはDBの最新価格で強制上書き（ポートフォリオと一致させるため）
-        if date_str == today_str:
+        # 最終日（今日）だけは、ポートフォリオ画面と全く同じ価格になるようにDBデータで上書き
+        if date_str == today.strftime("%Y-%m-%d"):
             for t in tickers:
-                if t in latest_db_prices: last_known_price[t] = latest_db_prices[t]
+                if t in portfolio_prices: last_known_price[t] = portfolio_prices[t]
 
         # その日の総資産を計算
         day_total = 0.0
@@ -497,11 +505,12 @@ def get_history(user_id: str):
                 val = (qty * price) / (10000.0 if is_fund else 1.0)
                 day_total += val * (1.0 if is_jpy else usdjpy)
                 
-        if day_total > 0 or date_str == today_str:
+        # 資産が1円以上ある日だけグラフにプロット
+        if day_total > 0:
             result.append({"date": date_str, "total_assets": round(day_total, 2)})
             
-    # 3. ブラウザが重くならないようにデータ間引き（最大200件程度に圧縮）
-    if len(result) > 200:
+    # スマホが重くならないようにデータ間引き（最大100件に圧縮）
+    if len(result) > 100:
         step = len(result) // 100
         result = result[::step] + [result[-1]] if result[-1] != result[::step][-1] else result[::step]
         
@@ -550,3 +559,31 @@ def get_watchlist(user_id: str):
             r["current_price"] = price; r["currency"] = "¥" if r["ticker"].endswith(".T") or (len(r["ticker"])==4 and r["ticker"].isalnum()) else "$"
         return rows
     except: return []
+
+# ==========================================
+# 🌟 Admin用API群（完全復旧）
+# ==========================================
+@app.get("/api/admin/users")
+def get_all_users():
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT p.user_id, COUNT(DISTINCT p.ticker) as portfolio_count, (SELECT COUNT(*) FROM transactions t WHERE t.user_id = p.user_id) as transaction_count FROM portfolio p GROUP BY p.user_id")
+        rows = cursor.fetchall(); cursor.close(); conn.close()
+        return rows
+    except Exception as e:
+        print("Admin Users Error:", e)
+        raise HTTPException(status_code=500, detail="Database Error")
+
+@app.delete("/api/admin/user/{user_id}")
+def delete_all_user_data(user_id: str):
+    try:
+        conn = get_db_connection(); cursor = conn.cursor()
+        cursor.execute("DELETE FROM portfolio WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM transactions WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM fund_rules WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM watchlist WHERE user_id = %s", (user_id,))
+        cursor.close(); conn.close()
+        return {"message": f"User {user_id} deleted"}
+    except Exception as e:
+        print("Admin Delete Error:", e)
+        raise HTTPException(status_code=500, detail="Database Error")
