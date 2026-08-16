@@ -242,21 +242,19 @@ def handle_message(event):
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
 # ==========================================
-# 🌟 【最強API】海外JSONを取得し、Pythonで自動翻訳して返す！
+# 🌟 経済カレンダーAPI（オーストラリアを除外して日本株・主要指標重視）
 # ==========================================
 @app.get("/api/economic_calendar")
 def get_economic_calendar():
     try:
-        # ForexFactoryの無料・認証不要API
         res = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
         if res.status_code != 200: return []
         events = res.json()
         
         calendar_dict = {}
         days_jp = ["月", "火", "水", "木", "金", "土", "日"]
-        country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日", "EUR": "🇪🇺 欧", "GBP": "🇬🇧 英", "AUD": "🇦🇺 豪", "CNY": "🇨🇳 中"}
+        country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日", "EUR": "🇪🇺 欧", "GBP": "🇬🇧 英", "CNY": "🇨🇳 中"}
         
-        # 自動翻訳用辞書
         trans = {
             "CPI": "消費者物価指数(CPI)", "PPI": "生産者物価指数(PPI)", 
             "Unemployment Claims": "新規失業保険申請件数", "Employment Change": "雇用統計", 
@@ -267,22 +265,20 @@ def get_economic_calendar():
         
         for ev in events:
             country = ev.get("country", "")
-            if country not in ["USD", "JPY", "EUR", "GBP", "AUD"]: continue
+            # 🌟 オーストラリア（AUD）を除外
+            if country not in ["USD", "JPY", "EUR", "GBP", "CNY"]: continue
             impact = ev.get("impact", "")
-            if impact not in ["High", "Medium"]: continue # 重要なものだけ抽出
+            if impact not in ["High", "Medium"]: continue
             
-            # タイトルを日本語に翻訳
             title = ev.get("title", "")
             for eng, jp in trans.items():
                 if eng.lower() in title.lower():
                     title = title.replace(eng, jp)
                     
-            # 日付と時間を日本時間（JST）に変換
             date_str = ev.get("date", "")
             if not date_str: continue
             
             try:
-                # ISOフォーマットをパースしてJSTに（EDTなら大体+13時間）
                 dt_utc = parsedate_to_datetime(date_str)
                 dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9)))
             except:
@@ -295,8 +291,8 @@ def get_economic_calendar():
             if d_key not in calendar_dict:
                 bg_color = "bg-[#F8F6ED]"
                 text_color = "text-[#2F3842]"
-                if dt_jst.weekday() == 5: text_color = "text-[#4984BD]" # 土曜
-                elif dt_jst.weekday() == 6: bg_color = "bg-[#F77261]"; text_color = "text-white" # 日曜
+                if dt_jst.weekday() == 5: text_color = "text-[#4984BD]"
+                elif dt_jst.weekday() == 6: bg_color = "bg-[#F77261]"; text_color = "text-white"
                 calendar_dict[d_key] = {"date": d_key, "day": day_str, "bg": bg_color, "text": text_color, "events": []}
             
             is_red = (impact == "High")
