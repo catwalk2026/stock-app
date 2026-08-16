@@ -11,6 +11,7 @@ import jpholiday
 import re
 import math
 import urllib.parse
+import xml.etree.ElementTree as ET  # 🌟【修正1】Claude先生指摘のimport漏れを追加！
 from email.utils import parsedate_to_datetime
 import csv
 
@@ -77,7 +78,7 @@ def get_db_connection():
     return conn
 
 # ==========================================
-# 1. AI要約API（安定モデル指定＋パースエラー防止ハンドリング）
+# AI要約API（安定モデル gemini-2.5-flash 指定＋安全なパース）
 # ==========================================
 def get_ai_summary(title: str) -> str:
     if not GEMINI_API_KEY:
@@ -283,6 +284,9 @@ def handle_message(event):
 @app.get("/api/ai_summary")
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
+# ==========================================
+# ニュース取得
+# ==========================================
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
     try:
@@ -295,7 +299,7 @@ def get_jp_news(user_id: str):
         
         target_items = {item["ticker"]: item["name"] for item in (p_items + w_items)}
         news_list = []
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        headers = {"User-Agent": "Mozilla/5.0"}
 
         for ticker, name in target_items.items():
             if len(ticker) == 8 and ticker.isalnum(): continue
@@ -308,6 +312,7 @@ def get_jp_news(user_id: str):
                     root = ET.fromstring(res.text)
                     for item in root.findall('.//item')[:3]:
                         try:
+                            # ニュース側のパースはRFC形式なので parsedate_to_datetime を使用
                             dt_utc = parsedate_to_datetime(item.find('pubDate').text)
                             dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9))) if dt_utc.tzinfo else dt_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=9)))
                                 
@@ -349,7 +354,7 @@ def get_jp_news(user_id: str):
         return []
 
 # ==========================================
-# 2. 経済指標カレンダー（外部APIから自動リアルタイム抽出するロジック）
+# 🌟 2. 経済指標カレンダー（自動リアルタイム抽出・ISO形式パース修正版）
 # ==========================================
 @app.get("/api/economic_calendar")
 def get_economic_calendar():
@@ -364,7 +369,6 @@ def get_economic_calendar():
     country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
 
     try:
-        # 外部オープンエンドポイント（今週/来週の指標データ）からリアルタイム取得
         urls = [
             "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
             "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
@@ -386,6 +390,10 @@ def get_economic_calendar():
         calendar_dict = {}
         now_jst = datetime.now(timezone(timedelta(hours=9)))
         
+        # 今日から7日後までのイベントを抽出
+        start_str = now_jst.strftime("%Y-%m-%d")
+        end_str = (now_jst + timedelta(days=7)).strftime("%Y-%m-%d")
+        
         for ev in raw_events:
             country = ev.get("country", "")
             if country not in ["USD", "JPY"]:
@@ -400,12 +408,19 @@ def get_economic_calendar():
                 continue
 
             try:
-                dt_utc = parsedate_to_datetime(date_str)
+                # 🌟【修正2】Claude先生指摘のISO 8601形式対応パース！
+                dt_utc = datetime.fromisoformat(date_str)
                 dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9)))
-            except:
+            except Exception as e:
+                print("date parse error:", date_str, e)
                 continue
 
-            # イベントタイトルの日本語変換処理
+            target_date_str = dt_jst.strftime("%Y-%m-%d")
+            
+            # 今日〜7日後の期間外ならスキップ
+            if not (start_str <= target_date_str <= end_str): 
+                continue
+
             title = ev.get("title", "")
             for eng, jp in trans.items():
                 if eng.lower() in title.lower():
