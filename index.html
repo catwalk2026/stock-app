@@ -22,6 +22,9 @@
         .filter-active { background-color: #60C7D5; color: #FFFFFF; }
         .filter-inactive { background-color: #F8F6ED; color: #596572; border: 1px solid #F7F7F8; }
         .filter-inactive:hover { background-color: #E2E8F0; }
+
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="font-sans antialiased">
@@ -271,20 +274,18 @@
             </div>
         </div>
 
-        <!-- 🌟 修正：デザインを統一した和風カレンダー -->
+        <!-- 🌟 カレンダー表示枠 -->
         <div id="content-calendar" class="hidden">
             <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
                 <div class="p-4 border-b border-light bg-white flex items-center">
                     <h3 class="text-lg font-extrabold text-main"><i class="fas fa-calendar-alt text-mint mr-2"></i>今週の経済指標</h3>
                 </div>
                 
-                <!-- カレンダー表示枠 -->
                 <div id="economic-calendar-container" class="text-sm">
                     <!-- Javascriptで描画されます -->
                 </div>
                 
                 <div class="p-4 bg-[#F8F6ED] border-t border-light text-center">
-                    <p class="text-xs text-stone mb-2">※現在はダミーデータ（サンプル）を表示しています</p>
                     <a href="https://finance.yahoo.co.jp/fx/indicator" target="_blank" class="text-turquoise text-sm font-bold hover:underline">
                         Yahoo!ファイナンスで最新を確認する <i class="fas fa-external-link-alt ml-1"></i>
                     </a>
@@ -318,86 +319,46 @@
                 setupSearch('fund-search', 'fund-suggest', 'fund-ticker', 'fund-name', 'FUND', 'fund-price');
                 setupSearch('watch-search', 'watch-suggest', 'watch-ticker', 'watch-name', 'ALL');
                 
+                // 🌟 カレンダー描画関数を呼び出し
                 renderEconomicCalendar();
             } else {
                 document.getElementById('login-screen').classList.remove('hidden');
             }
         };
 
-        // 🌟 修正：ABCashカラーパレットに統合したカレンダーデータ
-        function renderEconomicCalendar() {
-            const data = [
-                {
-                    date: "8/10", day: "月", bg: "bg-[#F8F6ED]", text: "text-[#2F3842]",
-                    events: [
-                        { flag: "🇯🇵", title: "日銀金融政策決定会合の主な意見(7/30〜31開催分)", isRed: false },
-                        { flag: "🇯🇵", title: "6月国際収支(8:50)", isRed: false },
-                        { flag: "🇯🇵", title: "7月景気ウォッチャー調査(14:00)", isRed: false },
-                        { flag: "🇹🇼", title: "TSMC月次売上高(14:30頃)", isRed: true }
-                    ]
-                },
-                {
-                    date: "8/11", day: "火", bg: "bg-[#F8F6ED]", text: "text-[#2F3842]",
-                    events: [
-                        { flag: "🇯🇵", title: "<span class='bg-white border border-[#F77261] text-[#F77261] px-1.5 py-0.5 rounded text-xs font-bold'>休場日(山の日)</span>", isRed: false, isHtml: true },
-                        { flag: "🇺🇸", title: "米7月中古住宅販売件数(23:00)", isRed: false }
-                    ]
-                },
-                {
-                    date: "8/12", day: "水", bg: "bg-[#F8F6ED]", text: "text-[#2F3842]",
-                    events: [
-                        { flag: "🇯🇵", title: "7月マネーストック(8:50)", isRed: false },
-                        { flag: "🇯🇵", title: "7月工作機械受注(15:00)", isRed: false },
-                        { flag: "🇺🇸", title: "米7月消費者物価指数(CPI)(21:30)", isRed: true }
-                    ]
-                },
-                {
-                    date: "8/13", day: "木", bg: "bg-[#F8F6ED]", text: "text-[#2F3842]",
-                    events: [
-                        { flag: "🇺🇸", title: "米7月財政収支(3:00)", isRed: false },
-                        { flag: "🇯🇵", title: "7月企業物価指数(8:50)", isRed: false },
-                        { flag: "🇺🇸", title: "米7月生産者物価指数(PPI)(21:30)", isRed: false },
-                        { flag: "🇺🇸", title: "米新規失業保険申請件数(21:30)", isRed: false }
-                    ]
-                },
-                {
-                    date: "8/14", day: "金", bg: "bg-[#F8F6ED]", text: "text-[#2F3842]",
-                    events: [
-                        { flag: "🇯🇵", title: "オプションSQ算出", isRed: false },
-                        { flag: "🇺🇸", title: "米7月小売売上高(21:30)", isRed: true },
-                        { flag: "🇺🇸", title: "米6月企業在庫(23:00)", isRed: false },
-                        { flag: "🇺🇸", title: "米8月ミシガン大学消費者信頼感指数(速報)(23:00)", isRed: false }
-                    ]
-                },
-                {
-                    date: "8/15", day: "土", bg: "bg-[#F8F6ED]", text: "text-[#4984BD]", // 拡張パレットのBlue
-                    events: []
-                },
-                {
-                    date: "8/16", day: "日", bg: "bg-[#F77261]", text: "text-white", // AccentOrange
-                    events: []
-                }
-            ];
-
+        // 🌟 修正：Python APIからリアルなデータを取得して描画
+        async function renderEconomicCalendar() {
             const container = document.getElementById('economic-calendar-container');
-            container.innerHTML = '';
-
-            data.forEach(d => {
-                let html = `<div class="${d.bg} ${d.text} font-bold px-3 py-1.5 border-b border-light text-sm tracking-wide">${d.date}(${d.day})</div>`;
-                if (d.events.length > 0) {
-                    html += `<ul class="bg-white border-b border-light divide-y divide-gray-100">`;
-                    d.events.forEach(e => {
-                        // isRed の場合は AccentOrange カラーを適用
-                        const titleHtml = e.isHtml ? e.title : (e.isRed ? `<span class="text-[#F77261] font-bold">${e.title}</span>` : `<span class="text-main">${e.title}</span>`);
-                        html += `<li class="px-3 py-2 flex items-start leading-relaxed">
-                                    <span class="mr-2 text-base leading-none">${e.flag}</span>
-                                    <div class="flex-1 text-[13px]">${titleHtml}</div>
-                                 </li>`;
-                    });
-                    html += `</ul>`;
+            container.innerHTML = '<div class="p-6 text-center text-stone"><i class="fas fa-spinner fa-spin mr-2"></i>最新の経済指標を取得中...</div>';
+            
+            try {
+                const res = await fetch(`/api/economic_calendar`);
+                const data = await res.json();
+                
+                container.innerHTML = '';
+                if (data.length === 0) {
+                    container.innerHTML = '<div class="p-6 text-center text-stone">今週のスケジュールは見つかりませんでした。</div>';
+                    return;
                 }
-                container.innerHTML += html;
-            });
+
+                data.forEach(d => {
+                    let html = `<div class="${d.bg} ${d.text} font-bold px-3 py-1.5 border-b border-light text-sm tracking-wide">${d.date}(${d.day})</div>`;
+                    if (d.events && d.events.length > 0) {
+                        html += `<ul class="bg-white border-b border-light divide-y divide-gray-100">`;
+                        d.events.forEach(e => {
+                            const titleHtml = e.isHtml ? e.title : (e.isRed ? `<span class="text-[#F77261] font-bold">${e.title}</span>` : `<span class="text-main">${e.title}</span>`);
+                            html += `<li class="px-3 py-2 flex items-start leading-relaxed">
+                                        <span class="mr-2 text-base leading-none">${e.flag}</span>
+                                        <div class="flex-1 text-[13px]">${titleHtml}</div>
+                                     </li>`;
+                        });
+                        html += `</ul>`;
+                    }
+                    container.innerHTML += html;
+                });
+            } catch (error) {
+                container.innerHTML = '<div class="p-6 text-center text-orange font-bold">データの取得に失敗しました。</div>';
+            }
         }
 
         function handleAssetTypeChange() {
@@ -507,7 +468,7 @@
             try {
                 const res = await fetch(`/api/${userId}/history`);
                 fullChartData = await res.json();
-                filterChart('1Y'); 
+                filterChart('1M'); 
             } catch(e) { console.error(e); }
         }
 
