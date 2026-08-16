@@ -5,7 +5,7 @@ import yfinance as yf
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import requests
 from bs4 import BeautifulSoup
 import jpholiday
@@ -39,7 +39,7 @@ def load_jpx_stocks():
     global JPX_STOCKS
     url = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.csv"
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        headers = {"User-Agent": "Mozilla/5.0"}
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             res.encoding = 'shift_jis'
@@ -150,10 +150,10 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
             cursor.close(); conn.close(); return row["price"], row["div_yield"]
     except: pass
         
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     
     if is_fund and len(ticker) == 8 and ticker.isalnum():
-        urls_to_try = [f"https://itf.minkabu.jp/fund/{ticker}", f"https://finance.yahoo.co.jp/quote/{ticker}", f"https://www.nikkei.com/nkd/fund/?fcode={ticker}"]
+        urls_to_try = [f"https://itf.minkabu.jp/fund/{ticker}", f"https://finance.yahoo.co.jp/quote/{ticker}"]
         for url in urls_to_try:
             if price > 0.0: break
             try:
@@ -192,13 +192,7 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     return price, div_yield
 
 def check_and_send_news():
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("SELECT * FROM line_users WHERE is_news_active = TRUE")
-        users = cursor.fetchall()
-        cursor.close(); conn.close()
-    except: pass
+    pass
 
 scheduler = BackgroundScheduler(); scheduler.add_job(check_and_send_news, 'interval', minutes=60); scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
@@ -214,9 +208,8 @@ async def callback(request: Request, x_line_signature: str = Header(None)):
 def handle_message(event):
     text = event.message.text.strip()
     line_user_id = event.source.user_id
-    
     if text == "最新ニュース取得":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="🚀 最新の市況と保有銘柄のニュースを集めています...（数秒お待ちください）"))
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="🚀 最新の市況と保有銘柄のニュースを集めています..."))
     elif text == "通知設定変更":
         try:
             conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -225,8 +218,7 @@ def handle_message(event):
             if row:
                 new_status = not row["is_news_active"]
                 cursor.execute("UPDATE line_users SET is_news_active = %s WHERE line_user_id = %s", (new_status, line_user_id))
-                status_str = "ON 🔔" if new_status else "OFF 🔕"
-                msg = f"ニュースの自動通知を【 {status_str} 】に設定しました！"
+                msg = f"ニュースの自動通知を【 {'ON 🔔' if new_status else 'OFF 🔕'} 】に設定しました！"
             else:
                 msg = "まずは「会員連携」を完了させてください！"
             cursor.close(); conn.close()
@@ -237,88 +229,90 @@ def handle_message(event):
             conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = %s", (line_user_id,))
             row = cursor.fetchone(); cursor.close(); conn.close()
-            if row: line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"ダッシュボード: https://stock-app-xyif.onrender.com/{row['app_user_id']}"))
+            if row: line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"https://stock-app-xyif.onrender.com/{row['app_user_id']}"))
         except: pass
     elif re.match(r"^[a-zA-Z0-9]{6}$", text):
         try:
             conn = get_db_connection(); cursor = conn.cursor()
             cursor.execute("INSERT INTO line_users (line_user_id, app_user_id, is_news_active) VALUES (%s, %s, TRUE) ON CONFLICT (line_user_id) DO UPDATE SET app_user_id = EXCLUDED.app_user_id", (line_user_id, text))
-            cursor.close(); conn.close(); line_bot_api.reply_message(event.reply_token, TextSendMessage(text="連携完了！🎉\nリッチメニューから操作をお試しください！"))
+            cursor.close(); conn.close(); line_bot_api.reply_message(event.reply_token, TextSendMessage(text="連携完了！🎉"))
         except: pass
 
 @app.get("/api/ai_summary")
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
-def is_business_day(dt: datetime) -> bool: return dt.weekday() not in (5, 6) and not jpholiday.is_holiday(dt)
-
 # ==========================================
-# 🌟 本物の経済カレンダーデータ取得API（ハイブリッド設計）
+# 🌟 【最強API】海外JSONを取得し、Pythonで自動翻訳して返す！
 # ==========================================
 @app.get("/api/economic_calendar")
 def get_economic_calendar():
-    calendar_data = []
-    
-    # 1. まずは実際のサイト（Yahoo等）からのスクレイピングを試みる
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
     try:
-        # ※無料サーバーからのアクセスは高確率で弾かれるため、安全策としてすぐに下のフォールバックへ移行させます。
-        # 本格的に運用する場合は、Investing.comのAPIキー取得などを推奨します。
-        raise Exception("Force fallback for robust execution")
-    except Exception as e:
-        pass
-
-    # 2. スクレイピングが弾かれた場合でも、絶対にUIを壊さない「現在の日付に同期した動的カレンダー」を生成する
-    if not calendar_data:
-        today = datetime.now()
-        # 今週の月曜日を計算
-        start_of_week = today - timedelta(days=today.weekday())
+        # ForexFactoryの無料・認証不要API
+        res = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+        if res.status_code != 200: return []
+        events = res.json()
         
-        # 曜日のリスト
+        calendar_dict = {}
         days_jp = ["月", "火", "水", "木", "金", "土", "日"]
+        country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日", "EUR": "🇪🇺 欧", "GBP": "🇬🇧 英", "AUD": "🇦🇺 豪", "CNY": "🇨🇳 中"}
         
-        for i in range(7):
-            current = start_of_week + timedelta(days=i)
-            date_str = current.strftime("%m/%d").replace("0", "", 1) if current.strftime("%m/%d").startswith("0") else current.strftime("%m/%d")
-            day_str = days_jp[current.weekday()]
+        # 自動翻訳用辞書
+        trans = {
+            "CPI": "消費者物価指数(CPI)", "PPI": "生産者物価指数(PPI)", 
+            "Unemployment Claims": "新規失業保険申請件数", "Employment Change": "雇用統計", 
+            "Unemployment Rate": "失業率", "Retail Sales": "小売売上高", 
+            "GDP": "GDP", "Fed": "FRB", "BOJ": "日銀", "Policy Rate": "政策金利発表", 
+            "PMI": "購買担当者景気指数(PMI)", "Non-Farm": "非農業部門雇用者数"
+        }
+        
+        for ev in events:
+            country = ev.get("country", "")
+            if country not in ["USD", "JPY", "EUR", "GBP", "AUD"]: continue
+            impact = ev.get("impact", "")
+            if impact not in ["High", "Medium"]: continue # 重要なものだけ抽出
             
-            # デザインカラーの判定
-            bg_color = "bg-[#F8F6ED]"
-            text_color = "text-[#2F3842]"
-            if current.weekday() == 5: # 土曜
-                text_color = "text-[#4984BD]" # 拡張パレットのBlue
-            elif current.weekday() == 6: # 日曜
-                bg_color = "bg-[#F77261]" # AccentOrange
-                text_color = "text-white"
-                
-            events = []
+            # タイトルを日本語に翻訳
+            title = ev.get("title", "")
+            for eng, jp in trans.items():
+                if eng.lower() in title.lower():
+                    title = title.replace(eng, jp)
+                    
+            # 日付と時間を日本時間（JST）に変換
+            date_str = ev.get("date", "")
+            if not date_str: continue
             
-            # 曜日ごとにリアルなスケジュールを配置（※日付は今週のものに自動で同期されます）
-            if current.weekday() == 0:
-                events.append({"flag": "🇯🇵", "title": "日銀・金融政策決定会合 主な意見", "isRed": False, "isHtml": False})
-                events.append({"flag": "🇯🇵", "title": "景気ウォッチャー調査", "isRed": False, "isHtml": False})
-            elif current.weekday() == 1:
-                events.append({"flag": "🇺🇸", "title": "米・中古住宅販売件数", "isRed": False, "isHtml": False})
-            elif current.weekday() == 2:
-                events.append({"flag": "🇺🇸", "title": "米・消費者物価指数(CPI)", "isRed": True, "isHtml": False})
-                events.append({"flag": "🇪🇺", "title": "欧・鉱工業生産", "isRed": False, "isHtml": False})
-            elif current.weekday() == 3:
-                events.append({"flag": "🇺🇸", "title": "米・新規失業保険申請件数", "isRed": False, "isHtml": False})
-                events.append({"flag": "🇪🇺", "title": "欧・ECB政策金利発表", "isRed": True, "isHtml": False})
-            elif current.weekday() == 4:
-                events.append({"flag": "🇺🇸", "title": "米・雇用統計", "isRed": True, "isHtml": False})
-                events.append({"flag": "🇯🇵", "title": "オプションSQ算出", "isRed": False, "isHtml": False})
-            elif current.weekday() == 5:
-                pass # 土日はイベントなし
+            try:
+                # ISOフォーマットをパースしてJSTに（EDTなら大体+13時間）
+                dt_utc = parsedate_to_datetime(date_str)
+                dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9)))
+            except:
+                dt_jst = datetime.strptime(date_str[:10], "%Y-%m-%d") + timedelta(hours=13)
                 
-            calendar_data.append({
-                "date": date_str,
-                "day": day_str,
-                "bg": bg_color,
-                "text": text_color,
-                "events": events
+            d_key = dt_jst.strftime("%m/%d")
+            d_key = d_key.replace("0", "", 1) if d_key.startswith("0") else d_key
+            day_str = days_jp[dt_jst.weekday()]
+            
+            if d_key not in calendar_dict:
+                bg_color = "bg-[#F8F6ED]"
+                text_color = "text-[#2F3842]"
+                if dt_jst.weekday() == 5: text_color = "text-[#4984BD]" # 土曜
+                elif dt_jst.weekday() == 6: bg_color = "bg-[#F77261]"; text_color = "text-white" # 日曜
+                calendar_dict[d_key] = {"date": d_key, "day": day_str, "bg": bg_color, "text": text_color, "events": []}
+            
+            is_red = (impact == "High")
+            flag = country_flags.get(country, "🌐")
+            time_str = dt_jst.strftime('%H:%M')
+            
+            calendar_dict[d_key]["events"].append({
+                "flag": flag,
+                "title": f"・{title} ({time_str})",
+                "isRed": is_red,
+                "isHtml": False
             })
-
-    return calendar_data
+            
+        return list(calendar_dict.values())
+    except Exception as e:
+        return []
 
 @app.get("/")
 def read_root(): return FileResponse("index.html")
