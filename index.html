@@ -86,8 +86,8 @@
             <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
                 <h3 class="text-sm font-bold text-stone">📈 資産推移</h3>
                 <div class="flex flex-wrap gap-2" id="chart-filters">
-                    <button onclick="filterChart('1D')" class="chart-filter-btn filter-inactive" id="filter-1D">1日</button>
-                    <button onclick="filterChart('1W')" class="chart-filter-btn filter-inactive" id="filter-1W">1週間</button>
+                    <!-- 🌟 修正: 日次データで綺麗に波形が出る期間のみに絞る -->
+                    <button onclick="filterChart('1M')" class="chart-filter-btn filter-inactive" id="filter-1M">1ヶ月</button>
                     <button onclick="filterChart('3M')" class="chart-filter-btn filter-inactive" id="filter-3M">3ヶ月</button>
                     <button onclick="filterChart('1Y')" class="chart-filter-btn filter-inactive" id="filter-1Y">1年</button>
                     <button onclick="filterChart('3Y')" class="chart-filter-btn filter-inactive" id="filter-3Y">3年</button>
@@ -214,7 +214,6 @@
         </div>
 
         <!-- タブナビゲーション -->
-        <!-- 🌟 追加：気になるリスト（ウォッチリスト）タブを復活 -->
         <div class="flex border-b border-light mb-6 overflow-x-auto whitespace-nowrap">
             <button onclick="switchTab('portfolio')" id="tab-portfolio" class="py-2 px-4 tab-active">保有資産</button>
             <button onclick="switchTab('history')" id="tab-history" class="py-2 px-4 tab-inactive">取引履歴</button>
@@ -234,7 +233,6 @@
             </div>
         </div>
 
-        <!-- 🌟 追加：気になるリストコンテンツ -->
         <div id="content-watchlist" class="hidden">
             <div class="bg-white-card p-6 rounded-xl shadow-sm border border-light mb-6">
                 <h3 class="text-lg font-extrabold text-main mb-4">気になる銘柄の追加</h3>
@@ -263,7 +261,6 @@
             </div>
         </div>
 
-        <!-- ニュースコンテンツ -->
         <div id="content-news" class="hidden">
             <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden p-4" id="news-container">
                 <p class="text-center text-stone">ニュースを読み込んでいます...</p>
@@ -292,7 +289,6 @@
                 loadDashboard();
                 loadGraph();
                 
-                // 🌟 ウォッチリスト用のサジェスト（ALL）も追加
                 setupSearch('trade-search', 'trade-suggest', 'trade-ticker', 'trade-name', 'trade-asset-type');
                 setupSearch('fund-search', 'fund-suggest', 'fund-ticker', 'fund-name', 'FUND', 'fund-price');
                 setupSearch('watch-search', 'watch-suggest', 'watch-ticker', 'watch-name', 'ALL');
@@ -330,7 +326,7 @@
             document.getElementById(`tab-${tabName}`).classList.replace('tab-inactive', 'tab-active');
 
             if (tabName === 'history') loadHistory();
-            if (tabName === 'watchlist') loadWatchlist(); // 🌟 ウォッチリスト読み込み
+            if (tabName === 'watchlist') loadWatchlist();
             if (tabName === 'news') loadNews();
         }
 
@@ -385,12 +381,13 @@
             try {
                 const res = await fetch(`/api/${userId}/history`);
                 fullChartData = await res.json();
-                filterChart('ALL');
+                filterChart('1Y'); // 🌟 デフォルト表示を1年に変更
             } catch(e) { console.error(e); }
         }
 
         function filterChart(period) {
-            const buttons = ['1D', '1W', '3M', '1Y', '3Y', 'ALL', 'CUSTOM'];
+            // 🌟 修正: 期間フィルターボタンから「1D」「1W」を削除し、レイアウト調整
+            const buttons = ['1M', '3M', '1Y', '3Y', 'ALL', 'CUSTOM'];
             buttons.forEach(p => {
                 const btn = document.getElementById(`filter-${p}`);
                 if (btn) btn.className = (p === period) ? 'chart-filter-btn filter-active' : 'chart-filter-btn filter-inactive';
@@ -401,8 +398,7 @@
             const today = new Date();
             let startDate = new Date();
 
-            if (period === '1D') startDate.setDate(today.getDate() - 1);
-            else if (period === '1W') startDate.setDate(today.getDate() - 7);
+            if (period === '1M') startDate.setMonth(today.getMonth() - 1);
             else if (period === '3M') startDate.setMonth(today.getMonth() - 3);
             else if (period === '1Y') startDate.setFullYear(today.getFullYear() - 1);
             else if (period === '3Y') startDate.setFullYear(today.getFullYear() - 3);
@@ -495,7 +491,6 @@
             } catch (e) { listEl.innerHTML = '<li class="p-4 text-center text-orange">読み込みエラー</li>'; }
         }
 
-        // 🌟 追加：気になるリスト（ウォッチリスト）の読み込み
         async function loadWatchlist() {
             const listEl = document.getElementById('watchlist-list');
             listEl.innerHTML = '<li class="p-4 text-center text-stone">読み込み中...</li>';
@@ -572,7 +567,6 @@
                 container.innerHTML = '<ul class="space-y-4"></ul>';
                 const ul = container.querySelector('ul');
                 
-                // 🌟 追加：AI要約ボタン付きでニュースを描画
                 news.forEach((n, index) => {
                     ul.innerHTML += `
                         <li class="border-b border-light pb-4 last:border-0">
@@ -594,7 +588,6 @@
             } catch (e) { container.innerHTML = '<p class="text-center text-orange font-bold">ニュースの取得に失敗しました</p>'; }
         }
 
-        // 🌟 追加：AI要約を取得して表示する関数
         async function getAiSummary(encodedTitle, elemId) {
             const elem = document.getElementById(elemId);
             elem.classList.remove('hidden');
@@ -602,14 +595,12 @@
             try {
                 const res = await fetch(`/api/ai_summary?title=${encodedTitle}`);
                 const data = await res.json();
-                // \n を <br> に変換して改行を反映
                 elem.innerHTML = data.summary.replace(/\n/g, '<br>');
             } catch(e) {
                 elem.innerHTML = '<span class="text-orange"><i class="fas fa-exclamation-triangle mr-1"></i>要約に失敗しました</span>';
             }
         }
 
-        // 🌟 修正：typeSourceに'ALL'（ウォッチリスト用）を対応
         function setupSearch(inputId, suggestId, tickerId, nameId, typeSource, priceId = null) {
             const input = document.getElementById(inputId);
             const suggest = document.getElementById(suggestId);
