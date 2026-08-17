@@ -25,6 +25,14 @@
 
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* 目標プログレスバーのアニメーション */
+        @keyframes progress-fill {
+            from { width: 0%; }
+        }
+        .animate-progress {
+            animation: progress-fill 1s ease-out forwards;
+        }
     </style>
 </head>
 <body class="font-sans antialiased">
@@ -52,6 +60,29 @@
             </div>
         </header>
 
+        <!-- 🌟 追加: 資産目標（FIRE）プログレスバー -->
+        <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light mb-6">
+            <div class="flex justify-between items-end mb-2">
+                <div>
+                    <h2 class="text-sm font-bold text-stone mb-1"><i class="fas fa-flag-checkered text-orange mr-1"></i> 目標資産額まで</h2>
+                    <div class="flex items-baseline gap-2">
+                        <span id="target-progress-percent" class="text-3xl font-extrabold text-main">0%</span>
+                        <span class="text-sm text-stone font-bold">達成</span>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <div class="text-xs text-stone font-medium mb-1">目標設定</div>
+                    <div class="flex items-center border border-light rounded-lg overflow-hidden bg-[#F8F6ED]">
+                        <span class="pl-3 pr-1 text-sm font-bold text-stone">¥</span>
+                        <input type="number" id="target-amount-input" class="bg-transparent py-1.5 w-24 text-right font-bold text-main focus:outline-none" value="10000000" step="100000" onchange="updateTargetProgress()">
+                    </div>
+                </div>
+            </div>
+            <div class="w-full bg-[#F8F6ED] rounded-full h-3 border border-light overflow-hidden">
+                <div id="target-progress-bar" class="bg-gradient-to-r from-[#60C7D5] to-[#42B187] h-full rounded-full transition-all duration-1000 ease-out animate-progress" style="width: 0%"></div>
+            </div>
+        </div>
+
         <!-- サマリーカード群 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light">
@@ -65,25 +96,24 @@
                 <p class="text-xs text-stone mt-2 text-right opacity-70">USD/JPY: <span id="usdjpy-rate">--</span></p>
             </div>
 
-            <!-- 配当金プログレスバー -->
-            <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light relative overflow-hidden flex flex-col justify-between">
-                <div class="absolute right-0 top-0 w-16 h-16 bg-[#F8F6ED] rounded-bl-full -z-10"></div>
+            <!-- 🌟 改修: 配当金表示 -->
+            <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light flex flex-col justify-between relative overflow-hidden">
+                <div class="absolute right-0 top-0 w-16 h-16 bg-[#F8F6ED] rounded-bl-full -z-10 opacity-50"></div>
                 <div>
-                    <p class="text-sm text-stone font-bold mb-1"><i class="fas fa-seedling text-turquoise mr-1"></i> 予想される不労所得（年間配当）</p>
+                    <p class="text-sm text-stone font-bold mb-1"><i class="fas fa-hand-holding-usd text-[#C4BF4D] mr-1"></i> 年間予想配当金</p>
                     <div class="flex items-baseline gap-2">
                         <span class="text-3xl font-extrabold text-[#C4BF4D]" id="yearly-dividend">¥0</span>
-                        <span class="text-sm text-stone font-bold">/ 年</span>
                     </div>
                 </div>
-                <div class="mt-3 p-3 bg-[#F8F6ED] rounded-lg">
-                    <div class="flex justify-between items-baseline mb-1">
-                        <p class="text-sm font-bold text-main">月のお小遣い: <span id="monthly-dividend" class="text-lg text-[#C4BF4D]">0</span> 円</p>
-                        <span id="dividend-percent" class="text-xs font-bold text-stone">0%</span>
+                <div class="mt-3 p-3 bg-[#F8F6ED] rounded-lg flex items-center justify-between border border-light">
+                    <div>
+                        <p class="text-xs font-bold text-stone mb-0.5">月額換算 (不労所得)</p>
+                        <p class="text-lg font-extrabold text-main">¥<span id="monthly-dividend">0</span></p>
                     </div>
-                    <div class="w-full bg-white rounded-full h-2.5 border border-light mb-2">
-                        <div id="dividend-progress" class="bg-[#C4BF4D] h-2.5 rounded-full transition-all duration-1000" style="width: 0%"></div>
+                    <div class="text-right">
+                        <p class="text-xs font-bold text-stone mb-0.5">平均利回り</p>
+                        <p class="text-sm font-extrabold text-main"><span id="avg-yield">0.00</span>%</p>
                     </div>
-                    <p class="text-xs text-stone font-medium" id="dividend-level-text">コツコツ投資して不労所得を育てましょう🌱</p>
                 </div>
             </div>
         </div>
@@ -274,7 +304,6 @@
             </div>
         </div>
 
-        <!-- 🌟 経済指標カレンダー -->
         <div id="content-calendar" class="hidden">
             <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
                 <div class="p-4 border-b border-light bg-white flex items-center">
@@ -286,7 +315,6 @@
                 </div>
                 
                 <div class="p-4 bg-[#F8F6ED] border-t border-light text-center">
-                    <!-- 🌟 修正：マネックス証券の経済指標カレンダーリンク -->
                     <a href="https://mst.monex.co.jp/pc/servlet/ITS/report/EconomyIndexCalendar" target="_blank" class="text-turquoise text-sm font-bold hover:underline">
                         マネックス証券で詳細な経済指標カレンダーを確認する <i class="fas fa-external-link-alt ml-1"></i>
                     </a>
@@ -300,6 +328,7 @@
         let userId = '';
         let chartInstance = null;
         let fullChartData = []; 
+        let globalTotalAssets = 0; // 目標計算用に保持
 
         window.onload = () => {
             const pathId = window.location.pathname.replace('/', '').toUpperCase();
@@ -313,6 +342,11 @@
 
                 document.getElementById('trade-date').valueAsDate = new Date();
                 document.getElementById('fund-start').valueAsDate = new Date();
+                
+                // ローカルストレージから保存された目標金額を復元
+                const savedTarget = localStorage.getItem(`target_amount_${userId}`);
+                if(savedTarget) document.getElementById('target-amount-input').value = savedTarget;
+                
                 loadDashboard();
                 loadGraph();
                 
@@ -325,6 +359,37 @@
                 document.getElementById('login-screen').classList.remove('hidden');
             }
         };
+
+        // 目標金額の更新＆計算処理
+        function updateTargetProgress() {
+            const targetInput = document.getElementById('target-amount-input');
+            let targetAmount = parseFloat(targetInput.value);
+            
+            if (isNaN(targetAmount) || targetAmount <= 0) {
+                targetAmount = 10000000;
+                targetInput.value = targetAmount;
+            }
+            // ローカルストレージに保存
+            localStorage.setItem(`target_amount_${userId}`, targetAmount);
+
+            let percent = 0;
+            if (globalTotalAssets > 0) {
+                percent = Math.min(100, (globalTotalAssets / targetAmount) * 100);
+            }
+            
+            // UI更新
+            document.getElementById('target-progress-percent').textContent = percent.toFixed(1) + '%';
+            document.getElementById('target-progress-bar').style.width = percent + '%';
+            
+            // 達成時の特別演出
+            if(percent >= 100) {
+                document.getElementById('target-progress-bar').classList.remove('from-[#60C7D5]', 'to-[#42B187]');
+                document.getElementById('target-progress-bar').classList.add('bg-[#C4BF4D]');
+            } else {
+                document.getElementById('target-progress-bar').classList.add('from-[#60C7D5]', 'to-[#42B187]');
+                document.getElementById('target-progress-bar').classList.remove('bg-[#C4BF4D]');
+            }
+        }
 
         async function renderEconomicCalendar() {
             const container = document.getElementById('economic-calendar-container');
@@ -400,37 +465,31 @@
             try {
                 const res = await fetch(`/api/${userId}/portfolio`);
                 const data = await res.json();
-                document.getElementById('total-assets').textContent = `¥${Math.floor(data.total_assets).toLocaleString()}`;
-                const totalProfit = data.total_assets - data.total_book;
+                
+                // 🌟 総資産の反映とプログレスバーの更新
+                globalTotalAssets = data.total_assets || 0;
+                document.getElementById('total-assets').textContent = `¥${Math.floor(globalTotalAssets).toLocaleString()}`;
+                updateTargetProgress();
+                
+                const totalProfit = globalTotalAssets - data.total_book;
                 const profitEl = document.getElementById('total-profit');
                 profitEl.textContent = `${totalProfit >= 0 ? '+' : ''}¥${Math.floor(totalProfit).toLocaleString()}`;
                 profitEl.className = totalProfit >= 0 ? 'text-mint' : 'text-orange';
                 document.getElementById('usdjpy-rate').textContent = `${data.usdjpy_rate}円 (${data.usdjpy_time})`;
 
+                // 🌟 配当金の反映
                 const yearlyDiv = data.est_dividend_jpy || 0;
                 const monthlyDiv = Math.floor(yearlyDiv / 12);
+                
+                // 平均利回りの計算
+                let avgYield = 0;
+                if(globalTotalAssets > 0) {
+                    avgYield = (yearlyDiv / globalTotalAssets) * 100;
+                }
+                
                 document.getElementById('yearly-dividend').textContent = `¥${Math.floor(yearlyDiv).toLocaleString()}`;
                 document.getElementById('monthly-dividend').textContent = monthlyDiv.toLocaleString();
-
-                const levels = [
-                    { t: 0, text: "チロルチョコが買えるレベル🍫", next: 1000 },
-                    { t: 1000, text: "毎月スタバの新作が飲めるレベル☕️", next: 5000 },
-                    { t: 5000, text: "ちょっと豪華なランチに行けるレベル🍣", next: 10000 },
-                    { t: 10000, text: "格安SIMのスマホ代が払えるレベル📱", next: 30000 },
-                    { t: 30000, text: "光熱費と水道代が全額まかなえるレベル💡", next: 100000 },
-                    { t: 100000, text: "家賃がまるまる払えるレベル🏠✨", next: 300000 },
-                    { t: 300000, text: "もはや完全な不労所得生活レベル！FIRE達成🌴✨", next: 1000000 }
-                ];
-
-                let currentLevel = levels[0];
-                for (let i = 0; i < levels.length; i++) {
-                    if (monthlyDiv >= levels[i].t) currentLevel = levels[i];
-                }
-
-                document.getElementById('dividend-level-text').textContent = currentLevel.text;
-                let percent = Math.min(100, Math.floor((monthlyDiv / currentLevel.next) * 100));
-                document.getElementById('dividend-progress').style.width = percent + '%';
-                document.getElementById('dividend-percent').textContent = `次のレベルまで ${percent}%`;
+                document.getElementById('avg-yield').textContent = avgYield.toFixed(2);
 
                 const listEl = document.getElementById('portfolio-list');
                 listEl.innerHTML = '';
@@ -445,12 +504,18 @@
                     const profitClass = profit >= 0 ? 'text-mint' : 'text-orange';
                     const isFund = item.is_fund;
                     const priceUnit = isFund ? '円 (1万口)' : (item.currency === 'USD' ? '$' : '円');
+                    
+                    // 個別銘柄の配当利回り（投資信託は表示しない）
+                    let divHtml = '';
+                    if(!isFund && item.dividend_yield > 0) {
+                        divHtml = `<span class="bg-[#F8F6ED] text-stone px-1.5 py-0.5 rounded text-[10px] ml-2 border border-light">利回り ${item.dividend_yield.toFixed(2)}%</span>`;
+                    }
 
                     listEl.innerHTML += `
                         <li class="p-4 hover:bg-[#F8F6ED] flex justify-between items-center transition">
                             <div>
                                 <div class="font-bold text-main text-lg">${item.name}</div>
-                                <div class="text-xs text-stone mt-1 font-medium"><span class="bg-[#F8F6ED] px-2 py-0.5 rounded border border-light mr-2">${item.category}</span>${item.ticker}</div>
+                                <div class="text-xs text-stone mt-1 font-medium"><span class="bg-[#F8F6ED] px-2 py-0.5 rounded border border-light mr-2">${item.category}</span>${item.ticker} ${divHtml}</div>
                                 <div class="text-xs text-stone mt-1.5 font-medium">保有: ${item.quantity.toLocaleString()} ${isFund ? '口' : '株'} <span class="mx-1">|</span> 現在値: ${item.current_price.toLocaleString()} ${priceUnit}</div>
                             </div>
                             <div class="text-right">
