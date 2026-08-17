@@ -79,7 +79,7 @@ def get_db_connection():
     return conn
 
 # ==========================================
-# 🌟 1. AI要約（429対策＋Retry-After / 指数バックオフ対応）
+# AI要約（429対策＋Retry-After / 指数バックオフ対応）
 # ==========================================
 _gemini_model_cache = {"name": None, "checked_at": None}
 
@@ -103,7 +103,7 @@ def get_working_gemini_model():
                 return candidates[0]
     except Exception as e:
         print("Model list error:", e)
-    return "gemini-3.7-flash"  # 現状の最新安定版へフォールバック
+    return "gemini-3.7-flash"
 
 def get_ai_summary(title: str) -> str:
     if not GEMINI_API_KEY:
@@ -123,7 +123,6 @@ def get_ai_summary(title: str) -> str:
                     reason = data.get("promptFeedback", {}).get("blockReason", "不明")
                     return f"要約失敗（生成がブロックされました: {reason}）"
                 return candidates[0]["content"]["parts"][0]["text"].strip()
-            # 503 と 429 (Too Many Requests) の両方に対応し、Retry-After または 指数バックオフで待機
             elif res.status_code in (503, 429) and attempt < 2:
                 wait = int(res.headers.get("Retry-After", 2 ** (attempt + 1)))
                 time.sleep(wait)
@@ -387,7 +386,7 @@ def get_jp_news(user_id: str):
         return []
 
 # ==========================================
-# 🌟 2. 経済指標カレンダー（レートリミット回避のキャッシュ機構実装）
+# 🌟 2. 経済指標カレンダー（キャッシュ機構実装＆日本(JPY)のLow許可対応）
 # ==========================================
 _calendar_cache = {"data": None, "checked_at": None}
 
@@ -396,7 +395,6 @@ def get_economic_calendar():
     global _calendar_cache
     now = datetime.now()
     
-    # 1時間以内ならキャッシュを返す（外部APIの5分間2回レート制限対策）
     if _calendar_cache["data"] is not None and _calendar_cache["checked_at"] and (now - _calendar_cache["checked_at"]).seconds < 3600:
         return _calendar_cache["data"]
 
@@ -411,7 +409,6 @@ def get_economic_calendar():
     country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
 
     try:
-        # cache_busterは付けない（毎回強制取得しない。キャッシュTTLで制御する）
         url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
         headers = {"User-Agent": "Mozilla/5.0"}
 
@@ -426,7 +423,6 @@ def get_economic_calendar():
             print("Calendar fetch error:", e)
 
         if not raw_events:
-            # 取得失敗時は、古くても前回のキャッシュがあればそれを返す（白紙回避）
             return _calendar_cache["data"] or []
 
         calendar_dict = {}
@@ -436,9 +432,19 @@ def get_economic_calendar():
             country = ev.get("country", "")
             if country not in ["USD", "JPY"]:
                 continue
+            
             impact = ev.get("impact", "")
-            if impact not in ["High", "Medium"]:
+            
+            # Holidayなどの特殊イベントは除外
+            if impact == "Holiday":
                 continue
+            
+            # 🌟 JPYはForexFactory側の仕様でLowにされやすいため許可、USDはHigh/Mediumのみ
+            if country == "USD" and impact not in ["High", "Medium"]:
+                continue
+            if country == "JPY" and impact not in ["High", "Medium", "Low"]:
+                continue
+
             date_str = ev.get("date", "")
             if not date_str:
                 continue
@@ -449,7 +455,6 @@ def get_economic_calendar():
                 print("date parse error:", date_str, e)
                 continue
 
-            # 「昨日以降」の緩いフィルター
             if dt_jst.date() < (now_jst - timedelta(days=1)).date():
                 continue
 
@@ -478,7 +483,6 @@ def get_economic_calendar():
         sorted_vals = sorted(calendar_dict.values(), key=lambda x: x["sort_key"])
         result = sorted_vals[:7]
         
-        # 取得成功時にキャッシュを更新
         _calendar_cache["data"] = result
         _calendar_cache["checked_at"] = now
         return result
