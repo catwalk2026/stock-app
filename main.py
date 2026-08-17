@@ -79,7 +79,7 @@ def get_db_connection():
     return conn
 
 # ==========================================
-# 1. AI要約（503エラー対策のリトライ機能付き）
+# 🌟 1. AI要約（429対策＋Retry-After / 指数バックオフ対応）
 # ==========================================
 _gemini_model_cache = {"name": None, "checked_at": None}
 
@@ -103,7 +103,7 @@ def get_working_gemini_model():
                 return candidates[0]
     except Exception as e:
         print("Model list error:", e)
-    return "gemini-2.5-flash"
+    return "gemini-3.7-flash"  # 現状の最新安定版へフォールバック
 
 def get_ai_summary(title: str) -> str:
     if not GEMINI_API_KEY:
@@ -113,7 +113,6 @@ def get_ai_summary(title: str) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
     payload = {"contents": [{"parts": [{"text": f"以下のニュースタイトルから、個人投資家向けの影響を2〜3行で簡潔に要約してください。\nニュースタイトル: {title}"}]}]}
     
-    # 503エラー（一時的混雑）対策で最大3回リトライ
     for attempt in range(3):
         try:
             res = requests.post(url, headers={'Content-Type': 'application/json'}, json=payload, timeout=10)
@@ -124,18 +123,23 @@ def get_ai_summary(title: str) -> str:
                     reason = data.get("promptFeedback", {}).get("blockReason", "不明")
                     return f"要約失敗（生成がブロックされました: {reason}）"
                 return candidates[0]["content"]["parts"][0]["text"].strip()
-            elif res.status_code == 503 and attempt < 2:
-                time.sleep(1)  # 1秒待って再試行
+            # 503 と 429 (Too Many Requests) の両方に対応し、Retry-After または 指数バックオフで待機
+            elif res.status_code in (503, 429) and attempt < 2:
+                wait = int(res.headers.get("Retry-After", 2 ** (attempt + 1)))
+                time.sleep(wait)
                 continue
             elif res.status_code == 404:
                 _gemini_model_cache["name"] = None
+                print("Gemini 404, model invalidated:", model)
                 return "要約失敗 (APIエラー: 404 モデル切替待ち。再度お試しください)"
             else:
+                print("Gemini API error:", res.status_code, res.text)
                 return f"要約失敗 (APIエラー: {res.status_code})"
         except Exception as e:
             if attempt == 2:
+                print("Gemini exception:", e)
                 return "AI要約通信エラー（サーバーの設定を確認してください）"
-            time.sleep(1)
+            time.sleep(2 ** (attempt + 1))
 
 class TradeCreate(BaseModel): ticker: str = ""; name: str; trade_type: str; asset_type: str; trade_date: str; quantity: float; price: float; reason: str = ""
 class FundRuleCreate(BaseModel): ticker: str; name: str; frequency: str; monthly_day: int = 1; amount: float; avg_price: float = 10000.0; start_date: str
@@ -317,9 +321,6 @@ def handle_message(event):
 @app.get("/api/ai_summary")
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
-# ==========================================
-# ニュース取得
-# ==========================================
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
     try:
@@ -386,10 +387,19 @@ def get_jp_news(user_id: str):
         return []
 
 # ==========================================
-# 2. 経済指標カレンダー（時差漏れ対策版）
+# 🌟 2. 経済指標カレンダー（レートリミット回避のキャッシュ機構実装）
 # ==========================================
+_calendar_cache = {"data": None, "checked_at": None}
+
 @app.get("/api/economic_calendar")
 def get_economic_calendar():
+    global _calendar_cache
+    now = datetime.now()
+    
+    # 1時間以内ならキャッシュを返す（外部APIの5分間2回レート制限対策）
+    if _calendar_cache["data"] is not None and _calendar_cache["checked_at"] and (now - _calendar_cache["checked_at"]).seconds < 3600:
+        return _calendar_cache["data"]
+
     days_jp = ["月", "火", "水", "木", "金", "土", "日"]
     trans = {
         "CPI": "消費者物価指数(CPI)", "PPI": "生産者物価指数(PPI)",
@@ -401,8 +411,8 @@ def get_economic_calendar():
     country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
 
     try:
-        cache_buster = int(datetime.now().timestamp())
-        url = f"https://nfs.faireconomy.media/ff_calendar_thisweek.json?v={cache_buster}"
+        # cache_busterは付けない（毎回強制取得しない。キャッシュTTLで制御する）
+        url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
         headers = {"User-Agent": "Mozilla/5.0"}
 
         raw_events = []
@@ -410,16 +420,17 @@ def get_economic_calendar():
             res = requests.get(url, headers=headers, timeout=5)
             if res.status_code == 200:
                 raw_events = res.json()
+            else:
+                print("Calendar fetch non-200:", res.status_code)
         except Exception as e:
             print("Calendar fetch error:", e)
 
         if not raw_events:
-            return []
+            # 取得失敗時は、古くても前回のキャッシュがあればそれを返す（白紙回避）
+            return _calendar_cache["data"] or []
 
         calendar_dict = {}
         now_jst = datetime.now(timezone(timedelta(hours=9)))
-        # 月曜朝のJST/時差ズレ対策として昨日（-1日）以降を対象にする
-        yesterday_jst = (now_jst - timedelta(days=1)).date()
 
         for ev in raw_events:
             country = ev.get("country", "")
@@ -438,8 +449,8 @@ def get_economic_calendar():
                 print("date parse error:", date_str, e)
                 continue
 
-            # 昨日以降のイベントを抽出
-            if dt_jst.date() < yesterday_jst:
+            # 「昨日以降」の緩いフィルター
+            if dt_jst.date() < (now_jst - timedelta(days=1)).date():
                 continue
 
             title = ev.get("title", "")
@@ -465,11 +476,16 @@ def get_economic_calendar():
             })
 
         sorted_vals = sorted(calendar_dict.values(), key=lambda x: x["sort_key"])
-        return sorted_vals[:7]
+        result = sorted_vals[:7]
+        
+        # 取得成功時にキャッシュを更新
+        _calendar_cache["data"] = result
+        _calendar_cache["checked_at"] = now
+        return result
 
     except Exception as e:
         print("Economic Calendar Error:", e)
-        return []
+        return _calendar_cache["data"] or []
 
 @app.get("/")
 def read_root(): return FileResponse("index.html")
