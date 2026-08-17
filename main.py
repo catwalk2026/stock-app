@@ -79,7 +79,7 @@ def get_db_connection():
     return conn
 
 # ==========================================
-# AI要約（429対策＋Retry-After / 指数バックオフ対応）
+# AI要約
 # ==========================================
 _gemini_model_cache = {"name": None, "checked_at": None}
 
@@ -386,8 +386,57 @@ def get_jp_news(user_id: str):
         return []
 
 # ==========================================
-# 🌟 2. 経済指標カレンダー（キャッシュ機構実装＆日本(JPY)のLow許可対応）
+# 経済カレンダー用 翻訳辞書とロジック
 # ==========================================
+TRANS_DICT = {
+    "Prelim GDP Price Index": "GDPデフレーター(速報)",
+    "Prelim GDP": "GDP(速報値)",
+    "Revised Industrial Production": "鉱工業生産(改定値)",
+    "Tertiary Industry Activity": "第3次産業活動指数",
+    "Core Machinery Orders": "コア機械受注",
+    "Machinery Orders": "機械受注",
+    "National Core CPI": "全国コアCPI",
+    "National CPI": "全国CPI",
+    "Flash Manufacturing PMI": "製造業PMI(速報値)",
+    "Flash Services PMI": "サービス業PMI(速報値)",
+    "FOMC Meeting Minutes": "FOMC議事録",
+    "FOMC Member": "FRB高官",
+    "Philly Fed Manufacturing Index": "フィラデルフィア連銀製造業景気指数",
+    "Philly FRB Manufacturing Index": "フィラデルフィア連銀製造業景気指数",
+    "Unemployment Claims": "新規失業保険申請件数",
+    "Trade Balance": "貿易収支",
+    "Current Account": "経常収支",
+    "Retail Sales": "小売売上高",
+    "Industrial Production": "鉱工業生産",
+    "Consumer Price Index": "消費者物価指数",
+    "Bank Lending": "銀行融資",
+    "Economy Watchers Sentiment": "景気ウォッチャー調査",
+    "Non-Farm Employment Change": "非農業部門雇用者数",
+    "Unemployment Rate": "失業率",
+    "Core CPI": "コアCPI",
+    "CPI": "消費者物価指数(CPI)",
+    "PPI": "生産者物価指数(PPI)",
+    "PMI": "購買担当者景気指数(PMI)",
+    "GDP": "GDP",
+    "Fed": "FRB",
+    "BOJ": "日銀",
+    "Policy Rate": "政策金利発表",
+}
+
+SUFFIX_TRANS = [
+    (r"\by/y\b", "（前年比）"),
+    (r"\bq/q\b", "（前期比）"),
+    (r"\bm/m\b", "（前月比）"),
+    (r"\bw/w\b", "（前週比）"),
+]
+
+def translate_title(title: str) -> str:
+    for eng, jp in sorted(TRANS_DICT.items(), key=lambda x: -len(x[0])):
+        title = re.sub(re.escape(eng), jp, title, flags=re.IGNORECASE)
+    for pattern, jp in SUFFIX_TRANS:
+        title = re.sub(pattern, jp, title, flags=re.IGNORECASE)
+    return title.strip()
+
 _calendar_cache = {"data": None, "checked_at": None}
 
 @app.get("/api/economic_calendar")
@@ -399,13 +448,6 @@ def get_economic_calendar():
         return _calendar_cache["data"]
 
     days_jp = ["月", "火", "水", "木", "金", "土", "日"]
-    trans = {
-        "CPI": "消費者物価指数(CPI)", "PPI": "生産者物価指数(PPI)",
-        "Unemployment Claims": "新規失業保険申請件数", "Employment Change": "雇用統計",
-        "Unemployment Rate": "失業率", "Retail Sales": "小売売上高",
-        "GDP": "GDP", "Fed": "FRB", "BOJ": "日銀", "Policy Rate": "政策金利発表",
-        "PMI": "購買担当者景気指数(PMI)", "Non-Farm": "非農業部門雇用者数"
-    }
     country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
 
     try:
@@ -434,12 +476,9 @@ def get_economic_calendar():
                 continue
             
             impact = ev.get("impact", "")
-            
-            # Holidayなどの特殊イベントは除外
             if impact == "Holiday":
                 continue
             
-            # 🌟 JPYはForexFactory側の仕様でLowにされやすいため許可、USDはHigh/Mediumのみ
             if country == "USD" and impact not in ["High", "Medium"]:
                 continue
             if country == "JPY" and impact not in ["High", "Medium", "Low"]:
@@ -458,10 +497,8 @@ def get_economic_calendar():
             if dt_jst.date() < (now_jst - timedelta(days=1)).date():
                 continue
 
-            title = ev.get("title", "")
-            for eng, jp in trans.items():
-                if eng.lower() in title.lower():
-                    title = title.replace(eng, jp)
+            # 翻訳ロジックの呼び出し
+            title = translate_title(ev.get("title", ""))
 
             d_key = dt_jst.strftime("%m/%d").lstrip("0").replace("/0", "/")
             day_str = days_jp[dt_jst.weekday()]
