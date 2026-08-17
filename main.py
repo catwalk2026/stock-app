@@ -14,6 +14,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 import csv
+import time
 
 # --- LINE連携用ライブラリ ---
 from linebot import LineBotApi, WebhookHandler
@@ -78,7 +79,7 @@ def get_db_connection():
     return conn
 
 # ==========================================
-# 🌟 1. AI要約（動的モデル取得＆強固なエラーハンドリング）
+# 1. AI要約（503エラー対策のリトライ機能付き）
 # ==========================================
 _gemini_model_cache = {"name": None, "checked_at": None}
 
@@ -95,14 +96,14 @@ def get_working_gemini_model():
                 and "flash" in m["name"] and "lite" not in m["name"]
                 and "image" not in m["name"] and "preview" not in m["name"]
             ]
-            candidates.sort(reverse=True)  # バージョン番号が大きい＝新しいものを優先
+            candidates.sort(reverse=True)
             if candidates:
                 _gemini_model_cache["name"] = candidates[0]
                 _gemini_model_cache["checked_at"] = now
                 return candidates[0]
     except Exception as e:
         print("Model list error:", e)
-    return "gemini-2.5-flash"  # 最終フォールバック
+    return "gemini-2.5-flash"
 
 def get_ai_summary(title: str) -> str:
     if not GEMINI_API_KEY:
@@ -111,26 +112,30 @@ def get_ai_summary(title: str) -> str:
     model = get_working_gemini_model()
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
     payload = {"contents": [{"parts": [{"text": f"以下のニュースタイトルから、個人投資家向けの影響を2〜3行で簡潔に要約してください。\nニュースタイトル: {title}"}]}]}
-    try:
-        res = requests.post(url, headers={'Content-Type': 'application/json'}, json=payload, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            candidates = data.get("candidates")
-            if not candidates:
-                reason = data.get("promptFeedback", {}).get("blockReason", "不明")
-                return f"要約失敗（生成がブロックされました: {reason}）"
-            return candidates[0]["content"]["parts"][0]["text"].strip()
-        elif res.status_code == 404:
-            # モデルが失効した瞬間はキャッシュを破棄して次回再取得させる
-            _gemini_model_cache["name"] = None
-            print("Gemini 404, model invalidated:", model)
-            return "要約失敗 (APIエラー: 404 モデル切替待ち。もう一度お試しください)"
-        else:
-            print("Gemini API error:", res.status_code, res.text)
-            return f"要約失敗 (APIエラー: {res.status_code})"
-    except Exception as e:
-        print("Gemini exception:", e)
-        return "AI要約通信エラー（サーバーの設定を確認してください）"
+    
+    # 503エラー（一時的混雑）対策で最大3回リトライ
+    for attempt in range(3):
+        try:
+            res = requests.post(url, headers={'Content-Type': 'application/json'}, json=payload, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                candidates = data.get("candidates")
+                if not candidates:
+                    reason = data.get("promptFeedback", {}).get("blockReason", "不明")
+                    return f"要約失敗（生成がブロックされました: {reason}）"
+                return candidates[0]["content"]["parts"][0]["text"].strip()
+            elif res.status_code == 503 and attempt < 2:
+                time.sleep(1)  # 1秒待って再試行
+                continue
+            elif res.status_code == 404:
+                _gemini_model_cache["name"] = None
+                return "要約失敗 (APIエラー: 404 モデル切替待ち。再度お試しください)"
+            else:
+                return f"要約失敗 (APIエラー: {res.status_code})"
+        except Exception as e:
+            if attempt == 2:
+                return "AI要約通信エラー（サーバーの設定を確認してください）"
+            time.sleep(1)
 
 class TradeCreate(BaseModel): ticker: str = ""; name: str; trade_type: str; asset_type: str; trade_date: str; quantity: float; price: float; reason: str = ""
 class FundRuleCreate(BaseModel): ticker: str; name: str; frequency: str; monthly_day: int = 1; amount: float; avg_price: float = 10000.0; start_date: str
@@ -312,6 +317,9 @@ def handle_message(event):
 @app.get("/api/ai_summary")
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
+# ==========================================
+# ニュース取得
+# ==========================================
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
     try:
@@ -378,7 +386,7 @@ def get_jp_news(user_id: str):
         return []
 
 # ==========================================
-# 🌟 2. 経済指標カレンダー（キャッシュバスター＆ISO対応＆今日以降の緩いフィルター）
+# 2. 経済指標カレンダー（時差漏れ対策版）
 # ==========================================
 @app.get("/api/economic_calendar")
 def get_economic_calendar():
@@ -393,7 +401,6 @@ def get_economic_calendar():
     country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
 
     try:
-        # 🌟 nextweek は存在しないURLだったため削除。キャッシュバスターを付与して最新データを強制取得
         cache_buster = int(datetime.now().timestamp())
         url = f"https://nfs.faireconomy.media/ff_calendar_thisweek.json?v={cache_buster}"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -411,6 +418,8 @@ def get_economic_calendar():
 
         calendar_dict = {}
         now_jst = datetime.now(timezone(timedelta(hours=9)))
+        # 月曜朝のJST/時差ズレ対策として昨日（-1日）以降を対象にする
+        yesterday_jst = (now_jst - timedelta(days=1)).date()
 
         for ev in raw_events:
             country = ev.get("country", "")
@@ -423,15 +432,14 @@ def get_economic_calendar():
             if not date_str:
                 continue
             try:
-                # 🌟 ISO形式の文字列をパース
                 dt_utc = datetime.fromisoformat(date_str)
                 dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9)))
             except Exception as e:
                 print("date parse error:", date_str, e)
                 continue
 
-            # 🌟 「今日以降」だけの緩いフィルターに変更（+7日の上限は撤廃）
-            if dt_jst.date() < now_jst.date():
+            # 昨日以降のイベントを抽出
+            if dt_jst.date() < yesterday_jst:
                 continue
 
             title = ev.get("title", "")
