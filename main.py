@@ -228,15 +228,59 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
         
     return price, div_yield
 
+# ==========================================
+# 🌟 【完全版】LINE自動ニュース配信（リマインド機能）
+# ==========================================
 def check_and_send_news():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        # 通知設定がONのユーザーを取得
         cursor.execute("SELECT * FROM line_users WHERE is_news_active = TRUE")
         users = cursor.fetchall()
-        cursor.close(); conn.close()
-    except: pass
+        
+        for user in users:
+            line_user_id = user["line_user_id"]
+            app_user_id = user["app_user_id"]
+            if not app_user_id: continue
+            
+            # そのユーザーの保有・お気に入り銘柄のニュースを取得
+            news_data = get_jp_news(app_user_id)
+            if not news_data: continue
+            
+            # すでに送信済みのニュースURLを取得（スパム防止）
+            cursor.execute("SELECT news_link FROM sent_news WHERE line_user_id = %s", (line_user_id,))
+            sent_links = {row["news_link"] for row in cursor.fetchall()}
+            
+            new_articles = []
+            for n in news_data:
+                if n["link"] not in sent_links:
+                    new_articles.append(n)
+                    if len(new_articles) >= 3: # 1回のリマインドで最大3件まで
+                        break
+                        
+            if new_articles:
+                msg = "🔔 【定期配信】保有銘柄・市況の最新ニュースが届きました！\n\n"
+                for n in new_articles:
+                    msg += f"📰 【{n['stock_name']}】\n{n['title']}\n{n['link']}\n\n"
+                msg += f"👇 AI要約はダッシュボードから✨\nhttps://stock-app-xyif.onrender.com/{app_user_id}"
+                
+                try:
+                    # LINEにプッシュ通知
+                    line_bot_api.push_message(line_user_id, TextSendMessage(text=msg))
+                    
+                    # 送信したニュースをDBに記録
+                    for n in new_articles:
+                        cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (%s, %s) ON CONFLICT DO NOTHING", (line_user_id, n["link"]))
+                except Exception as push_e:
+                    print("Push error:", push_e)
+        
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print("check_and_send_news error:", e)
 
+# 1時間ごとに最新ニュースをチェックして配信
 scheduler = BackgroundScheduler(); scheduler.add_job(check_and_send_news, 'interval', minutes=60); scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
 
@@ -497,7 +541,6 @@ def get_economic_calendar():
             if dt_jst.date() < (now_jst - timedelta(days=1)).date():
                 continue
 
-            # 翻訳ロジックの呼び出し
             title = translate_title(ev.get("title", ""))
 
             d_key = dt_jst.strftime("%m/%d").lstrip("0").replace("/0", "/")
