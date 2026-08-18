@@ -1,920 +1,910 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AIポートフォリオ＆投資ダッシュボード</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        body { background-color: #F8F6ED; color: #2F3842; }
-        .bg-white-card { background-color: #FFFFFF; }
-        .text-main { color: #2F3842; }
-        .text-turquoise { color: #25B2C7; }
-        .bg-turquoise { background-color: #60C7D5; }
-        .border-light { border-color: #F7F7F8; }
-        .text-stone { color: #596572; }
-        .text-orange { color: #F77261; }
-        .text-mint { color: #42B187; }
+from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+import yfinance as yf
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from datetime import datetime, timedelta, timezone
+import requests
+import jpholiday
+import re
+import math
+import urllib.parse
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
+import csv
+import time
+
+# --- LINE連携用ライブラリ ---
+from linebot import LineBotApi, WebhookHandler
+from linebot.exceptions import InvalidSignatureError
+from linebot.models import MessageEvent, TextMessage, TextSendMessage, FollowEvent
+from apscheduler.schedulers.background import BackgroundScheduler
+import atexit
+
+LINE_CHANNEL_ACCESS_TOKEN = "rlJ1YRFK3hCEYnrfCe5k9kO2gjyX3YkqhfdAvnT28lWoC/9Q6NTtPdBNvGU6jVWunuf7k6NPAg/d2r39X+IxD4mlNjs2bH4krV2B7zWilto5IHSvo7QXkKbIxa0GNvVN2SK9b2AH03Rs/M6VrJBIlwdB04t89/1O/w1cDnyilFU="
+LINE_CHANNEL_SECRET = "c8caf38acc62174908dcff1f782621f6"
+
+line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+app = FastAPI()
+
+DATABASE2_URL = os.environ.get("DATABASE2_URL") or os.environ.get("DATABASE_URL")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+
+JPX_STOCKS = []
+def load_jpx_stocks():
+    global JPX_STOCKS
+    url = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.csv"
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            res.encoding = 'shift_jis'
+            reader = csv.reader(res.text.splitlines())
+            next(reader, None)
+            stocks = []
+            for row in reader:
+                if len(row) >= 3 and row[1].strip() and row[2].strip():
+                    stocks.append({"code": row[1].strip(), "name": row[2].strip(), "ticker": f"{row[1].strip()}.T"})
+            JPX_STOCKS = stocks
+    except: pass
+
+load_jpx_stocks()
+
+POPULAR_FUNDS = [
+    {"ticker": "0331418A", "name": "eMAXIS Slim 全世界株式(オール・カントリー)", "keywords": ["オルカン", "emaxis", "slim", "all", "全世界", "カントリー"]},
+    {"ticker": "03311187", "name": "eMAXIS Slim 米国株式(S&P500)", "keywords": ["emaxis", "slim", "s&p500", "sp500", "米国"]},
+    {"ticker": "89311199", "name": "SBI・V・S&P500インデックス・ファンド", "keywords": ["sbi", "v", "s&p", "sp500"]},
+    {"ticker": "89311216", "name": "SBI・V・全米株式インデックス・ファンド", "keywords": ["sbi", "v", "全米", "vti"]},
+    {"ticker": "9I312179", "name": "楽天・全米株式インデックス・ファンド(楽天・VTI)", "keywords": ["楽天", "全米", "vti"]},
+    {"ticker": "9I311179", "name": "楽天・全世界株式インデックス・ファンド(楽天・VT)", "keywords": ["楽天", "全世界", "vt", "オルカン"]},
+    {"ticker": "4731B15C", "name": "たわらノーロード 先進国株式", "keywords": ["たわら", "ノーロード", "先進国"]},
+    {"ticker": "47312197", "name": "たわらノーロード 全世界株式", "keywords": ["たわら", "ノーロード", "全世界", "オルカン"]},
+    {"ticker": "2931113C", "name": "ニッセイ外国株式インデックスファンド", "keywords": ["ニッセイ", "外国", "インデックス"]},
+    {"ticker": "29311041", "name": "ニッセイ日経225インデックスファンド", "keywords": ["ニッセイ", "日経"]},
+    {"ticker": "9C311125", "name": "ひふみプラス", "keywords": ["ひふみ", "プラス", "レオス"]},
+    {"ticker": "03319172", "name": "eMAXIS Slim 先進国株式インデックス", "keywords": ["emaxis", "slim", "先進国"]},
+    {"ticker": "03317172", "name": "eMAXIS Slim 国内株式(TOPIX)", "keywords": ["emaxis", "slim", "国内", "topix"]},
+    {"ticker": "03311182", "name": "eMAXIS Slim 国内株式(日経平均)", "keywords": ["emaxis", "slim", "国内", "日経"]},
+    {"ticker": "03312175", "name": "eMAXIS Slim バランス(8資産均等型)", "keywords": ["emaxis", "slim", "バランス", "8資産"]},
+]
+
+def get_db_connection():
+    if not DATABASE2_URL: raise Exception("DB_URL is missing")
+    conn = psycopg2.connect(DATABASE2_URL)
+    conn.autocommit = True
+    return conn
+
+# ==========================================
+# AI要約
+# ==========================================
+_gemini_model_cache = {"name": None, "checked_at": None}
+
+def get_working_gemini_model():
+    now = datetime.now()
+    if _gemini_model_cache["name"] and _gemini_model_cache["checked_at"] and (now - _gemini_model_cache["checked_at"]).seconds < 3600:
+        return _gemini_model_cache["name"]
+    try:
+        res = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}", timeout=10)
+        if res.status_code == 200:
+            candidates = [
+                m["name"].replace("models/", "") for m in res.json().get("models", [])
+                if "generateContent" in m.get("supportedGenerationMethods", [])
+                and "flash" in m["name"] and "lite" not in m["name"]
+                and "image" not in m["name"] and "preview" not in m["name"]
+            ]
+            candidates.sort(reverse=True)
+            if candidates:
+                _gemini_model_cache["name"] = candidates[0]
+                _gemini_model_cache["checked_at"] = now
+                return candidates[0]
+    except Exception as e:
+        print("Model list error:", e)
+    return "gemini-3.7-flash"
+
+def get_ai_summary(title: str) -> str:
+    if not GEMINI_API_KEY:
+        return "AI機能が未設定です（APIキーを確認してください）"
+
+    model = get_working_gemini_model()
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+    payload = {"contents": [{"parts": [{"text": f"以下のニュースタイトルから、個人投資家向けの影響を2〜3行で簡潔に要約してください。\nニュースタイトル: {title}"}]}]}
+    
+    for attempt in range(3):
+        try:
+            res = requests.post(url, headers={'Content-Type': 'application/json'}, json=payload, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                candidates = data.get("candidates")
+                if not candidates:
+                    reason = data.get("promptFeedback", {}).get("blockReason", "不明")
+                    return f"要約失敗（生成がブロックされました: {reason}）"
+                return candidates[0]["content"]["parts"][0]["text"].strip()
+            elif res.status_code in (503, 429) and attempt < 2:
+                wait = int(res.headers.get("Retry-After", 2 ** (attempt + 1)))
+                time.sleep(wait)
+                continue
+            elif res.status_code == 404:
+                _gemini_model_cache["name"] = None
+                print("Gemini 404, model invalidated:", model)
+                return "要約失敗 (APIエラー: 404 モデル切替待ち。再度お試しください)"
+            else:
+                print("Gemini API error:", res.status_code, res.text)
+                return f"要約失敗 (APIエラー: {res.status_code})"
+        except Exception as e:
+            if attempt == 2:
+                print("Gemini exception:", e)
+                return "AI要約通信エラー（サーバーの設定を確認してください）"
+            time.sleep(2 ** (attempt + 1))
+
+class TradeCreate(BaseModel): ticker: str = ""; name: str; trade_type: str; asset_type: str; trade_date: str; quantity: float; price: float; reason: str = ""
+class FundRuleCreate(BaseModel): ticker: str; name: str; frequency: str; monthly_day: int = 1; amount: float; avg_price: float = 10000.0; start_date: str
+class PriceUpdate(BaseModel): ticker: str; current_price: float
+class WatchlistCreate(BaseModel): ticker: str; name: str
+
+def init_db():
+    if not DATABASE2_URL: return
+    try:
+        conn = get_db_connection(); cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS portfolio (user_id TEXT, ticker TEXT, name TEXT, quantity REAL, average_price REAL, manual_price REAL, PRIMARY KEY (user_id, ticker)); CREATE TABLE IF NOT EXISTS transactions (id SERIAL PRIMARY KEY, user_id TEXT, ticker TEXT, type TEXT, trade_date TEXT, quantity REAL, price REAL, reason TEXT); CREATE TABLE IF NOT EXISTS fund_rules (id SERIAL PRIMARY KEY, user_id TEXT, ticker TEXT, name TEXT, frequency TEXT, monthly_day INTEGER, amount REAL, start_date TEXT); CREATE TABLE IF NOT EXISTS watchlist (user_id TEXT, ticker TEXT, name TEXT, added_date TEXT, PRIMARY KEY (user_id, ticker)); CREATE TABLE IF NOT EXISTS line_users (line_user_id TEXT PRIMARY KEY, app_user_id TEXT, is_news_active BOOLEAN DEFAULT TRUE); CREATE TABLE IF NOT EXISTS sent_news (line_user_id TEXT, news_link TEXT, PRIMARY KEY (line_user_id, news_link)); CREATE TABLE IF NOT EXISTS asset_cache (ticker TEXT PRIMARY KEY, price REAL, div_yield REAL, last_updated TEXT);''')
+        try: cursor.execute("ALTER TABLE line_users ADD COLUMN IF NOT EXISTS is_news_active BOOLEAN DEFAULT TRUE")
+        except: pass
+        cursor.close(); conn.close()
+    except: pass
+
+init_db()
+
+def get_usdjpy_rate():
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT price FROM asset_cache WHERE ticker = 'USDJPY' AND last_updated = %s", (today_str,))
+        row = cursor.fetchone()
+        if row and row["price"] > 100:
+            cursor.close(); conn.close(); return {"rate": row["price"], "time": f"{today_str} (取得済)"}
+    except: pass
         
-        .chart-filter-btn { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: bold; cursor: pointer; transition: all 0.2s; }
-        .filter-active { background-color: #60C7D5; color: #FFFFFF; }
-        .filter-inactive { background-color: #F8F6ED; color: #596572; border: 1px solid #F7F7F8; }
-        .filter-inactive:hover { background-color: #E2E8F0; }
-
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    rate = 0.0; fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
+    try:
+        res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=3)
+        if res.status_code == 200 and res.json().get("rates", {}).get("JPY", 0) > 100: rate = float(res.json()["rates"]["JPY"])
+    except: pass
+    if rate == 0.0:
+        try:
+            hist = yf.Ticker("JPY=X").history(period="1d")
+            if not hist.empty and not math.isnan(hist['Close'].iloc[-1]) and hist['Close'].iloc[-1] > 100: rate = float(hist['Close'].iloc[-1])
+        except: pass
+    if rate == 0.0:
+        try:
+            cursor.execute("SELECT price FROM asset_cache WHERE ticker = 'USDJPY'")
+            old = cursor.fetchone()
+            rate = old["price"] if old else 155.0; fetch_time = "前回取得値"
+        except: rate = 155.0
         
-        /* 目標プログレスバーのアニメーション */
-        @keyframes progress-fill {
-            from { width: 0%; }
-        }
-        .animate-progress {
-            animation: progress-fill 1s ease-out forwards;
-        }
-    </style>
-</head>
-<body class="font-sans antialiased">
+    try:
+        cursor.execute("INSERT INTO asset_cache (ticker, price, div_yield, last_updated) VALUES ('USDJPY', %s, 0.0, %s) ON CONFLICT (ticker) DO UPDATE SET price = EXCLUDED.price, last_updated = EXCLUDED.last_updated", (rate, today_str))
+        cursor.close(); conn.close()
+    except: pass
+    return {"rate": rate, "time": fetch_time}
 
-    <!-- ログイン画面 -->
-    <div id="login-screen" class="fixed inset-0 bg-[#F8F6ED] z-50 flex flex-col items-center justify-center px-4 hidden">
-        <div class="bg-white-card p-8 rounded-2xl shadow-sm border border-light w-full max-w-sm text-center">
-            <h1 class="text-3xl font-extrabold text-main mb-2"><i class="fas fa-chart-pie text-turquoise mr-2"></i>My Portfolio</h1>
-            <p class="text-stone text-sm mb-6 font-medium leading-relaxed">ご自身の会員番号（英数字6桁）<br>を入力してスタートしてください✨</p>
-            <input type="text" id="login-id-input" class="w-full border border-light bg-[#F8F6ED] rounded-xl p-4 text-center text-2xl font-extrabold text-main mb-2 tracking-widest uppercase focus:outline-none focus:border-[#60C7D5] transition" placeholder="AB1234" maxlength="6">
-            <p id="login-error" class="text-orange text-xs font-bold mb-4 hidden opacity-0 transition-opacity">※ 6桁の英数字を正しく入力してください</p>
-            <button onclick="login()" class="w-full bg-turquoise text-white font-bold py-3.5 rounded-xl transition shadow-sm text-lg hover:opacity-80">ポートフォリオを開く</button>
-        </div>
-    </div>
+def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
+    ticker = ticker.strip().upper()
+    today_str = datetime.now().strftime("%Y-%m-%d-v11")
+    price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
+    
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT price, div_yield, last_updated FROM asset_cache WHERE ticker = %s", (ticker,))
+        row = cursor.fetchone()
+        if row and row["last_updated"] == today_str and row["price"] > 0:
+            cursor.close(); conn.close(); return row["price"], row["div_yield"]
+    except: pass
+        
+    if not is_fund:
+        try:
+            stock_ticker = ticker if not is_jpy else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
+            stock = yf.Ticker(stock_ticker); hist = stock.history(period="1d")
+            if not hist.empty and not math.isnan(hist['Close'].iloc[-1]): price = float(hist['Close'].iloc[-1])
+            info = stock.info
+            if info and info.get("dividendYield"): div_yield = float(info["dividendYield"]) * 100.0
+            elif info and info.get("dividendRate") and price > 0: div_yield = (float(info.get("dividendRate")) / price) * 100.0
+            if div_yield == 0.0:
+                recent_divs = stock.dividends[stock.dividends.index >= (datetime.now(stock.dividends.index.tzinfo) - timedelta(days=365))]
+                if float(recent_divs.sum()) > 0 and price > 0: div_yield = (float(recent_divs.sum()) / price) * 100.0
+        except: pass
 
-    <!-- ダッシュボード全体 -->
-    <div id="main-dashboard" class="max-w-4xl mx-auto px-4 py-6 hidden">
-        <header class="flex justify-between items-center mb-6">
-            <h1 class="text-2xl font-extrabold text-main"><i class="fas fa-chart-pie text-turquoise mr-2"></i>My Portfolio</h1>
-            <div class="flex items-center gap-3">
-                <div class="text-sm text-stone bg-white px-3 py-1 rounded-full shadow-sm border border-light font-medium">
-                    ID: <span id="display-user-id" class="font-mono font-bold text-main"></span>
-                </div>
-                <button onclick="logout()" class="text-xs text-stone hover:text-orange transition underline">切替</button>
-            </div>
-        </header>
+    if div_yield == 0.0 or math.isnan(div_yield): div_yield = 2.5 if is_jpy else (1.5 if not is_fund else 0.0)
+    if price == 0.0 and row: price = row["price"] 
 
-        <!-- 資産目標（FIRE）プログレスバー -->
-        <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light mb-6">
-            <div class="flex justify-between items-end mb-2">
-                <div>
-                    <h2 class="text-sm font-bold text-stone mb-1"><i class="fas fa-flag-checkered text-orange mr-1"></i> 目標資産額まで</h2>
-                    <div class="flex items-baseline gap-2">
-                        <span id="target-progress-percent" class="text-3xl font-extrabold text-main">0%</span>
-                        <span class="text-sm text-stone font-bold">達成</span>
-                    </div>
-                </div>
-                <div class="text-right">
-                    <div class="text-xs text-stone font-medium mb-1">目標設定</div>
-                    <div class="flex items-center border border-light rounded-lg overflow-hidden bg-[#F8F6ED]">
-                        <span class="pl-3 pr-1 text-sm font-bold text-stone">¥</span>
-                        <input type="number" id="target-amount-input" class="bg-transparent py-1.5 w-24 text-right font-bold text-main focus:outline-none" value="10000000" step="100000" onchange="updateTargetProgress()">
-                    </div>
-                </div>
-            </div>
-            <div class="w-full bg-[#F8F6ED] rounded-full h-3 border border-light overflow-hidden">
-                <div id="target-progress-bar" class="bg-gradient-to-r from-[#60C7D5] to-[#42B187] h-full rounded-full transition-all duration-1000 ease-out animate-progress" style="width: 0%"></div>
-            </div>
-        </div>
+    if price > 0:
+        try:
+            if conn and cursor:
+                cursor.execute("INSERT INTO asset_cache (ticker, price, div_yield, last_updated) VALUES (%s, %s, %s, %s) ON CONFLICT (ticker) DO UPDATE SET price = EXCLUDED.price, div_yield = EXCLUDED.div_yield, last_updated = EXCLUDED.last_updated", (ticker, price, div_yield, today_str))
+                cursor.close(); conn.close()
+        except: pass
+        
+    return price, div_yield
 
-        <!-- サマリーカード群 -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light">
-                <p class="text-sm text-stone font-bold mb-1">💰 総資産額</p>
-                <div class="flex items-baseline gap-2">
-                    <span class="text-3xl font-extrabold text-main" id="total-assets">¥0</span>
-                </div>
-                <div class="mt-2 text-sm font-bold" id="total-profit-container">
-                    評価損益: <span id="total-profit">¥0</span>
-                </div>
-                <p class="text-xs text-stone mt-2 text-right opacity-70">USD/JPY: <span id="usdjpy-rate">--</span></p>
-            </div>
-
-            <!-- 配当金表示 -->
-            <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light flex flex-col justify-between relative overflow-hidden">
-                <div class="absolute right-0 top-0 w-16 h-16 bg-[#F8F6ED] rounded-bl-full -z-10 opacity-50"></div>
-                <div>
-                    <p class="text-sm text-stone font-bold mb-1"><i class="fas fa-hand-holding-usd text-[#C4BF4D] mr-1"></i> 年間予想配当金</p>
-                    <div class="flex items-baseline gap-2">
-                        <span class="text-3xl font-extrabold text-[#C4BF4D]" id="yearly-dividend">¥0</span>
-                    </div>
-                </div>
-                <div class="mt-3 p-3 bg-[#F8F6ED] rounded-lg flex items-center justify-between border border-light">
-                    <div>
-                        <p class="text-xs font-bold text-stone mb-0.5">月額換算 (不労所得)</p>
-                        <p class="text-lg font-extrabold text-main">¥<span id="monthly-dividend">0</span></p>
-                    </div>
-                    <div class="text-right">
-                        <p class="text-xs font-bold text-stone mb-0.5">平均利回り</p>
-                        <p class="text-sm font-extrabold text-main"><span id="avg-yield">0.00</span>%</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 🌟 追加＆改修：グラフエリア（円グラフ＋折れ線グラフ） -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <!-- ポートフォリオ比率（円グラフ） -->
-            <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light md:col-span-1 flex flex-col">
-                <h3 class="text-sm font-bold text-stone mb-4">🍩 資産ポートフォリオ</h3>
-                <div class="flex-grow flex items-center justify-center relative min-h-[200px]">
-                    <canvas id="ratio-chart"></canvas>
-                </div>
-            </div>
-
-            <!-- 資産推移（折れ線グラフ） -->
-            <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light md:col-span-2">
-                <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
-                    <h3 class="text-sm font-bold text-stone">📈 資産推移</h3>
-                    <div class="flex flex-wrap gap-2" id="chart-filters">
-                        <button onclick="filterChart('1M')" class="chart-filter-btn filter-inactive" id="filter-1M">1ヶ月</button>
-                        <button onclick="filterChart('3M')" class="chart-filter-btn filter-inactive" id="filter-3M">3ヶ月</button>
-                        <button onclick="filterChart('1Y')" class="chart-filter-btn filter-inactive" id="filter-1Y">1年</button>
-                        <button onclick="filterChart('3Y')" class="chart-filter-btn filter-inactive" id="filter-3Y">3年</button>
-                        <button onclick="filterChart('ALL')" class="chart-filter-btn filter-active" id="filter-ALL">全期間</button>
+# ==========================================
+# 🌟 【完全版】LINE自動ニュース配信（リマインド機能）
+# ==========================================
+def check_and_send_news():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        # 通知設定がONのユーザーを取得
+        cursor.execute("SELECT * FROM line_users WHERE is_news_active = TRUE")
+        users = cursor.fetchall()
+        
+        for user in users:
+            line_user_id = user["line_user_id"]
+            app_user_id = user["app_user_id"]
+            if not app_user_id: continue
+            
+            # そのユーザーの保有・お気に入り銘柄のニュースを取得
+            news_data = get_jp_news(app_user_id)
+            if not news_data: continue
+            
+            # すでに送信済みのニュースURLを取得（スパム防止）
+            cursor.execute("SELECT news_link FROM sent_news WHERE line_user_id = %s", (line_user_id,))
+            sent_links = {row["news_link"] for row in cursor.fetchall()}
+            
+            new_articles = []
+            for n in news_data:
+                if n["link"] not in sent_links:
+                    new_articles.append(n)
+                    if len(new_articles) >= 3: # 1回のリマインドで最大3件まで
+                        break
                         
-                        <div class="flex items-center gap-1 bg-[#F8F6ED] px-2 py-1 rounded-full border border-light text-xs text-stone ml-2">
-                            <input type="date" id="chart-start-date" class="bg-transparent outline-none cursor-pointer">
-                            <span>〜</span>
-                            <input type="date" id="chart-end-date" class="bg-transparent outline-none cursor-pointer">
-                            <button onclick="filterChart('CUSTOM')" class="font-bold text-turquoise ml-1 hover:opacity-70" id="filter-CUSTOM">指定</button>
-                        </div>
-                    </div>
-                </div>
-                <div style="position: relative; height: 250px; width: 100%;">
-                    <canvas id="asset-chart"></canvas>
-                </div>
-            </div>
-        </div>
-
-        <!-- 取引の追加セクション -->
-        <div class="bg-white-card p-6 rounded-xl shadow-sm border border-light mb-6">
-            <h3 class="text-lg font-extrabold text-main mb-4">取引の追加</h3>
-            <div class="mb-4">
-                <label class="block text-sm font-bold text-stone mb-1">資産タイプ</label>
-                <select id="trade-asset-type" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main focus:outline-none" onchange="handleAssetTypeChange()">
-                    <option value="JP">日本株</option>
-                    <option value="US">米国株</option>
-                </select>
-            </div>
-            
-            <div class="bg-[#F8F6ED] p-4 rounded-lg border border-light mb-4 relative">
-                <label class="block text-sm font-bold text-stone mb-2"><i class="fas fa-search text-turquoise"></i> 銘柄検索（自動入力）</label>
-                <input type="text" id="trade-search" class="w-full border border-light rounded p-2 text-main bg-white focus:outline-none focus:border-turquoise" placeholder="例: 7203 または トヨタ" autocomplete="off">
-                <div id="trade-suggest" class="absolute z-10 w-full bg-white border border-light shadow-lg rounded-b hidden max-h-48 overflow-y-auto"></div>
-            </div>
-            
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                <div>
-                    <label class="block text-sm font-bold text-stone mb-1">銘柄コード</label>
-                    <input type="text" id="trade-ticker" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly>
-                </div>
-                <div class="md:col-span-2">
-                    <label class="block text-sm font-bold text-stone mb-1">銘柄名</label>
-                    <input type="text" id="trade-name" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly>
-                </div>
-                <div>
-                    <label class="block text-sm font-bold text-stone mb-1">取引種別</label>
-                    <select id="trade-type" class="w-full border border-light rounded p-2 text-main focus:outline-none">
-                        <option value="BUY">買付</option>
-                        <option value="SELL">売却</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                <div>
-                    <label class="block text-sm font-bold text-stone mb-1">取引日</label>
-                    <input type="date" id="trade-date" class="w-full border border-light rounded p-2 text-main focus:outline-none">
-                </div>
-                <div>
-                    <label class="block text-sm font-bold text-stone mb-1">株数指定 (株)</label>
-                    <input type="number" step="0.01" id="trade-qty" class="w-full border border-light rounded p-2 text-main focus:outline-none">
-                </div>
-                <div>
-                    <label id="trade-price-label" class="block text-sm font-bold text-stone mb-1">単価 (円)</label>
-                    <input type="number" step="0.01" id="trade-price" class="w-full border border-light rounded p-2 text-main focus:outline-none">
-                </div>
-                <div class="md:col-span-1">
-                    <button onclick="submitTrade('trade')" class="w-full bg-turquoise text-white font-bold py-2 rounded hover:opacity-80 transition shadow">保存する</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- 自動積立ルール設定セクション -->
-        <div class="bg-white-card p-6 rounded-xl shadow-sm border border-light mb-6">
-            <h3 class="text-lg font-extrabold text-main mb-4">自動積立ルール設定</h3>
-            <div class="bg-[#F8F6ED] p-4 rounded-lg border border-light mb-4 relative">
-                <label class="block text-sm font-bold text-stone mb-2"><i class="fas fa-search text-turquoise"></i> ファンド検索（自動入力）</label>
-                <input type="text" id="fund-search" class="w-full border border-light rounded p-2 text-main bg-white focus:outline-none focus:border-turquoise" placeholder="例: オルカン または eMAXIS" autocomplete="off">
-                <div id="fund-suggest" class="absolute z-10 w-full bg-white border border-light shadow-lg rounded-b hidden max-h-48 overflow-y-auto"></div>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
-                <div>
-                    <label class="block text-sm font-bold text-stone mb-1">投信コード</label>
-                    <input type="text" id="fund-ticker" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly>
-                </div>
-                <div class="md:col-span-2">
-                    <label class="block text-sm font-bold text-stone mb-1">ファンド名</label>
-                    <input type="text" id="fund-name" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly>
-                </div>
-                <div>
-                    <label class="block text-sm font-bold text-stone mb-1">積立コース</label>
-                    <select id="fund-freq" class="w-full border border-light rounded p-2 text-main focus:outline-none">
-                        <option value="MONTHLY">毎月コース</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-sm font-bold text-stone mb-1">積立日 (毎月)</label>
-                    <select id="fund-day" class="w-full border border-light rounded p-2 text-main focus:outline-none">
-                        <option value="1">1日</option>
-                        <option value="15">15日</option>
-                        <option value="25">25日</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
-                <div>
-                    <label class="block text-sm font-bold text-stone mb-1">積立金額 (円)</label>
-                    <input type="number" id="fund-amount" class="w-full border border-light rounded p-2 text-main focus:outline-none" value="30000">
-                </div>
-                <div>
-                    <label class="block text-sm font-bold text-stone mb-1">基準価額 (1万口) <input type="checkbox" id="fund-manual" onchange="toggleFundPrice()" class="ml-1 cursor-pointer"> 手入力</label>
-                    <input type="number" step="0.01" id="fund-price" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main focus:outline-none" readonly placeholder="例: 28459">
-                </div>
-                <div>
-                    <label class="block text-sm font-bold text-stone mb-1">開始日</label>
-                    <input type="date" id="fund-start" class="w-full border border-light rounded p-2 text-main focus:outline-none">
-                </div>
-                <div class="md:col-span-2">
-                    <button onclick="submitFund()" class="w-full bg-turquoise text-white font-bold py-2 rounded hover:opacity-80 transition shadow">積立を開始する</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- タブナビゲーション -->
-        <div class="flex flex-wrap gap-2 border-b border-light pb-4 mb-6" id="main-tabs">
-            <button onclick="switchTab('portfolio')" id="tab-portfolio" class="px-5 py-2 rounded-full font-bold bg-turquoise text-white shadow-sm transition text-sm">保有資産</button>
-            <button onclick="switchTab('history')" id="tab-history" class="px-5 py-2 rounded-full font-bold bg-[#F8F6ED] text-stone border border-light hover:bg-[#E2E8F0] transition text-sm">取引履歴</button>
-            <button onclick="switchTab('watchlist')" id="tab-watchlist" class="px-5 py-2 rounded-full font-bold bg-[#F8F6ED] text-stone border border-light hover:bg-[#E2E8F0] transition text-sm">気になるリスト</button>
-            <button onclick="switchTab('news')" id="tab-news" class="px-5 py-2 rounded-full font-bold bg-[#F8F6ED] text-stone border border-light hover:bg-[#E2E8F0] transition text-sm">関連ニュース</button>
-            <button onclick="switchTab('calendar')" id="tab-calendar" class="px-5 py-2 rounded-full font-bold bg-[#F8F6ED] text-stone border border-light hover:bg-[#E2E8F0] transition text-sm"><i class="fas fa-calendar-alt text-mint mr-1"></i>経済指標</button>
-        </div>
-
-        <div id="content-portfolio">
-            <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
-                <ul id="portfolio-list" class="divide-y border-light"><li class="p-4 text-center text-stone">読み込み中...</li></ul>
-            </div>
-        </div>
-
-        <div id="content-history" class="hidden">
-            <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
-                <ul id="history-list" class="divide-y border-light"><li class="p-4 text-center text-stone">履歴がありません</li></ul>
-            </div>
-        </div>
-
-        <div id="content-watchlist" class="hidden">
-            <div class="bg-white-card p-6 rounded-xl shadow-sm border border-light mb-6">
-                <h3 class="text-lg font-extrabold text-main mb-4">気になる銘柄の追加</h3>
-                <div class="bg-[#F8F6ED] p-4 rounded-lg border border-light mb-4 relative">
-                    <label class="block text-sm font-bold text-stone mb-2"><i class="fas fa-search text-turquoise"></i> 銘柄検索（自動入力）</label>
-                    <input type="text" id="watch-search" class="w-full border border-light rounded p-2 text-main bg-white focus:outline-none" placeholder="例: 7203 または トヨタ" autocomplete="off">
-                    <div id="watch-suggest" class="absolute z-10 w-full bg-white border border-light shadow-lg rounded-b hidden max-h-48 overflow-y-auto"></div>
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-                    <div>
-                        <label class="block text-sm font-bold text-stone mb-1">銘柄コード</label>
-                        <input type="text" id="watch-ticker" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-bold text-stone mb-1">銘柄名</label>
-                        <input type="text" id="watch-name" class="w-full border border-light rounded p-2 bg-[#F8F6ED] text-main" readonly>
-                    </div>
-                    <div>
-                        <button onclick="submitWatchlist()" class="w-full bg-turquoise text-white font-bold py-2 rounded hover:opacity-80 transition shadow">リストに追加</button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
-                <ul id="watchlist-list" class="divide-y border-light"><li class="p-4 text-center text-stone">読み込み中...</li></ul>
-            </div>
-        </div>
-
-        <div id="content-news" class="hidden">
-            <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden p-4" id="news-container">
-                <p class="text-center text-stone">ニュースを読み込んでいます...</p>
-            </div>
-        </div>
-
-        <div id="content-calendar" class="hidden">
-            <div class="bg-white-card rounded-xl shadow-sm border border-light overflow-hidden">
-                <div class="p-4 border-b border-light bg-white flex items-center">
-                    <h3 class="text-lg font-extrabold text-main"><i class="fas fa-calendar-alt text-mint mr-2"></i>今週の重要経済指標</h3>
-                </div>
+            if new_articles:
+                msg = "🔔 【定期配信】保有銘柄・市況の最新ニュースが届きました！\n\n"
+                for n in new_articles:
+                    msg += f"📰 【{n['stock_name']}】\n{n['title']}\n{n['link']}\n\n"
+                msg += f"👇 AI要約はダッシュボードから✨\nhttps://stock-app-xyif.onrender.com/{app_user_id}"
                 
-                <div id="economic-calendar-container" class="text-sm">
-                    <!-- Javascriptで描画されます -->
-                </div>
-                
-                <div class="p-4 bg-[#F8F6ED] border-t border-light text-center">
-                    <a href="https://mst.monex.co.jp/pc/servlet/ITS/report/EconomyIndexCalendar" target="_blank" class="text-turquoise text-sm font-bold hover:underline">
-                        マネックス証券で詳細な経済指標カレンダーを確認する <i class="fas fa-external-link-alt ml-1"></i>
-                    </a>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- JavaScript ロジック -->
-    <script>
-        let userId = '';
-        let chartInstance = null;
-        let ratioChartInstance = null; // 🌟 円グラフ用インスタンス
-        let fullChartData = []; 
-        let globalTotalAssets = 0;
-
-        window.onload = () => {
-            const pathId = window.location.pathname.replace('/', '').toUpperCase();
-            const idRegex = /^[A-Z0-9]{6}$/i;
-
-            if (idRegex.test(pathId)) {
-                userId = pathId;
-                document.getElementById('login-screen').classList.add('hidden');
-                document.getElementById('main-dashboard').classList.remove('hidden');
-                document.getElementById('display-user-id').textContent = userId;
-
-                document.getElementById('trade-date').valueAsDate = new Date();
-                document.getElementById('fund-start').valueAsDate = new Date();
-                
-                const savedTarget = localStorage.getItem(`target_amount_${userId}`);
-                if(savedTarget) document.getElementById('target-amount-input').value = savedTarget;
-                
-                loadDashboard();
-                loadGraph();
-                
-                setupSearch('trade-search', 'trade-suggest', 'trade-ticker', 'trade-name', 'trade-asset-type');
-                setupSearch('fund-search', 'fund-suggest', 'fund-ticker', 'fund-name', 'FUND', 'fund-price');
-                setupSearch('watch-search', 'watch-suggest', 'watch-ticker', 'watch-name', 'ALL');
-                
-                renderEconomicCalendar();
-            } else {
-                document.getElementById('login-screen').classList.remove('hidden');
-            }
-        };
-
-        function updateTargetProgress() {
-            const targetInput = document.getElementById('target-amount-input');
-            let targetAmount = parseFloat(targetInput.value);
-            
-            if (isNaN(targetAmount) || targetAmount <= 0) {
-                targetAmount = 10000000;
-                targetInput.value = targetAmount;
-            }
-            localStorage.setItem(`target_amount_${userId}`, targetAmount);
-
-            let percent = 0;
-            if (globalTotalAssets > 0) {
-                percent = Math.min(100, (globalTotalAssets / targetAmount) * 100);
-            }
-            
-            document.getElementById('target-progress-percent').textContent = percent.toFixed(1) + '%';
-            document.getElementById('target-progress-bar').style.width = percent + '%';
-            
-            if(percent >= 100) {
-                document.getElementById('target-progress-bar').classList.remove('from-[#60C7D5]', 'to-[#42B187]');
-                document.getElementById('target-progress-bar').classList.add('bg-[#C4BF4D]');
-            } else {
-                document.getElementById('target-progress-bar').classList.add('from-[#60C7D5]', 'to-[#42B187]');
-                document.getElementById('target-progress-bar').classList.remove('bg-[#C4BF4D]');
-            }
-        }
-
-        async function renderEconomicCalendar() {
-            const container = document.getElementById('economic-calendar-container');
-            container.innerHTML = '<div class="p-6 text-center text-stone"><i class="fas fa-spinner fa-spin mr-2"></i>最新の経済指標を取得中...</div>';
-            
-            try {
-                const res = await fetch(`/api/economic_calendar`);
-                const data = await res.json();
-                
-                container.innerHTML = '';
-                if (!data || data.length === 0) {
-                    container.innerHTML = '<div class="p-6 text-center text-stone">今週のスケジュールは見つかりませんでした。<br>下のリンクから確認してください。</div>';
-                    return;
-                }
-
-                data.forEach(d => {
-                    let html = `<div class="${d.bg} ${d.text} font-bold px-3 py-1.5 border-b border-light text-sm tracking-wide">${d.date}(${d.day})</div>`;
-                    if (d.events && d.events.length > 0) {
-                        html += `<ul class="bg-white border-b border-light divide-y divide-gray-100">`;
-                        d.events.forEach(e => {
-                            const titleHtml = e.isHtml ? e.title : (e.isRed ? `<span class="text-[#F77261] font-bold">${e.title}</span>` : `<span class="text-main">${e.title}</span>`);
-                            html += `<li class="px-3 py-2 flex items-start leading-relaxed">
-                                        <span class="mr-2 text-base leading-none">${e.flag}</span>
-                                        <div class="flex-1 text-[13px]">${titleHtml}</div>
-                                     </li>`;
-                        });
-                        html += `</ul>`;
-                    }
-                    container.innerHTML += html;
-                });
-            } catch (error) {
-                container.innerHTML = '<div class="p-6 text-center text-orange font-bold">データの取得に失敗しました。</div>';
-            }
-        }
-
-        function handleAssetTypeChange() {
-            const type = document.getElementById('trade-asset-type').value;
-            document.getElementById('trade-price-label').textContent = type === 'US' ? '単価 ($)' : '単価 (円)';
-            resetSearch('trade');
-        }
-
-        function login() {
-            const input = document.getElementById('login-id-input').value.toUpperCase().trim();
-            const idRegex = /^[A-Z0-9]{6}$/i;
-            const errorText = document.getElementById('login-error');
-
-            if (idRegex.test(input)) window.location.href = '/' + input;
-            else {
-                errorText.classList.remove('hidden', 'opacity-0');
-                errorText.classList.add('opacity-100');
-            }
-        }
-
-        function logout() { window.location.href = '/'; }
-
-        function switchTab(tabName) {
-            const tabs = ['portfolio', 'history', 'watchlist', 'news', 'calendar'];
-            tabs.forEach(t => {
-                document.getElementById(`content-${t}`).classList.add('hidden');
-                const btn = document.getElementById(`tab-${t}`);
-                btn.className = "px-5 py-2 rounded-full font-bold bg-[#F8F6ED] text-stone border border-light hover:bg-[#E2E8F0] transition text-sm";
-            });
-            document.getElementById(`content-${tabName}`).classList.remove('hidden');
-            const activeBtn = document.getElementById(`tab-${tabName}`);
-            activeBtn.className = "px-5 py-2 rounded-full font-bold bg-turquoise text-white shadow-sm transition text-sm";
-
-            if (tabName === 'history') loadHistory();
-            if (tabName === 'watchlist') loadWatchlist();
-            if (tabName === 'news') loadNews();
-        }
-
-        // 🌟 円グラフを描画する関数を追加
-        function renderRatioChart(categoryTotals) {
-            if (!categoryTotals) return;
-            
-            const labels = ['日本株', '米国株', '投資信託'];
-            const values = [
-                categoryTotals['日本株'].current || 0,
-                categoryTotals['米国株'].current || 0,
-                categoryTotals['投資信託'].current || 0
-            ];
-            
-            // 全て0の場合はグラフを描画しない
-            if(values.every(v => v === 0)) return;
-
-            const ctx = document.getElementById('ratio-chart').getContext('2d');
-            if(ratioChartInstance) ratioChartInstance.destroy();
-            
-            ratioChartInstance = new Chart(ctx, {
-                type: 'doughnut',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        data: values,
-                        backgroundColor: ['#F77261', '#42B187', '#60C7D5'],
-                        borderWidth: 0,
-                        hoverOffset: 4
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    cutout: '70%',
-                    plugins: {
-                        legend: { 
-                            position: 'bottom', 
-                            labels: { color: '#596572', font: { size: 12, weight: 'bold' }, padding: 15 } 
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    let total = context.dataset.data.reduce((a,b) => a+b, 0);
-                                    let val = context.parsed;
-                                    let pct = total > 0 ? Math.round((val/total)*100) : 0;
-                                    return ` ¥${val.toLocaleString()} (${pct}%)`;
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        async function loadDashboard() {
-            try {
-                const res = await fetch(`/api/${userId}/portfolio`);
-                const data = await res.json();
-                
-                globalTotalAssets = data.total_assets || 0;
-                document.getElementById('total-assets').textContent = `¥${Math.floor(globalTotalAssets).toLocaleString()}`;
-                updateTargetProgress();
-                
-                const totalProfit = globalTotalAssets - data.total_book;
-                const profitEl = document.getElementById('total-profit');
-                profitEl.textContent = `${totalProfit >= 0 ? '+' : ''}¥${Math.floor(totalProfit).toLocaleString()}`;
-                profitEl.className = totalProfit >= 0 ? 'text-mint' : 'text-orange';
-                document.getElementById('usdjpy-rate').textContent = `${data.usdjpy_rate}円 (${data.usdjpy_time})`;
-
-                const yearlyDiv = data.est_dividend_jpy || 0;
-                const monthlyDiv = Math.floor(yearlyDiv / 12);
-                let avgYield = 0;
-                if(globalTotalAssets > 0) {
-                    avgYield = (yearlyDiv / globalTotalAssets) * 100;
-                }
-                
-                document.getElementById('yearly-dividend').textContent = `¥${Math.floor(yearlyDiv).toLocaleString()}`;
-                document.getElementById('monthly-dividend').textContent = monthlyDiv.toLocaleString();
-                document.getElementById('avg-yield').textContent = avgYield.toFixed(2);
-
-                // 🌟 ここで円グラフの描画を呼び出す
-                renderRatioChart(data.category_totals);
-
-                const listEl = document.getElementById('portfolio-list');
-                listEl.innerHTML = '';
-                if (data.portfolio.length === 0) {
-                    listEl.innerHTML = '<li class="p-4 text-center text-stone font-medium">保有資産がありません。<br>上の検索窓から取引を追加してみましょう！</li>';
-                    return;
-                }
-
-                data.portfolio.forEach(item => {
-                    const profit = item.profit_loss_jpy;
-                    const profitStr = profit >= 0 ? `+¥${Math.floor(profit).toLocaleString()}` : `-¥${Math.abs(Math.floor(profit)).toLocaleString()}`;
-                    const profitClass = profit >= 0 ? 'text-mint' : 'text-orange';
-                    const isFund = item.is_fund;
-                    const priceUnit = isFund ? '円 (1万口)' : (item.currency === 'USD' ? '$' : '円');
+                try:
+                    # LINEにプッシュ通知
+                    line_bot_api.push_message(line_user_id, TextSendMessage(text=msg))
                     
-                    let divHtml = '';
-                    if(!isFund && item.dividend_yield > 0) {
-                        divHtml = `<span class="bg-[#F8F6ED] text-stone px-1.5 py-0.5 rounded text-[10px] ml-2 border border-light">利回り ${item.dividend_yield.toFixed(2)}%</span>`;
-                    }
+                    # 送信したニュースをDBに記録
+                    for n in new_articles:
+                        cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (%s, %s) ON CONFLICT DO NOTHING", (line_user_id, n["link"]))
+                except Exception as push_e:
+                    print("Push error:", push_e)
+        
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print("check_and_send_news error:", e)
 
-                    listEl.innerHTML += `
-                        <li class="p-4 hover:bg-[#F8F6ED] flex justify-between items-center transition">
-                            <div>
-                                <div class="font-bold text-main text-lg">${item.name}</div>
-                                <div class="text-xs text-stone mt-1 font-medium"><span class="bg-[#F8F6ED] px-2 py-0.5 rounded border border-light mr-2">${item.category}</span>${item.ticker} ${divHtml}</div>
-                                <div class="text-xs text-stone mt-1.5 font-medium">保有: ${item.quantity.toLocaleString()} ${isFund ? '口' : '株'} <span class="mx-1">|</span> 現在値: ${item.current_price.toLocaleString()} ${priceUnit}</div>
-                            </div>
-                            <div class="text-right">
-                                <div class="font-extrabold text-main text-xl">¥${Math.floor(item.current_value_jpy).toLocaleString()}</div>
-                                <div class="text-sm font-bold mt-1 ${profitClass}">${profitStr}</div>
-                            </div>
-                        </li>
-                    `;
-                });
-            } catch (e) { console.error(e); }
-        }
+# 1時間ごとに最新ニュースをチェックして配信
+scheduler = BackgroundScheduler(); scheduler.add_job(check_and_send_news, 'interval', minutes=60); scheduler.start()
+atexit.register(lambda: scheduler.shutdown())
 
-        async function loadGraph() {
-            try {
-                const res = await fetch(`/api/${userId}/history`);
-                fullChartData = await res.json();
-                filterChart('1Y'); 
-            } catch(e) { console.error(e); }
-        }
+@app.post("/callback")
+async def callback(request: Request, x_line_signature: str = Header(None)):
+    body = await request.body()
+    try: handler.handle(body.decode("utf-8"), x_line_signature)
+    except: raise HTTPException(status_code=400, detail="Invalid signature")
+    return "OK"
 
-        function filterChart(period) {
-            const buttons = ['1M', '3M', '1Y', '3Y', 'ALL', 'CUSTOM'];
-            buttons.forEach(p => {
-                const btn = document.getElementById(`filter-${p}`);
-                if (btn) btn.className = (p === period) ? 'chart-filter-btn filter-active' : 'chart-filter-btn filter-inactive';
-            });
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    text = event.message.text.strip()
+    line_user_id = event.source.user_id
+    
+    if "会員連携" in text:
+        msg = "ABCashのアプリで使っている【6桁の会員ID（英数字）】をそのままメッセージで送信してください！🔑\n\n連携すると、あなただけのポートフォリオやニュースがいつでもLINEからワンタップで見れるようになります✨"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
 
-            if (fullChartData.length === 0) return;
-            let filteredData = [...fullChartData];
-            const today = new Date();
-            let startDate = new Date();
+    elif "最新ニュース" in text:
+        try:
+            conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = %s", (line_user_id,))
+            row = cursor.fetchone(); cursor.close(); conn.close()
+            if row:
+                user_id = row['app_user_id']
+                news_data = get_jp_news(user_id)
+                if news_data:
+                    msg = "🚀 保有銘柄と市況の最新ニュースです！\n\n"
+                    for n in news_data[:3]:
+                        msg += f"📰 【{n['stock_name']}】\n{n['title']}\n{n['link']}\n\n"
+                    msg += f"👇 さらに詳しいニュースやAI要約はダッシュボードから✨\nhttps://stock-app-xyif.onrender.com/{user_id}"
+                else:
+                    msg = f"現在、新しいニュースはありません。\n\n👇 ダッシュボードはこちら✨\nhttps://stock-app-xyif.onrender.com/{user_id}"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
+            else:
+                msg = "ニュースをお届けするために、まずは「🔑 会員連携」からIDを登録してくださいね！"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
+        except Exception as e: pass
 
-            if (period === '1M') startDate.setMonth(today.getMonth() - 1);
-            else if (period === '3M') startDate.setMonth(today.getMonth() - 3);
-            else if (period === '1Y') startDate.setFullYear(today.getFullYear() - 1);
-            else if (period === '3Y') startDate.setFullYear(today.getFullYear() - 3);
-            else if (period === 'CUSTOM') {
-                const startStr = document.getElementById('chart-start-date').value;
-                const endStr = document.getElementById('chart-end-date').value;
-                if (startStr && endStr) {
-                    filteredData = fullChartData.filter(d => d.date >= startStr && d.date <= endStr);
-                    renderChart(filteredData);
-                    return;
-                } else { alert("カレンダーから指定日を入力してください"); return; }
-            }
+    elif "通知" in text:
+        try:
+            conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("SELECT is_news_active FROM line_users WHERE line_user_id = %s", (line_user_id,))
+            row = cursor.fetchone()
+            if row:
+                new_status = not row["is_news_active"]
+                cursor.execute("UPDATE line_users SET is_news_active = %s WHERE line_user_id = %s", (new_status, line_user_id))
+                if new_status:
+                    msg = "🔔 【通知：ON】\n最新のニュースや相場の変動をLINEでお知らせします！お楽しみに✨"
+                else:
+                    msg = "🔕 【通知：OFF】\n定期通知をストップしました。またいつでもONにできます！"
+            else:
+                msg = "通知を受け取るために、まずは「🔑 会員連携」からIDを登録してくださいね！"
+            cursor.close(); conn.close()
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
+        except: pass
 
-            if (period !== 'ALL') {
-                const startStr = startDate.toISOString().split('T')[0];
-                filteredData = fullChartData.filter(d => d.date >= startStr);
-            }
-            renderChart(filteredData);
-        }
+    elif "ダッシュボード" in text:
+        try:
+            conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("SELECT app_user_id FROM line_users WHERE line_user_id = %s", (line_user_id,))
+            row = cursor.fetchone(); cursor.close(); conn.close()
+            if row: 
+                msg = f"おかえりなさい！📈✨\n👇こちらから最新の資産状況をチェックできます。\n\nhttps://stock-app-xyif.onrender.com/{row['app_user_id']}"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
+            else:
+                msg = "まずは「🔑 会員連携」からIDを登録してくださいね！"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
+        except: pass
 
-        function renderChart(dataToRender) {
-            const labels = dataToRender.map(d => d.date.substring(5));
-            const values = dataToRender.map(d => d.total_assets);
+    elif re.match(r"^[a-zA-Z0-9]{6}$", text):
+        try:
+            conn = get_db_connection(); cursor = conn.cursor()
+            cursor.execute("INSERT INTO line_users (line_user_id, app_user_id, is_news_active) VALUES (%s, %s, TRUE) ON CONFLICT (line_user_id) DO UPDATE SET app_user_id = EXCLUDED.app_user_id", (line_user_id, text))
+            cursor.close(); conn.close()
+            msg = f"🎉 連携完了！\n\n会員ID【{text}】で連携しました！\nさっそく「ダッシュボード」を開いてみましょう✨"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
+        except: pass
+
+@app.get("/api/ai_summary")
+def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
+
+@app.get("/api/{user_id}/news")
+def get_jp_news(user_id: str):
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT ticker, name FROM portfolio WHERE user_id = %s AND quantity > 0", (user_id,))
+        p_items = cursor.fetchall()
+        cursor.execute("SELECT ticker, name FROM watchlist WHERE user_id = %s", (user_id,))
+        w_items = cursor.fetchall()
+        cursor.close(); conn.close()
+        
+        target_items = {item["ticker"]: item["name"] for item in (p_items + w_items)}
+        news_list = []
+        headers = {"User-Agent": "Mozilla/5.0"}
+
+        for ticker, name in target_items.items():
+            if len(ticker) == 8 and ticker.isalnum(): continue
             
-            const ctx = document.getElementById('asset-chart').getContext('2d');
-            if(chartInstance) chartInstance.destroy();
-            
-            chartInstance = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: '総資産推移',
-                        data: values,
-                        borderColor: '#60C7D5',
-                        backgroundColor: 'rgba(96, 199, 213, 0.1)',
-                        fill: true,
-                        tension: 0.1,
-                        pointRadius: 0,
-                        pointHoverRadius: 5,
-                        borderWidth: 2
-                    }]
-                },
-                options: { 
-                    responsive: true, 
-                    maintainAspectRatio: false,
-                    interaction: { mode: 'index', intersect: false },
-                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(context) { return '¥' + context.parsed.y.toLocaleString(); } } } },
-                    scales: { 
-                        x: { grid: { display: false }, ticks: { color: '#596572', maxTicksLimit: 8 } },
-                        y: { grid: { color: '#F7F7F8' }, ticks: { color: '#596572', callback: function(value) { return '¥' + value.toLocaleString(); } } }
-                    }
-                }
-            });
-        }
+            search_term = urllib.parse.quote(f"{name} 株")
+            url = f"https://news.google.com/rss/search?q={search_term}&hl=ja&gl=JP&ceid=JP:ja"
+            try:
+                res = requests.get(url, headers=headers, timeout=5)
+                if res.status_code == 200:
+                    root = ET.fromstring(res.text)
+                    for item in root.findall('.//item')[:3]:
+                        try:
+                            dt_utc = parsedate_to_datetime(item.find('pubDate').text)
+                            dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9))) if dt_utc.tzinfo else dt_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=9)))
+                                
+                            news_list.append({
+                                "stock_name": name,
+                                "title": item.find('title').text,
+                                "link": item.find('link').text,
+                                "pub_time": dt_jst.strftime("%Y/%m/%d %H:%M"),
+                                "timestamp": dt_jst.timestamp()
+                            })
+                        except: pass
+            except: pass
 
-        async function loadHistory() {
-            const listEl = document.getElementById('history-list');
-            listEl.innerHTML = '<li class="p-4 text-center text-stone">読み込み中...</li>';
-            try {
-                const res = await fetch(`/api/${userId}/transactions/ALL`);
-                const trades = await res.json();
-                if (trades.length === 0) { listEl.innerHTML = '<li class="p-4 text-center text-stone">取引履歴がありません</li>'; return; }
-                
-                const groupedTrades = {};
-                trades.forEach(t => {
-                    if(!groupedTrades[t.ticker]) groupedTrades[t.ticker] = { name: t.name, histories: [] };
-                    groupedTrades[t.ticker].histories.push(t);
-                });
-
-                listEl.innerHTML = '';
-                for (const ticker in groupedTrades) {
-                    const group = groupedTrades[ticker];
-                    listEl.innerHTML += `
-                        <div class="bg-[#F8F6ED] p-3 border-b border-light flex justify-between items-center">
-                            <div class="font-bold text-main">${group.name} <span class="text-xs font-normal text-stone ml-2">${ticker}</span></div>
-                            <button onclick="deleteStock('${ticker}')" class="text-xs bg-white border border-orange text-orange hover:bg-orange hover:text-white px-3 py-1 rounded-md transition shadow-sm font-bold"><i class="fas fa-trash-alt mr-1"></i> 一括削除</button>
-                        </div>
-                    `;
-                    group.histories.forEach(t => {
-                        const typeLabel = t.type.includes('BUY') ? '<span class="text-orange font-bold">買付</span>' : '<span class="text-turquoise font-bold">売却</span>';
-                        listEl.innerHTML += `
-                            <li class="p-3 pl-6 border-b border-light hover:bg-[#F8F6ED] flex justify-between items-center transition bg-white text-sm">
-                                <div><span class="text-stone font-mono mr-3">${t.trade_date}</span> ${typeLabel} <span class="text-stone ml-3 font-medium">数量: ${t.quantity} | 単価: ${t.price.toLocaleString()}</span></div>
-                                <button onclick="deleteTransaction(${t.id})" class="text-stone hover:text-orange transition px-2"><i class="fas fa-times"></i></button>
-                            </li>
-                        `;
-                    });
-                }
-            } catch (e) { listEl.innerHTML = '<li class="p-4 text-center text-orange">読み込みエラー</li>'; }
-        }
-
-        async function loadWatchlist() {
-            const listEl = document.getElementById('watchlist-list');
-            listEl.innerHTML = '<li class="p-4 text-center text-stone">読み込み中...</li>';
-            try {
-                const res = await fetch(`/api/${userId}/watchlist`);
-                const items = await res.json();
-                if (items.length === 0) { listEl.innerHTML = '<li class="p-4 text-center text-stone">気になる銘柄がありません。</li>'; return; }
-                
-                listEl.innerHTML = '';
-                items.forEach(item => {
-                    const priceUnit = (item.currency === '$') ? '$' : (item.ticker.length === 8 ? '円(1万口)' : '円');
-                    listEl.innerHTML += `
-                        <li class="p-4 hover:bg-[#F8F6ED] flex justify-between items-center transition">
-                            <div>
-                                <div class="font-bold text-main">${item.name}</div>
-                                <div class="text-xs text-stone mt-1"><span class="bg-[#F8F6ED] px-2 py-0.5 rounded border border-light mr-1">銘柄コード</span>${item.ticker}</div>
-                            </div>
-                            <div class="text-right">
-                                <div class="font-extrabold text-main">現在値: ${item.current_price.toLocaleString()} ${priceUnit}</div>
-                                <button onclick="deleteWatchlist('${item.ticker}')" class="text-xs text-orange hover:opacity-70 mt-2 transition"><i class="fas fa-trash-alt"></i> リストから削除</button>
-                            </div>
-                        </li>
-                    `;
-                });
-            } catch (e) { listEl.innerHTML = '<li class="p-4 text-center text-orange">読み込みエラー</li>'; }
-        }
-
-        async function submitWatchlist() {
-            const ticker = document.getElementById('watch-ticker').value;
-            const name = document.getElementById('watch-name').value;
-            if (!ticker) { alert("銘柄を検索して選択してください！"); return; }
-            
-            try {
-                const res = await fetch(`/api/${userId}/watchlist`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ticker, name }) });
-                if (res.ok) {
-                    resetSearch('watch');
-                    loadWatchlist();
-                    alert("気になるリストに追加しました！");
-                }
-            } catch (e) { alert("通信エラーが発生しました。"); }
-        }
-
-        async function deleteWatchlist(ticker) {
-            if (!confirm(`【${ticker}】を気になるリストから削除しますか？`)) return;
-            try {
-                const res = await fetch(`/api/${userId}/watchlist/${ticker}`, { method: 'DELETE' });
-                if (res.ok) loadWatchlist();
-            } catch (e) { alert("通信エラーが発生しました。"); }
-        }
-
-        async function deleteTransaction(txId) {
-            if (!confirm("この取引履歴を1件削除しますか？")) return;
-            try {
-                const res = await fetch(`/api/${userId}/transaction/${txId}`, { method: 'DELETE' });
-                if (res.ok) { loadHistory(); loadDashboard(); loadGraph(); }
-            } catch (e) { alert("通信エラーが発生しました。"); }
-        }
-
-        async function deleteStock(ticker) {
-            if (!confirm(`本当に【${ticker}】に関するすべての取引履歴、積立設定、保有情報を一括削除しますか？\n（この操作は取り消せません）`)) return;
-            try {
-                const res = await fetch(`/api/${userId}/delete_stock/${ticker}`, { method: 'DELETE' });
-                if (res.ok) { loadDashboard(); loadGraph(); if(!document.getElementById('content-history').classList.contains('hidden')) loadHistory(); }
-            } catch (e) { console.error(e); }
-        }
-
-        async function loadNews() {
-            const container = document.getElementById('news-container');
-            container.innerHTML = '<p class="text-center text-stone">読み込み中...</p>';
-            try {
-                const res = await fetch(`/api/${userId}/news`);
-                const news = await res.json();
-                if (news.length === 0) { container.innerHTML = '<p class="text-center text-stone">関連ニュースがありません</p>'; return; }
-                container.innerHTML = '<ul class="space-y-4"></ul>';
-                const ul = container.querySelector('ul');
-                
-                news.forEach((n, index) => {
-                    ul.innerHTML += `
-                        <li class="border-b border-light pb-4 last:border-0">
-                            <div class="flex items-center mb-1">
-                                <span class="text-xs font-bold bg-[#F8F6ED] border border-light text-turquoise px-2 py-0.5 rounded">${n.stock_name}</span>
-                                <span class="text-xs text-stone ml-2 font-medium">${n.pub_time}</span>
-                            </div>
-                            <a href="${n.link}" target="_blank" class="block mt-1.5 text-sm font-bold text-main hover:text-turquoise transition leading-relaxed">${n.title}</a>
+        market_term = urllib.parse.quote("日経平均")
+        market_url = f"https://news.google.com/rss/search?q={market_term}&hl=ja&gl=JP&ceid=JP:ja"
+        try:
+            res = requests.get(market_url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                root = ET.fromstring(res.text)
+                for item in root.findall('.//item')[:5]:
+                    try:
+                        dt_utc = parsedate_to_datetime(item.find('pubDate').text)
+                        dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9))) if dt_utc.tzinfo else dt_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=9)))
                             
-                            <div class="mt-2">
-                                <button onclick="getAiSummary('${encodeURIComponent(n.title)}', 'summary-${index}')" class="text-xs font-bold bg-turquoise text-white px-3 py-1.5 rounded-full shadow-sm hover:opacity-80 transition flex items-center">
-                                    <i class="fas fa-robot mr-1"></i> AIで要約
-                                </button>
-                                <div id="summary-${index}" class="mt-2 text-sm text-stone bg-[#F8F6ED] p-3 rounded-lg hidden border border-light leading-relaxed"></div>
-                            </div>
-                        </li>
-                    `;
-                });
-            } catch (e) { container.innerHTML = '<p class="text-center text-orange font-bold">ニュースの取得に失敗しました</p>'; }
-        }
+                        news_list.append({
+                            "stock_name": "主要市況",
+                            "title": item.find('title').text,
+                            "link": item.find('link').text,
+                            "pub_time": dt_jst.strftime("%Y/%m/%d %H:%M"),
+                            "timestamp": dt_jst.timestamp()
+                        })
+                    except: pass
+        except: pass
+            
+        news_list.sort(key=lambda x: x["timestamp"], reverse=True)
+        return news_list[:30]
+    except Exception as e:
+        print("News Error:", e)
+        return []
 
-        async function getAiSummary(encodedTitle, elemId) {
-            const elem = document.getElementById(elemId);
-            elem.classList.remove('hidden');
-            elem.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Gemini AI が要約を作成中...';
-            try {
-                const res = await fetch(`/api/ai_summary?title=${encodedTitle}`);
-                const data = await res.json();
-                elem.innerHTML = data.summary.replace(/\n/g, '<br>');
-            } catch(e) {
-                elem.innerHTML = '<span class="text-orange"><i class="fas fa-exclamation-triangle mr-1"></i>要約に失敗しました</span>';
-            }
-        }
+# ==========================================
+# 経済カレンダー用 翻訳辞書とロジック
+# ==========================================
+TRANS_DICT = {
+    "Prelim GDP Price Index": "GDPデフレーター(速報)",
+    "Prelim GDP": "GDP(速報値)",
+    "Revised Industrial Production": "鉱工業生産(改定値)",
+    "Tertiary Industry Activity": "第3次産業活動指数",
+    "Core Machinery Orders": "コア機械受注",
+    "Machinery Orders": "機械受注",
+    "National Core CPI": "全国コアCPI",
+    "National CPI": "全国CPI",
+    "Flash Manufacturing PMI": "製造業PMI(速報値)",
+    "Flash Services PMI": "サービス業PMI(速報値)",
+    "FOMC Meeting Minutes": "FOMC議事録",
+    "FOMC Member": "FRB高官",
+    "Philly Fed Manufacturing Index": "フィラデルフィア連銀製造業景気指数",
+    "Philly FRB Manufacturing Index": "フィラデルフィア連銀製造業景気指数",
+    "Unemployment Claims": "新規失業保険申請件数",
+    "Trade Balance": "貿易収支",
+    "Current Account": "経常収支",
+    "Retail Sales": "小売売上高",
+    "Industrial Production": "鉱工業生産",
+    "Consumer Price Index": "消費者物価指数",
+    "Bank Lending": "銀行融資",
+    "Economy Watchers Sentiment": "景気ウォッチャー調査",
+    "Non-Farm Employment Change": "非農業部門雇用者数",
+    "Unemployment Rate": "失業率",
+    "Core CPI": "コアCPI",
+    "CPI": "消費者物価指数(CPI)",
+    "PPI": "生産者物価指数(PPI)",
+    "PMI": "購買担当者景気指数(PMI)",
+    "GDP": "GDP",
+    "Fed": "FRB",
+    "BOJ": "日銀",
+    "Policy Rate": "政策金利発表",
+}
 
-        function setupSearch(inputId, suggestId, tickerId, nameId, typeSource, priceId = null) {
-            const input = document.getElementById(inputId);
-            const suggest = document.getElementById(suggestId);
-            let timeout = null;
+SUFFIX_TRANS = [
+    (r"\by/y\b", "（前年比）"),
+    (r"\bq/q\b", "（前期比）"),
+    (r"\bm/m\b", "（前月比）"),
+    (r"\bw/w\b", "（前週比）"),
+]
 
-            input.addEventListener('input', () => {
-                clearTimeout(timeout);
-                const query = input.value.trim();
-                const assetType = (typeSource === 'FUND' || typeSource === 'ALL') ? typeSource : document.getElementById(typeSource).value;
-                if (query.length < 1) { suggest.classList.add('hidden'); return; }
+def translate_title(title: str) -> str:
+    for eng, jp in sorted(TRANS_DICT.items(), key=lambda x: -len(x[0])):
+        title = re.sub(re.escape(eng), jp, title, flags=re.IGNORECASE)
+    for pattern, jp in SUFFIX_TRANS:
+        title = re.sub(pattern, jp, title, flags=re.IGNORECASE)
+    return title.strip()
 
-                timeout = setTimeout(async () => {
-                    try {
-                        const res = await fetch(`/api/search_stock?q=${encodeURIComponent(query)}&asset_type=${assetType}`);
-                        const results = await res.json();
-                        suggest.innerHTML = '';
-                        if (results.length > 0) {
-                            results.forEach(item => {
-                                const div = document.createElement('div');
-                                div.className = 'p-3 border-b border-light text-sm text-main hover:bg-[#F8F6ED] cursor-pointer transition flex items-center';
-                                div.innerHTML = `<span class="font-bold text-stone mr-3 w-16">${item.ticker}</span><span class="font-bold">${item.name}</span>`;
-                                div.onclick = () => {
-                                    document.getElementById(tickerId).value = item.ticker;
-                                    document.getElementById(nameId).value = item.name;
-                                    input.value = item.name;
-                                    suggest.classList.add('hidden');
-                                    if(priceId) fetchFundPrice(item.ticker, priceId);
-                                };
-                                suggest.appendChild(div);
-                            });
-                        } else {
-                            suggest.innerHTML = '<div class="p-3 text-sm text-stone font-medium">見つかりませんでした</div>';
-                        }
-                        suggest.classList.remove('hidden');
-                    } catch(e) {}
-                }, 400);
-            });
-            document.addEventListener('click', (e) => {
-                if (e.target !== input && e.target !== suggest) suggest.classList.add('hidden');
-            });
-        }
+_calendar_cache = {"data": None, "checked_at": None}
 
-        async function fetchFundPrice(ticker, priceId) {
-            const el = document.getElementById(priceId);
-            el.placeholder = "取得中...";
-            try {
-                const res = await fetch(`/api/fund_info/${ticker}`);
-                const data = await res.json();
-                if(data.price > 0) el.value = data.price;
-                else el.placeholder = "手入力してください";
-            } catch (e) { el.placeholder = "取得失敗"; }
-        }
+@app.get("/api/economic_calendar")
+def get_economic_calendar():
+    global _calendar_cache
+    now = datetime.now()
+    
+    if _calendar_cache["data"] is not None and _calendar_cache["checked_at"] and (now - _calendar_cache["checked_at"]).seconds < 3600:
+        return _calendar_cache["data"]
 
-        function toggleFundPrice() {
-            const el = document.getElementById('fund-price');
-            const isManual = document.getElementById('fund-manual').checked;
-            el.readOnly = !isManual;
-            el.className = isManual ? "w-full border border-turquoise rounded p-2 bg-white text-main focus:outline-none" : "w-full border border-light rounded p-2 bg-[#F8F6ED] text-main";
-        }
+    days_jp = ["月", "火", "水", "木", "金", "土", "日"]
+    country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
 
-        function resetSearch(prefix) {
-            document.getElementById(`${prefix}-search`).value = '';
-            document.getElementById(`${prefix}-ticker`).value = '';
-            document.getElementById(`${prefix}-name`).value = '';
-            if(document.getElementById(`${prefix}-price`)) document.getElementById(`${prefix}-price`).value = '';
-        }
+    try:
+        url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+        headers = {"User-Agent": "Mozilla/5.0"}
 
-        async function submitTrade() {
-            const data = {
-                asset_type: document.getElementById('trade-asset-type').value,
-                ticker: document.getElementById('trade-ticker').value,
-                name: document.getElementById('trade-name').value,
-                trade_type: document.getElementById('trade-type').value,
-                trade_date: document.getElementById('trade-date').value,
-                quantity: parseFloat(document.getElementById('trade-qty').value),
-                price: parseFloat(document.getElementById('trade-price').value)
-            };
-            if (!data.ticker || !data.quantity || !data.price) { alert("必須項目が入力されていません！"); return; }
-            await postData('/api/' + userId + '/trade', data);
-        }
+        raw_events = []
+        try:
+            res = requests.get(url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                raw_events = res.json()
+            else:
+                print("Calendar fetch non-200:", res.status_code)
+        except Exception as e:
+            print("Calendar fetch error:", e)
 
-        async function submitFund() {
-            const data = {
-                ticker: document.getElementById('fund-ticker').value,
-                name: document.getElementById('fund-name').value,
-                frequency: document.getElementById('fund-freq').value,
-                monthly_day: parseInt(document.getElementById('fund-day').value),
-                amount: parseFloat(document.getElementById('fund-amount').value),
-                avg_price: parseFloat(document.getElementById('fund-price').value),
-                start_date: document.getElementById('fund-start').value
-            };
-            if (!data.ticker || !data.amount || !data.avg_price) { alert("必須項目が入力されていません！"); return; }
-            await postData('/api/' + userId + '/fund_rule', data);
-        }
+        if not raw_events:
+            return _calendar_cache["data"] or []
 
-        async function postData(url, data) {
-            try {
-                const res = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
-                if (res.ok) {
-                    resetSearch('trade'); resetSearch('fund');
-                    loadDashboard();
-                    loadGraph();
-                    if(!document.getElementById('content-history').classList.contains('hidden')) loadHistory();
-                    alert("保存しました！✨");
-                } else alert("保存に失敗しました。");
-            } catch (e) { alert("通信エラーが発生しました。"); }
-        }
-    </script>
-</body>
-</html>
+        calendar_dict = {}
+        now_jst = datetime.now(timezone(timedelta(hours=9)))
+
+        for ev in raw_events:
+            country = ev.get("country", "")
+            if country not in ["USD", "JPY"]:
+                continue
+            
+            impact = ev.get("impact", "")
+            if impact == "Holiday":
+                continue
+            
+            if country == "USD" and impact not in ["High", "Medium"]:
+                continue
+            if country == "JPY" and impact not in ["High", "Medium", "Low"]:
+                continue
+
+            date_str = ev.get("date", "")
+            if not date_str:
+                continue
+            try:
+                dt_utc = datetime.fromisoformat(date_str)
+                dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9)))
+            except Exception as e:
+                print("date parse error:", date_str, e)
+                continue
+
+            if dt_jst.date() < (now_jst - timedelta(days=1)).date():
+                continue
+
+            title = translate_title(ev.get("title", ""))
+
+            d_key = dt_jst.strftime("%m/%d").lstrip("0").replace("/0", "/")
+            day_str = days_jp[dt_jst.weekday()]
+            sort_key = dt_jst.strftime("%Y%m%d")
+
+            if d_key not in calendar_dict:
+                bg_color, text_color = "bg-[#F8F6ED]", "text-[#2F3842]"
+                if dt_jst.weekday() == 5: text_color = "text-[#4984BD]"
+                elif dt_jst.weekday() == 6: bg_color, text_color = "bg-[#F77261]", "text-white"
+                calendar_dict[d_key] = {"date": d_key, "day": day_str, "bg": bg_color, "text": text_color, "events": [], "sort_key": sort_key}
+
+            calendar_dict[d_key]["events"].append({
+                "flag": country_flags.get(country, "🌐"),
+                "title": f"{title} ({dt_jst.strftime('%H:%M')})",
+                "isRed": (impact == "High"),
+                "isHtml": False
+            })
+
+        sorted_vals = sorted(calendar_dict.values(), key=lambda x: x["sort_key"])
+        result = sorted_vals[:7]
+        
+        _calendar_cache["data"] = result
+        _calendar_cache["checked_at"] = now
+        return result
+
+    except Exception as e:
+        print("Economic Calendar Error:", e)
+        return _calendar_cache["data"] or []
+
+@app.get("/")
+def read_root(): return FileResponse("index.html")
+
+@app.get("/admin")
+def read_admin(): return FileResponse("admin.html")
+
+@app.get("/{user_id}")
+def read_user_dashboard(user_id: str):
+    if re.match(r"^[a-zA-Z0-9]{6}$", user_id): return FileResponse("index.html")
+    raise HTTPException(status_code=404, detail="Error")
+
+@app.get("/api/search_stock")
+def search_stock(q: str, asset_type: str = "ALL"):
+    if not q: return []
+    results = []; q_str = q.strip().lower()
+    headers = {"User-Agent": "Mozilla/5.0"}
+    if asset_type in ["JP", "ALL"]:
+        for item in JPX_STOCKS:
+            if q_str in item["code"].lower() or q_str in item["name"].lower():
+                results.append({"ticker": item["ticker"], "name": item["name"]})
+                if len(results) >= 8: break
+        if len(results) < 8:
+            try:
+                res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=JP", headers=headers, timeout=3)
+                if res.status_code == 200:
+                    for quote in res.json().get("quotes", []):
+                        code = quote.get("symbol", "")
+                        name = quote.get("shortname", quote.get("longname", code))
+                        if code.endswith(".T") and not any(r["ticker"] == code for r in results):
+                            results.append({"ticker": code, "name": name})
+            except: pass
+        if results and asset_type == "JP": return results[:8]
+
+    if asset_type in ["US", "ALL"] and len(results) < 8:
+        try:
+            res = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(q)}&quotesCount=8&country=US", headers=headers, timeout=3)
+            if res.status_code == 200:
+                for quote in res.json().get("quotes", []):
+                    ticker = quote.get("symbol", ""); name = quote.get("shortname", quote.get("longname", ticker))
+                    if not ticker.endswith(".T") and not any(r["ticker"] == ticker for r in results): results.append({"ticker": ticker, "name": name})
+        except: pass
+
+    if asset_type in ["FUND", "ALL"] and len(results) < 8:
+        search_terms = q_str.replace(" ", " ").split()
+        for fund in POPULAR_FUNDS:
+            if all(t in (fund["name"].lower() + " " + " ".join(fund["keywords"])) for t in search_terms):
+                if not any(r["ticker"] == fund["ticker"] for r in results): results.append({"ticker": fund["ticker"], "name": fund["name"]})
+                if len(results) >= 8: break
+        
+    return results[:8]
+
+@app.post("/api/{user_id}/update_price")
+def update_price(user_id: str, data: PriceUpdate):
+    try:
+        conn = get_db_connection(); cursor = conn.cursor()
+        cursor.execute("UPDATE portfolio SET manual_price = %s WHERE user_id = %s AND ticker = %s", (data.current_price, user_id, data.ticker))
+        cursor.close(); conn.close()
+    except: pass
+    return {"message": "Success"}
+
+@app.post("/api/{user_id}/trade")
+def record_trade(user_id: str, trade: TradeCreate):
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        ticker = trade.ticker.strip() or trade.name.strip()
+        if trade.asset_type == "JP" and not ticker.endswith(".T"): ticker = f"{ticker}.T"
+        elif trade.asset_type == "US": ticker = ticker.upper()
+        name = trade.name.strip() or ticker
+        
+        cursor.execute('INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price, reason) VALUES (%s, %s, %s, %s, %s, %s, %s)', (user_id, ticker, trade.trade_type, trade.trade_date, trade.quantity, trade.price, trade.reason))
+        cursor.execute("SELECT * FROM portfolio WHERE user_id = %s AND ticker = %s", (user_id, ticker))
+        current = cursor.fetchone()
+        
+        if "BUY" in trade.trade_type:
+            if current:
+                new_qty = current["quantity"] + trade.quantity
+                new_price = ((current["quantity"] * current["average_price"]) + (trade.quantity * trade.price)) / new_qty
+                cursor.execute("UPDATE portfolio SET quantity = %s, average_price = %s WHERE user_id = %s AND ticker = %s", (new_qty, new_price, user_id, ticker))
+            else:
+                cursor.execute("INSERT INTO portfolio (user_id, ticker, name, quantity, average_price, manual_price) VALUES (%s, %s, %s, %s, %s, %s)", (user_id, ticker, name, trade.quantity, trade.price, trade.price))
+        elif trade.trade_type == "SELL" and current:
+            new_qty = current["quantity"] - trade.quantity
+            if new_qty <= 0: cursor.execute("DELETE FROM portfolio WHERE user_id = %s AND ticker = %s", (user_id, ticker))
+            else: cursor.execute("UPDATE portfolio SET quantity = %s WHERE user_id = %s AND ticker = %s", (new_qty, user_id, ticker))
+        cursor.close(); conn.close()
+    except: pass
+    return {"message": "Success"}
+
+@app.get("/api/{user_id}/portfolio")
+def get_portfolio(user_id: str):
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT * FROM portfolio WHERE user_id = %s", (user_id,))
+        rows = cursor.fetchall(); cursor.close(); conn.close()
+    except: return {"total_assets": 0, "total_book": 0, "usdjpy_rate": 155.0, "usdjpy_time": "エラー", "category_totals": {"日本株":{"current":0,"book":0}, "米国株":{"current":0,"book":0}, "投資信託":{"current":0,"book":0}}, "portfolio": [], "est_dividend_jpy": 0}
+    
+    usdjpy_info = get_usdjpy_rate()
+    portfolio_data = []; cat_totals = {"日本株": {"current": 0.0, "book": 0.0}, "米国株": {"current": 0.0, "book": 0.0}, "投資信託": {"current": 0.0, "book": 0.0}}
+    total_assets = 0.0; total_book = 0.0; total_est_dividend_jpy = 0.0 
+
+    for row in rows:
+        item = dict(row); ticker = item["ticker"]; quantity = item["quantity"]; average_price = item["average_price"]
+        manual_price = item.get("manual_price") or average_price
+        is_jpy = ticker.endswith(".T")
+        is_fund = (len(ticker) == 8 and ticker.isalnum()) or "投信" in item["name"] or "ファンド" in item["name"] or "スリム" in item["name"]
+        fx_rate = 1.0 if is_jpy or is_fund else usdjpy_info["rate"]
+        
+        fetched_price, div_yield = get_asset_data(ticker, is_jpy, is_fund)
+        current_price = fetched_price if fetched_price > 0 else manual_price
+            
+        if is_fund: current_value_jpy = (quantity * current_price) / 10000.0; book_value_jpy = (quantity * average_price) / 10000.0; category = "投資信託"
+        elif is_jpy: current_value_jpy = (current_price * quantity); book_value_jpy = (average_price * quantity); category = "日本株"; total_est_dividend_jpy += current_value_jpy * (div_yield / 100.0)
+        else: current_value_jpy = (current_price * quantity) * fx_rate; book_value_jpy = (average_price * quantity) * fx_rate; category = "米国株"; total_est_dividend_jpy += current_value_jpy * (div_yield / 100.0)
+            
+        item.update({"category": category, "is_fund": is_fund, "current_price": current_price, "currency": "JPY" if is_jpy or is_fund else "USD", "current_value_jpy": current_value_jpy, "profit_loss_jpy": current_value_jpy - book_value_jpy, "dividend_yield": div_yield})
+        cat_totals[category]["current"] += current_value_jpy; cat_totals[category]["book"] += book_value_jpy
+        total_assets += current_value_jpy; total_book += book_value_jpy; portfolio_data.append(item)
+
+    return {"total_assets": total_assets, "total_book": total_book, "usdjpy_rate": usdjpy_info["rate"], "usdjpy_time": usdjpy_info["time"], "category_totals": cat_totals, "portfolio": portfolio_data, "est_dividend_jpy": total_est_dividend_jpy}
+
+@app.get("/api/fund_info/{ticker}")
+def get_fund_info(ticker: str):
+    price, _ = get_asset_data(ticker, False, True)
+    return {"ticker": ticker, "price": price}
+
+@app.post("/api/{user_id}/fund_rule")
+def add_fund_rule(user_id: str, rule: FundRuleCreate):
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute('INSERT INTO fund_rules (user_id, ticker, name, frequency, monthly_day, amount, start_date) VALUES (%s, %s, %s, %s, %s, %s, %s)', (user_id, rule.ticker, rule.name, rule.frequency, rule.monthly_day, rule.amount, rule.start_date))
+        curr = datetime.strptime(rule.start_date, "%Y-%m-%d"); today = datetime.now()
+        
+        fetched_price, _ = get_asset_data(rule.ticker, False, True)
+        base_price = rule.avg_price if rule.avg_price > 0 else (fetched_price or 10000.0)
+
+        while curr <= today:
+            actual_date = curr if rule.frequency == "DAILY" and is_business_day(curr) else (get_next_business_day(curr) if rule.frequency == "MONTHLY" and curr.day == rule.monthly_day else None)
+            if actual_date and actual_date <= today:
+                cursor.execute('INSERT INTO transactions (user_id, ticker, type, trade_date, quantity, price, reason) VALUES (%s, %s, %s, %s, %s, %s, %s)', (user_id, rule.ticker, 'BUY_AUTO', actual_date.strftime("%Y-%m-%d"), (rule.amount / base_price) * 10000.0, base_price, "自動積立"))
+            curr += timedelta(days=1)
+
+        cursor.execute("SELECT SUM(quantity) as total_qty FROM transactions WHERE user_id = %s AND ticker = %s", (user_id, rule.ticker))
+        total_qty = cursor.fetchone()["total_qty"] or 0.0
+        cursor.execute("SELECT * FROM portfolio WHERE user_id = %s AND ticker = %s", (user_id, rule.ticker))
+        if cursor.fetchone(): cursor.execute("UPDATE portfolio SET quantity = %s, average_price = %s WHERE user_id = %s AND ticker = %s", (total_qty, base_price, user_id, rule.ticker))
+        else: cursor.execute("INSERT INTO portfolio (user_id, ticker, name, quantity, average_price, manual_price) VALUES (%s, %s, %s, %s, %s, %s)", (user_id, rule.ticker, rule.name, total_qty, base_price, base_price))
+        cursor.close(); conn.close()
+    except: pass
+    return {"message": "Success"}
+
+@app.get("/api/{user_id}/transactions/{category}")
+def get_transactions_by_category(user_id: str, category: str):
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT t.*, p.name FROM transactions t LEFT JOIN portfolio p ON t.ticker = p.ticker AND p.user_id = t.user_id WHERE t.user_id = %s ORDER BY t.trade_date DESC", (user_id,))
+        rows = cursor.fetchall(); cursor.close(); conn.close()
+        
+        result = []
+        for r in rows:
+            item_cat = "FUND" if ((len(r["ticker"]) == 8 and r["ticker"].isalnum()) or "投信" in (r["name"] or r["ticker"]) or "ファンド" in (r["name"] or r["ticker"])) else ("JP" if r["ticker"].endswith(".T") else "US")
+            if category.upper() == "ALL" or category.upper() == item_cat:
+                result.append(dict(r, name=r["name"] or r["ticker"]))
+        return result
+    except: return []
+
+@app.delete("/api/{user_id}/transaction/{tx_id}")
+def delete_transaction(user_id: str, tx_id: int):
+    try:
+        conn = get_db_connection(); cursor = conn.cursor()
+        cursor.execute("DELETE FROM transactions WHERE id = %s AND user_id = %s", (tx_id, user_id))
+        cursor.close(); conn.close()
+    except: pass
+    return {"message": "Success"}
+
+@app.delete("/api/{user_id}/delete_stock/{ticker}")
+def delete_stock_api(user_id: str, ticker: str):
+    try:
+        conn = get_db_connection(); cursor = conn.cursor()
+        cursor.execute("DELETE FROM portfolio WHERE user_id = %s AND ticker = %s", (user_id, ticker))
+        cursor.execute("DELETE FROM transactions WHERE user_id = %s AND ticker = %s", (user_id, ticker))
+        cursor.execute("DELETE FROM fund_rules WHERE user_id = %s AND ticker = %s", (user_id, ticker))
+        cursor.execute("DELETE FROM watchlist WHERE user_id = %s AND ticker = %s", (user_id, ticker))
+        cursor.close(); conn.close()
+    except: pass
+    return {"message": "Deleted"}
+
+@app.get("/api/{user_id}/history")
+def get_history(user_id: str):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT * FROM transactions WHERE user_id = %s ORDER BY trade_date ASC", (user_id,))
+        trades = cursor.fetchall()
+        
+        cursor.execute("SELECT ticker, manual_price, average_price FROM portfolio WHERE user_id = %s", (user_id,))
+        portfolio_prices = {r["ticker"]: r["manual_price"] or r["average_price"] for r in cursor.fetchall()}
+        cursor.close()
+        conn.close()
+        
+        if not trades: return []
+    except Exception as e:
+        return []
+    
+    usdjpy = get_usdjpy_rate()["rate"]
+    tickers = list(set(t["ticker"] for t in trades))
+    
+    prices_by_date = {}
+    start_date_obj = datetime.strptime(trades[0]["trade_date"], "%Y-%m-%d")
+    min_start = datetime.now() - timedelta(days=365*5)
+    if start_date_obj < min_start: start_date_obj = min_start
+    
+    all_dates_set = set()
+
+    for ticker in tickers:
+        is_fund = len(ticker) == 8 and ticker.isalnum()
+        if is_fund: continue
+        
+        try:
+            yf_ticker = ticker if ticker.endswith(".T") else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
+            df = yf.Ticker(yf_ticker).history(start=start_date_obj.strftime("%Y-%m-%d"))
+            for idx, row in df.iterrows():
+                if not math.isnan(row["Close"]):
+                    d_str = idx.strftime("%Y-%m-%d")
+                    all_dates_set.add(d_str) 
+                    if d_str not in prices_by_date: prices_by_date[d_str] = {}
+                    prices_by_date[d_str][ticker] = float(row["Close"])
+        except: pass
+
+    for t in trades:
+        all_dates_set.add(t["trade_date"])
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    all_dates_set.add(today_str)
+    
+    all_dates = sorted(list(all_dates_set))
+
+    current_holdings = {t: 0.0 for t in tickers}
+    last_known_price = {t: 0.0 for t in tickers}
+    
+    for t in trades:
+        if last_known_price[t["ticker"]] == 0: last_known_price[t["ticker"]] = t["price"]
+
+    trade_index = 0
+    result = []
+    
+    for date_str in all_dates:
+        while trade_index < len(trades) and trades[trade_index]["trade_date"] <= date_str:
+            tr = trades[trade_index]
+            t = tr["ticker"]
+            if "BUY" in tr["type"]: current_holdings[t] += tr["quantity"]
+            elif tr["type"] == "SELL": current_holdings[t] -= tr["quantity"]
+            last_known_price[t] = tr["price"]
+            trade_index += 1
+        
+        if date_str in prices_by_date:
+            for t, p in prices_by_date[date_str].items():
+                last_known_price[t] = p
+                
+        if date_str == today_str:
+            for t in tickers:
+                if t in portfolio_prices: last_known_price[t] = portfolio_prices[t]
+
+        day_total = 0.0
+        for t, qty in current_holdings.items():
+            if qty > 0:
+                price = last_known_price.get(t, 0.0)
+                is_fund = len(t) == 8 and t.isalnum()
+                is_jpy = t.endswith(".T") or is_fund
+                val = (qty * price) / (10000.0 if is_fund else 1.0)
+                day_total += val * (1.0 if is_jpy else usdjpy)
+                
+        if day_total > 0:
+            result.append({"date": date_str, "total_assets": round(day_total, 2)})
+            
+    return result
+
+@app.get("/api/{user_id}/watchlist")
+def get_watchlist(user_id: str):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT * FROM watchlist WHERE user_id = %s ORDER BY added_date DESC", (user_id,))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        result = []
+        for r in rows:
+            item = dict(r)
+            price, _ = get_asset_data(item["ticker"], item["ticker"].endswith(".T") or (len(item["ticker"])==4 and item["ticker"].isalnum()), False)
+            item["current_price"] = price
+            item["currency"] = "¥" if item["ticker"].endswith(".T") or (len(item["ticker"])==4 and item["ticker"].isalnum()) else "$"
+            result.append(item)
+        return result
+    except Exception as e:
+        return []
+
+@app.post("/api/{user_id}/watchlist")
+def add_watchlist(user_id: str, item: WatchlistCreate):
+    try:
+        ticker = item.ticker.strip()
+        if len(ticker) == 4 and ticker.isalnum(): ticker = f"{ticker}.T" if not ticker.endswith(".T") else ticker
+        else: ticker = ticker.upper()
+        conn = get_db_connection(); cursor = conn.cursor()
+        cursor.execute('INSERT INTO watchlist (user_id, ticker, name, added_date) VALUES (%s, %s, %s, %s) ON CONFLICT (user_id, ticker) DO NOTHING', (user_id, ticker, item.name, datetime.now().strftime("%Y-%m-%d")))
+        cursor.close(); conn.close()
+    except: pass
+    return {"message": "Success"}
+
+@app.delete("/api/{user_id}/watchlist/{ticker}")
+def delete_watchlist(user_id: str, ticker: str):
+    try:
+        conn = get_db_connection(); cursor = conn.cursor()
+        cursor.execute("DELETE FROM watchlist WHERE user_id = %s AND ticker = %s", (user_id, ticker))
+        cursor.close(); conn.close()
+    except: pass
+    return {"message": "Success"}
+
+@app.get("/api/admin/users")
+def get_all_users():
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT p.user_id, COUNT(DISTINCT p.ticker) as portfolio_count, (SELECT COUNT(*) FROM transactions t WHERE t.user_id = p.user_id) as transaction_count FROM portfolio p GROUP BY p.user_id")
+        rows = cursor.fetchall(); cursor.close(); conn.close()
+        return rows
+    except Exception as e: raise HTTPException(status_code=500, detail="Database Error")
+
+@app.delete("/api/admin/user/{user_id}")
+def delete_all_user_data(user_id: str):
+    try:
+        conn = get_db_connection(); cursor = conn.cursor()
+        cursor.execute("DELETE FROM portfolio WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM transactions WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM fund_rules WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM watchlist WHERE user_id = %s", (user_id,))
+        cursor.close(); conn.close()
+        return {"message": f"User {user_id} deleted"}
+    except Exception as e: raise HTTPException(status_code=500, detail="Database Error")
