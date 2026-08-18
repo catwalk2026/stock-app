@@ -60,7 +60,7 @@
             </div>
         </header>
 
-        <!-- 🌟 追加: 資産目標（FIRE）プログレスバー -->
+        <!-- 資産目標（FIRE）プログレスバー -->
         <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light mb-6">
             <div class="flex justify-between items-end mb-2">
                 <div>
@@ -96,7 +96,7 @@
                 <p class="text-xs text-stone mt-2 text-right opacity-70">USD/JPY: <span id="usdjpy-rate">--</span></p>
             </div>
 
-            <!-- 🌟 改修: 配当金表示 -->
+            <!-- 配当金表示 -->
             <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light flex flex-col justify-between relative overflow-hidden">
                 <div class="absolute right-0 top-0 w-16 h-16 bg-[#F8F6ED] rounded-bl-full -z-10 opacity-50"></div>
                 <div>
@@ -118,27 +118,38 @@
             </div>
         </div>
 
-        <!-- グラフエリア -->
-        <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light mb-6">
-            <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
-                <h3 class="text-sm font-bold text-stone">📈 資産推移</h3>
-                <div class="flex flex-wrap gap-2" id="chart-filters">
-                    <button onclick="filterChart('1M')" class="chart-filter-btn filter-inactive" id="filter-1M">1ヶ月</button>
-                    <button onclick="filterChart('3M')" class="chart-filter-btn filter-inactive" id="filter-3M">3ヶ月</button>
-                    <button onclick="filterChart('1Y')" class="chart-filter-btn filter-inactive" id="filter-1Y">1年</button>
-                    <button onclick="filterChart('3Y')" class="chart-filter-btn filter-inactive" id="filter-3Y">3年</button>
-                    <button onclick="filterChart('ALL')" class="chart-filter-btn filter-active" id="filter-ALL">全期間</button>
-                    
-                    <div class="flex items-center gap-1 bg-[#F8F6ED] px-2 py-1 rounded-full border border-light text-xs text-stone ml-2">
-                        <input type="date" id="chart-start-date" class="bg-transparent outline-none cursor-pointer">
-                        <span>〜</span>
-                        <input type="date" id="chart-end-date" class="bg-transparent outline-none cursor-pointer">
-                        <button onclick="filterChart('CUSTOM')" class="font-bold text-turquoise ml-1 hover:opacity-70" id="filter-CUSTOM">指定</button>
-                    </div>
+        <!-- 🌟 追加＆改修：グラフエリア（円グラフ＋折れ線グラフ） -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <!-- ポートフォリオ比率（円グラフ） -->
+            <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light md:col-span-1 flex flex-col">
+                <h3 class="text-sm font-bold text-stone mb-4">🍩 資産ポートフォリオ</h3>
+                <div class="flex-grow flex items-center justify-center relative min-h-[200px]">
+                    <canvas id="ratio-chart"></canvas>
                 </div>
             </div>
-            <div style="position: relative; height: 250px; width: 100%;">
-                <canvas id="asset-chart"></canvas>
+
+            <!-- 資産推移（折れ線グラフ） -->
+            <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light md:col-span-2">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
+                    <h3 class="text-sm font-bold text-stone">📈 資産推移</h3>
+                    <div class="flex flex-wrap gap-2" id="chart-filters">
+                        <button onclick="filterChart('1M')" class="chart-filter-btn filter-inactive" id="filter-1M">1ヶ月</button>
+                        <button onclick="filterChart('3M')" class="chart-filter-btn filter-inactive" id="filter-3M">3ヶ月</button>
+                        <button onclick="filterChart('1Y')" class="chart-filter-btn filter-inactive" id="filter-1Y">1年</button>
+                        <button onclick="filterChart('3Y')" class="chart-filter-btn filter-inactive" id="filter-3Y">3年</button>
+                        <button onclick="filterChart('ALL')" class="chart-filter-btn filter-active" id="filter-ALL">全期間</button>
+                        
+                        <div class="flex items-center gap-1 bg-[#F8F6ED] px-2 py-1 rounded-full border border-light text-xs text-stone ml-2">
+                            <input type="date" id="chart-start-date" class="bg-transparent outline-none cursor-pointer">
+                            <span>〜</span>
+                            <input type="date" id="chart-end-date" class="bg-transparent outline-none cursor-pointer">
+                            <button onclick="filterChart('CUSTOM')" class="font-bold text-turquoise ml-1 hover:opacity-70" id="filter-CUSTOM">指定</button>
+                        </div>
+                    </div>
+                </div>
+                <div style="position: relative; height: 250px; width: 100%;">
+                    <canvas id="asset-chart"></canvas>
+                </div>
             </div>
         </div>
 
@@ -327,8 +338,9 @@
     <script>
         let userId = '';
         let chartInstance = null;
+        let ratioChartInstance = null; // 🌟 円グラフ用インスタンス
         let fullChartData = []; 
-        let globalTotalAssets = 0; // 目標計算用に保持
+        let globalTotalAssets = 0;
 
         window.onload = () => {
             const pathId = window.location.pathname.replace('/', '').toUpperCase();
@@ -343,7 +355,6 @@
                 document.getElementById('trade-date').valueAsDate = new Date();
                 document.getElementById('fund-start').valueAsDate = new Date();
                 
-                // ローカルストレージから保存された目標金額を復元
                 const savedTarget = localStorage.getItem(`target_amount_${userId}`);
                 if(savedTarget) document.getElementById('target-amount-input').value = savedTarget;
                 
@@ -360,7 +371,6 @@
             }
         };
 
-        // 目標金額の更新＆計算処理
         function updateTargetProgress() {
             const targetInput = document.getElementById('target-amount-input');
             let targetAmount = parseFloat(targetInput.value);
@@ -369,7 +379,6 @@
                 targetAmount = 10000000;
                 targetInput.value = targetAmount;
             }
-            // ローカルストレージに保存
             localStorage.setItem(`target_amount_${userId}`, targetAmount);
 
             let percent = 0;
@@ -377,11 +386,9 @@
                 percent = Math.min(100, (globalTotalAssets / targetAmount) * 100);
             }
             
-            // UI更新
             document.getElementById('target-progress-percent').textContent = percent.toFixed(1) + '%';
             document.getElementById('target-progress-bar').style.width = percent + '%';
             
-            // 達成時の特別演出
             if(percent >= 100) {
                 document.getElementById('target-progress-bar').classList.remove('from-[#60C7D5]', 'to-[#42B187]');
                 document.getElementById('target-progress-bar').classList.add('bg-[#C4BF4D]');
@@ -461,12 +468,63 @@
             if (tabName === 'news') loadNews();
         }
 
+        // 🌟 円グラフを描画する関数を追加
+        function renderRatioChart(categoryTotals) {
+            if (!categoryTotals) return;
+            
+            const labels = ['日本株', '米国株', '投資信託'];
+            const values = [
+                categoryTotals['日本株'].current || 0,
+                categoryTotals['米国株'].current || 0,
+                categoryTotals['投資信託'].current || 0
+            ];
+            
+            // 全て0の場合はグラフを描画しない
+            if(values.every(v => v === 0)) return;
+
+            const ctx = document.getElementById('ratio-chart').getContext('2d');
+            if(ratioChartInstance) ratioChartInstance.destroy();
+            
+            ratioChartInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: values,
+                        backgroundColor: ['#F77261', '#42B187', '#60C7D5'],
+                        borderWidth: 0,
+                        hoverOffset: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '70%',
+                    plugins: {
+                        legend: { 
+                            position: 'bottom', 
+                            labels: { color: '#596572', font: { size: 12, weight: 'bold' }, padding: 15 } 
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let total = context.dataset.data.reduce((a,b) => a+b, 0);
+                                    let val = context.parsed;
+                                    let pct = total > 0 ? Math.round((val/total)*100) : 0;
+                                    return ` ¥${val.toLocaleString()} (${pct}%)`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
         async function loadDashboard() {
             try {
                 const res = await fetch(`/api/${userId}/portfolio`);
                 const data = await res.json();
                 
-                // 🌟 総資産の反映とプログレスバーの更新
                 globalTotalAssets = data.total_assets || 0;
                 document.getElementById('total-assets').textContent = `¥${Math.floor(globalTotalAssets).toLocaleString()}`;
                 updateTargetProgress();
@@ -477,11 +535,8 @@
                 profitEl.className = totalProfit >= 0 ? 'text-mint' : 'text-orange';
                 document.getElementById('usdjpy-rate').textContent = `${data.usdjpy_rate}円 (${data.usdjpy_time})`;
 
-                // 🌟 配当金の反映
                 const yearlyDiv = data.est_dividend_jpy || 0;
                 const monthlyDiv = Math.floor(yearlyDiv / 12);
-                
-                // 平均利回りの計算
                 let avgYield = 0;
                 if(globalTotalAssets > 0) {
                     avgYield = (yearlyDiv / globalTotalAssets) * 100;
@@ -490,6 +545,9 @@
                 document.getElementById('yearly-dividend').textContent = `¥${Math.floor(yearlyDiv).toLocaleString()}`;
                 document.getElementById('monthly-dividend').textContent = monthlyDiv.toLocaleString();
                 document.getElementById('avg-yield').textContent = avgYield.toFixed(2);
+
+                // 🌟 ここで円グラフの描画を呼び出す
+                renderRatioChart(data.category_totals);
 
                 const listEl = document.getElementById('portfolio-list');
                 listEl.innerHTML = '';
@@ -505,7 +563,6 @@
                     const isFund = item.is_fund;
                     const priceUnit = isFund ? '円 (1万口)' : (item.currency === 'USD' ? '$' : '円');
                     
-                    // 個別銘柄の配当利回り（投資信託は表示しない）
                     let divHtml = '';
                     if(!isFund && item.dividend_yield > 0) {
                         divHtml = `<span class="bg-[#F8F6ED] text-stone px-1.5 py-0.5 rounded text-[10px] ml-2 border border-light">利回り ${item.dividend_yield.toFixed(2)}%</span>`;
