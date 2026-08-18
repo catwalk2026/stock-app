@@ -129,14 +129,11 @@ def get_ai_summary(title: str) -> str:
                 continue
             elif res.status_code == 404:
                 _gemini_model_cache["name"] = None
-                print("Gemini 404, model invalidated:", model)
                 return "要約失敗 (APIエラー: 404 モデル切替待ち。再度お試しください)"
             else:
-                print("Gemini API error:", res.status_code, res.text)
                 return f"要約失敗 (APIエラー: {res.status_code})"
         except Exception as e:
             if attempt == 2:
-                print("Gemini exception:", e)
                 return "AI要約通信エラー（サーバーの設定を確認してください）"
             time.sleep(2 ** (attempt + 1))
 
@@ -149,7 +146,8 @@ def init_db():
     if not DATABASE2_URL: return
     try:
         conn = get_db_connection(); cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS portfolio (user_id TEXT, ticker TEXT, name TEXT, quantity REAL, average_price REAL, manual_price REAL, PRIMARY KEY (user_id, ticker)); CREATE TABLE IF NOT EXISTS transactions (id SERIAL PRIMARY KEY, user_id TEXT, ticker TEXT, type TEXT, trade_date TEXT, quantity REAL, price REAL, reason TEXT); CREATE TABLE IF NOT EXISTS fund_rules (id SERIAL PRIMARY KEY, user_id TEXT, ticker TEXT, name TEXT, frequency TEXT, monthly_day INTEGER, amount REAL, start_date TEXT); CREATE TABLE IF NOT EXISTS watchlist (user_id TEXT, ticker TEXT, name TEXT, added_date TEXT, PRIMARY KEY (user_id, ticker)); CREATE TABLE IF NOT EXISTS line_users (line_user_id TEXT PRIMARY KEY, app_user_id TEXT, is_news_active BOOLEAN DEFAULT TRUE); CREATE TABLE IF NOT EXISTS sent_news (line_user_id TEXT, news_link TEXT, PRIMARY KEY (line_user_id, news_link)); CREATE TABLE IF NOT EXISTS asset_cache (ticker TEXT PRIMARY KEY, price REAL, div_yield REAL, last_updated TEXT);''')
+        # 🌟 sent_alerts テーブルを追加（アラートの1日1回スパム防止用）
+        cursor.execute('''CREATE TABLE IF NOT EXISTS portfolio (user_id TEXT, ticker TEXT, name TEXT, quantity REAL, average_price REAL, manual_price REAL, PRIMARY KEY (user_id, ticker)); CREATE TABLE IF NOT EXISTS transactions (id SERIAL PRIMARY KEY, user_id TEXT, ticker TEXT, type TEXT, trade_date TEXT, quantity REAL, price REAL, reason TEXT); CREATE TABLE IF NOT EXISTS fund_rules (id SERIAL PRIMARY KEY, user_id TEXT, ticker TEXT, name TEXT, frequency TEXT, monthly_day INTEGER, amount REAL, start_date TEXT); CREATE TABLE IF NOT EXISTS watchlist (user_id TEXT, ticker TEXT, name TEXT, added_date TEXT, PRIMARY KEY (user_id, ticker)); CREATE TABLE IF NOT EXISTS line_users (line_user_id TEXT PRIMARY KEY, app_user_id TEXT, is_news_active BOOLEAN DEFAULT TRUE); CREATE TABLE IF NOT EXISTS sent_news (line_user_id TEXT, news_link TEXT, PRIMARY KEY (line_user_id, news_link)); CREATE TABLE IF NOT EXISTS asset_cache (ticker TEXT PRIMARY KEY, price REAL, div_yield REAL, last_updated TEXT); CREATE TABLE IF NOT EXISTS sent_alerts (line_user_id TEXT, ticker TEXT, alert_date TEXT, PRIMARY KEY (line_user_id, ticker, alert_date));''')
         try: cursor.execute("ALTER TABLE line_users ADD COLUMN IF NOT EXISTS is_news_active BOOLEAN DEFAULT TRUE")
         except: pass
         cursor.close(); conn.close()
@@ -229,13 +227,12 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     return price, div_yield
 
 # ==========================================
-# 🌟 【完全版】LINE自動ニュース配信（リマインド機能）
+# 定期実行タスク群（ニュース配信 ＆ 急変動アラート）
 # ==========================================
 def check_and_send_news():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        # 通知設定がONのユーザーを取得
         cursor.execute("SELECT * FROM line_users WHERE is_news_active = TRUE")
         users = cursor.fetchall()
         
@@ -244,11 +241,9 @@ def check_and_send_news():
             app_user_id = user["app_user_id"]
             if not app_user_id: continue
             
-            # そのユーザーの保有・お気に入り銘柄のニュースを取得
             news_data = get_jp_news(app_user_id)
             if not news_data: continue
             
-            # すでに送信済みのニュースURLを取得（スパム防止）
             cursor.execute("SELECT news_link FROM sent_news WHERE line_user_id = %s", (line_user_id,))
             sent_links = {row["news_link"] for row in cursor.fetchall()}
             
@@ -256,7 +251,7 @@ def check_and_send_news():
             for n in news_data:
                 if n["link"] not in sent_links:
                     new_articles.append(n)
-                    if len(new_articles) >= 3: # 1回のリマインドで最大3件まで
+                    if len(new_articles) >= 3:
                         break
                         
             if new_articles:
@@ -266,22 +261,87 @@ def check_and_send_news():
                 msg += f"👇 AI要約はダッシュボードから✨\nhttps://stock-app-xyif.onrender.com/{app_user_id}"
                 
                 try:
-                    # LINEにプッシュ通知
                     line_bot_api.push_message(line_user_id, TextSendMessage(text=msg))
-                    
-                    # 送信したニュースをDBに記録
                     for n in new_articles:
                         cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (%s, %s) ON CONFLICT DO NOTHING", (line_user_id, n["link"]))
-                except Exception as push_e:
-                    print("Push error:", push_e)
-        
-        cursor.close()
-        conn.close()
-    except Exception as e:
-        print("check_and_send_news error:", e)
+                except Exception as push_e: pass
+        cursor.close(); conn.close()
+    except: pass
 
-# 1時間ごとに最新ニュースをチェックして配信
-scheduler = BackgroundScheduler(); scheduler.add_job(check_and_send_news, 'interval', minutes=60); scheduler.start()
+# 🌟 追加：急騰・急落アラート（±5%変動時にLINE通知）
+def check_and_send_price_alerts():
+    try:
+        today_str = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT * FROM line_users WHERE is_news_active = TRUE")
+        users = cursor.fetchall()
+
+        # 各銘柄の変動率を一時保存（API呼び出し回数の削減用）
+        price_change_cache = {}
+
+        for user in users:
+            line_user_id = user["line_user_id"]
+            app_user_id = user["app_user_id"]
+            if not app_user_id: continue
+
+            cursor.execute("SELECT ticker, name FROM portfolio WHERE user_id = %s", (app_user_id,))
+            p_items = cursor.fetchall()
+            cursor.execute("SELECT ticker, name FROM watchlist WHERE user_id = %s", (app_user_id,))
+            w_items = cursor.fetchall()
+            
+            target_items = {item["ticker"]: item["name"] for item in (p_items + w_items)}
+            alerts_to_send = []
+            
+            for ticker, name in target_items.items():
+                # 投資信託は1日の急変動がほぼないため除外
+                if len(ticker) == 8 and ticker.isalnum(): continue
+                
+                if ticker not in price_change_cache:
+                    stock_ticker = f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum() and not ticker.endswith(".T")) else ticker
+                    try:
+                        hist = yf.Ticker(stock_ticker).history(period="5d")
+                        if len(hist) >= 2:
+                            prev_close = float(hist['Close'].iloc[-2])
+                            curr_price = float(hist['Close'].iloc[-1])
+                            change_pct = ((curr_price - prev_close) / prev_close) * 100
+                            price_change_cache[ticker] = {"curr": curr_price, "pct": change_pct}
+                        else:
+                            price_change_cache[ticker] = None
+                    except:
+                        price_change_cache[ticker] = None
+
+                change_data = price_change_cache[ticker]
+                # ±5%以上の変動がある場合アラート対象
+                if change_data and abs(change_data["pct"]) >= 5.0:
+                    cursor.execute("SELECT 1 FROM sent_alerts WHERE line_user_id = %s AND ticker = %s AND alert_date = %s", (line_user_id, ticker, today_str))
+                    if not cursor.fetchone():
+                        alerts_to_send.append({"ticker": ticker, "name": name, "curr": change_data["curr"], "pct": change_data["pct"]})
+            
+            if alerts_to_send:
+                msg = "⚠️ 【急変動アラート】\n登録銘柄に大きな動きがありました！\n\n"
+                for a in alerts_to_send:
+                    sign = "+" if a["pct"] > 0 else ""
+                    icon = "📈 急騰" if a["pct"] > 0 else "📉 急落"
+                    msg += f"{icon}: {a['name']}\n変動: {sign}{a['pct']:.1f}%\n現在値: {a['curr']:,.1f}\n\n"
+                
+                msg += f"👇 ダッシュボードで確認✨\nhttps://stock-app-xyif.onrender.com/{app_user_id}"
+                
+                try:
+                    line_bot_api.push_message(line_user_id, TextSendMessage(text=msg))
+                    for a in alerts_to_send:
+                        cursor.execute("INSERT INTO sent_alerts (line_user_id, ticker, alert_date) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (line_user_id, a["ticker"], today_str))
+                except Exception as e: pass
+
+        cursor.close(); conn.close()
+    except Exception as e:
+        print("Alerts error:", e)
+
+# スケジューラー登録
+scheduler = BackgroundScheduler()
+scheduler.add_job(check_and_send_news, 'interval', minutes=60)
+scheduler.add_job(check_and_send_price_alerts, 'interval', minutes=60) # アラートチェックも1時間ごとに実行
+scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
 
 @app.post("/callback")
