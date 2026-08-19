@@ -214,6 +214,11 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
         except: pass
 
     if div_yield == 0.0 or math.isnan(div_yield): div_yield = 2.5 if is_jpy else (1.5 if not is_fund else 0.0)
+    
+    # 🌟 異常値（バグ）の防止リミッター
+    if div_yield > 20.0:
+        div_yield = 3.0  # 20%を超える異常な利回りはYahooのデータバグとみなし、標準の3%に強制補正
+
     if price == 0.0 and row: price = row["price"] 
 
     if price > 0:
@@ -232,7 +237,6 @@ def check_and_send_news():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        # 通知設定がONのユーザーを取得
         cursor.execute("SELECT * FROM line_users WHERE is_news_active = TRUE")
         users = cursor.fetchall()
         
@@ -241,46 +245,39 @@ def check_and_send_news():
             app_user_id = user["app_user_id"]
             if not app_user_id: continue
             
-            # そのユーザーの保有・お気に入り銘柄のニュースを取得
             news_data = get_jp_news(app_user_id)
             if not news_data: continue
             
-            # すでに送信済みのニュースURLを取得（スパム防止）
             cursor.execute("SELECT news_link FROM sent_news WHERE line_user_id = %s", (line_user_id,))
             sent_links = {row["news_link"] for row in cursor.fetchall()}
             
             new_articles = []
-            market_count = 0 # 市況ニュースのカウント
-            stock_count = 0  # 個別銘柄ニュースのカウント
+            market_count = 0
+            stock_count = 0
             
             for n in news_data:
                 if n["link"] not in sent_links:
-                    # 🌟 改良：市況と個別銘柄で枠を分ける！
                     if n["stock_name"] == "主要市況":
-                        if market_count < 1: # 市況ニュースは1回につき最大1件まで
+                        if market_count < 1:
                             new_articles.append(n)
                             market_count += 1
                     else:
-                        if stock_count < 2:  # 個別銘柄（保有・気になる）は1回につき最大2件まで
+                        if stock_count < 2:
                             new_articles.append(n)
                             stock_count += 1
                             
-                    if len(new_articles) >= 3: # 合計3件に達したらストップ
+                    if len(new_articles) >= 3:
                         break
                         
             if new_articles:
                 msg = "🔔 【定期配信】最新ニュースが届きました！\n\n"
                 for n in new_articles:
-                    # 市況と個別でアイコンを変えるプチ演出
                     icon = "🌍" if n["stock_name"] == "主要市況" else "📰"
                     msg += f"{icon} 【{n['stock_name']}】\n{n['title']}\n{n['link']}\n\n"
                 msg += f"👇 AI要約はダッシュボードから✨\nhttps://stock-app-xyif.onrender.com/{app_user_id}"
                 
                 try:
-                    # LINEにプッシュ通知
                     line_bot_api.push_message(line_user_id, TextSendMessage(text=msg))
-                    
-                    # 送信したニュースをDBに記録
                     for n in new_articles:
                         cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (%s, %s) ON CONFLICT DO NOTHING", (line_user_id, n["link"]))
                 except Exception as push_e:
@@ -291,7 +288,6 @@ def check_and_send_news():
     except Exception as e:
         print("check_and_send_news error:", e)
 
-# 急騰・急落アラート（±5%変動時にLINE通知）
 def check_and_send_price_alerts():
     try:
         today_str = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
@@ -300,7 +296,6 @@ def check_and_send_price_alerts():
         cursor.execute("SELECT * FROM line_users WHERE is_news_active = TRUE")
         users = cursor.fetchall()
 
-        # 各銘柄の変動率を一時保存（API呼び出し回数の削減用）
         price_change_cache = {}
 
         for user in users:
@@ -317,7 +312,6 @@ def check_and_send_price_alerts():
             alerts_to_send = []
             
             for ticker, name in target_items.items():
-                # 投資信託は1日の急変動がほぼないため除外
                 if len(ticker) == 8 and ticker.isalnum(): continue
                 
                 if ticker not in price_change_cache:
@@ -335,7 +329,6 @@ def check_and_send_price_alerts():
                         price_change_cache[ticker] = None
 
                 change_data = price_change_cache[ticker]
-                # ±5%以上の変動がある場合アラート対象
                 if change_data and abs(change_data["pct"]) >= 5.0:
                     cursor.execute("SELECT 1 FROM sent_alerts WHERE line_user_id = %s AND ticker = %s AND alert_date = %s", (line_user_id, ticker, today_str))
                     if not cursor.fetchone():
@@ -360,10 +353,9 @@ def check_and_send_price_alerts():
     except Exception as e:
         print("Alerts error:", e)
 
-# スケジューラー登録
 scheduler = BackgroundScheduler()
 scheduler.add_job(check_and_send_news, 'interval', minutes=60)
-scheduler.add_job(check_and_send_price_alerts, 'interval', minutes=60) # アラートチェックも1時間ごとに実行
+scheduler.add_job(check_and_send_price_alerts, 'interval', minutes=60)
 scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
 
@@ -393,7 +385,6 @@ def handle_message(event):
                 news_data = get_jp_news(user_id)
                 if news_data:
                     msg = "🚀 保有銘柄と市況の最新ニュースです！\n\n"
-                    # ここは手動リクエストなので、シンプルに最新3件を返す
                     for n in news_data[:3]:
                         msg += f"📰 【{n['stock_name']}】\n{n['title']}\n{n['link']}\n\n"
                     msg += f"👇 さらに詳しいニュースやAI要約はダッシュボードから✨\nhttps://stock-app-xyif.onrender.com/{user_id}"
@@ -475,11 +466,15 @@ def get_jp_news(user_id: str):
                         try:
                             dt_utc = parsedate_to_datetime(item.find('pubDate').text)
                             dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9))) if dt_utc.tzinfo else dt_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=9)))
+                            
+                            # 🌟 エラーになるGoogleニュースのリンクを修正
+                            raw_link = item.find('link').text
+                            clean_link = raw_link.replace("news.google.com/rss/articles/", "news.google.com/articles/")
                                 
                             news_list.append({
                                 "stock_name": name,
                                 "title": item.find('title').text,
-                                "link": item.find('link').text,
+                                "link": clean_link,
                                 "pub_time": dt_jst.strftime("%Y/%m/%d %H:%M"),
                                 "timestamp": dt_jst.timestamp()
                             })
@@ -496,11 +491,14 @@ def get_jp_news(user_id: str):
                     try:
                         dt_utc = parsedate_to_datetime(item.find('pubDate').text)
                         dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9))) if dt_utc.tzinfo else dt_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=9)))
+                        
+                        raw_link = item.find('link').text
+                        clean_link = raw_link.replace("news.google.com/rss/articles/", "news.google.com/articles/")
                             
                         news_list.append({
                             "stock_name": "主要市況",
                             "title": item.find('title').text,
-                            "link": item.find('link').text,
+                            "link": clean_link,
                             "pub_time": dt_jst.strftime("%Y/%m/%d %H:%M"),
                             "timestamp": dt_jst.timestamp()
                         })
@@ -991,4 +989,4 @@ def delete_all_user_data(user_id: str):
         cursor.execute("DELETE FROM watchlist WHERE user_id = %s", (user_id,))
         cursor.close(); conn.close()
         return {"message": f"User {user_id} deleted"}
-    except Exception as e: raise HTTPException(status_code=500, detail="Database Error")s
+    except Exception as e: raise HTTPException(status_code=500, detail="Database Error")
