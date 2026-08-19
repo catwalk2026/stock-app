@@ -119,7 +119,78 @@ def get_ai_summary(title: str) -> str:
             if res.status_code == 200:
                 data = res.json()
                 candidates = data.get("candidates")
-               def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
+                if not candidates:
+                    reason = data.get("promptFeedback", {}).get("blockReason", "不明")
+                    return f"要約失敗（生成がブロックされました: {reason}）"
+                return candidates[0]["content"]["parts"][0]["text"].strip()
+            elif res.status_code in (503, 429) and attempt < 2:
+                wait = int(res.headers.get("Retry-After", 2 ** (attempt + 1)))
+                time.sleep(wait)
+                continue
+            elif res.status_code == 404:
+                _gemini_model_cache["name"] = None
+                return "要約失敗 (APIエラー: 404 モデル切替待ち。再度お試しください)"
+            else:
+                return f"要約失敗 (APIエラー: {res.status_code})"
+        except Exception as e:
+            if attempt == 2:
+                return "AI要約通信エラー（サーバーの設定を確認してください）"
+            time.sleep(2 ** (attempt + 1))
+
+class TradeCreate(BaseModel): ticker: str = ""; name: str; trade_type: str; asset_type: str; trade_date: str; quantity: float; price: float; reason: str = ""
+class FundRuleCreate(BaseModel): ticker: str; name: str; frequency: str; monthly_day: int = 1; amount: float; avg_price: float = 10000.0; start_date: str
+class PriceUpdate(BaseModel): ticker: str; current_price: float
+class WatchlistCreate(BaseModel): ticker: str; name: str
+
+def init_db():
+    if not DATABASE2_URL: return
+    try:
+        conn = get_db_connection(); cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS portfolio (user_id TEXT, ticker TEXT, name TEXT, quantity REAL, average_price REAL, manual_price REAL, PRIMARY KEY (user_id, ticker)); CREATE TABLE IF NOT EXISTS transactions (id SERIAL PRIMARY KEY, user_id TEXT, ticker TEXT, type TEXT, trade_date TEXT, quantity REAL, price REAL, reason TEXT); CREATE TABLE IF NOT EXISTS fund_rules (id SERIAL PRIMARY KEY, user_id TEXT, ticker TEXT, name TEXT, frequency TEXT, monthly_day INTEGER, amount REAL, start_date TEXT); CREATE TABLE IF NOT EXISTS watchlist (user_id TEXT, ticker TEXT, name TEXT, added_date TEXT, PRIMARY KEY (user_id, ticker)); CREATE TABLE IF NOT EXISTS line_users (line_user_id TEXT PRIMARY KEY, app_user_id TEXT, is_news_active BOOLEAN DEFAULT TRUE); CREATE TABLE IF NOT EXISTS sent_news (line_user_id TEXT, news_link TEXT, PRIMARY KEY (line_user_id, news_link)); CREATE TABLE IF NOT EXISTS asset_cache (ticker TEXT PRIMARY KEY, price REAL, div_yield REAL, last_updated TEXT); CREATE TABLE IF NOT EXISTS sent_alerts (line_user_id TEXT, ticker TEXT, alert_date TEXT, PRIMARY KEY (line_user_id, ticker, alert_date));''')
+        try: cursor.execute("ALTER TABLE line_users ADD COLUMN IF NOT EXISTS is_news_active BOOLEAN DEFAULT TRUE")
+        except: pass
+        cursor.close(); conn.close()
+    except: pass
+
+init_db()
+
+def get_usdjpy_rate():
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    try:
+        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT price FROM asset_cache WHERE ticker = 'USDJPY' AND last_updated = %s", (today_str,))
+        row = cursor.fetchone()
+        if row and row["price"] > 100:
+            cursor.close(); conn.close(); return {"rate": row["price"], "time": f"{today_str} (取得済)"}
+    except: pass
+        
+    rate = 0.0; fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
+    try:
+        res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=3)
+        if res.status_code == 200 and res.json().get("rates", {}).get("JPY", 0) > 100: rate = float(res.json()["rates"]["JPY"])
+    except: pass
+    if rate == 0.0:
+        try:
+            hist = yf.Ticker("JPY=X").history(period="1d")
+            if not hist.empty and not math.isnan(hist['Close'].iloc[-1]) and hist['Close'].iloc[-1] > 100: rate = float(hist['Close'].iloc[-1])
+        except: pass
+    if rate == 0.0:
+        try:
+            cursor.execute("SELECT price FROM asset_cache WHERE ticker = 'USDJPY'")
+            old = cursor.fetchone()
+            rate = old["price"] if old else 155.0; fetch_time = "前回取得値"
+        except: rate = 155.0
+        
+    try:
+        cursor.execute("INSERT INTO asset_cache (ticker, price, div_yield, last_updated) VALUES ('USDJPY', %s, 0.0, %s) ON CONFLICT (ticker) DO UPDATE SET price = EXCLUDED.price, last_updated = EXCLUDED.last_updated", (rate, today_str))
+        cursor.close(); conn.close()
+    except: pass
+    return {"rate": rate, "time": fetch_time}
+
+# ==========================================
+# 🌟 【改良版】配当金＆株価取得ロジック
+# ==========================================
+def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
     today_str = datetime.now().strftime("%Y-%m-%d-v13") # キャッシュ更新
     price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
@@ -177,79 +248,6 @@ def get_ai_summary(title: str) -> str:
             pass
 
     # 異常値（20%超えやNaNバグ）は計算から除外するため0.0にする
-    if math.isnan(div_yield) or div_yield > 20.0: 
-        div_yield = 0.0
-
-    if price == 0.0 and row: price = row["price"] 
-
-    if price > 0:
-        try:
-            if conn and cursor:
-                cursor.execute("INSERT INTO asset_cache (ticker, price, div_yield, last_updated) VALUES (%s, %s, %s, %s) ON CONFLICT (ticker) DO UPDATE SET price = EXCLUDED.price, div_yield = EXCLUDED.div_yield, last_updated = EXCLUDED.last_updated", (ticker, price, div_yield, today_str))
-                cursor.close(); conn.close()
-        except: pass
-        
-    return price, div_yield
-        if row and row["price"] > 100:
-            cursor.close(); conn.close(); return {"rate": row["price"], "time": f"{today_str} (取得済)"}
-    except: pass
-        
-    rate = 0.0; fetch_time = datetime.now().strftime("%Y/%m/%d %H:%M")
-    try:
-        res = requests.get("https://open.er-api.com/v6/latest/USD", timeout=3)
-        if res.status_code == 200 and res.json().get("rates", {}).get("JPY", 0) > 100: rate = float(res.json()["rates"]["JPY"])
-    except: pass
-    if rate == 0.0:
-        try:
-            hist = yf.Ticker("JPY=X").history(period="1d")
-            if not hist.empty and not math.isnan(hist['Close'].iloc[-1]) and hist['Close'].iloc[-1] > 100: rate = float(hist['Close'].iloc[-1])
-        except: pass
-    if rate == 0.0:
-        try:
-            cursor.execute("SELECT price FROM asset_cache WHERE ticker = 'USDJPY'")
-            old = cursor.fetchone()
-            rate = old["price"] if old else 155.0; fetch_time = "前回取得値"
-        except: rate = 155.0
-        
-    try:
-        cursor.execute("INSERT INTO asset_cache (ticker, price, div_yield, last_updated) VALUES ('USDJPY', %s, 0.0, %s) ON CONFLICT (ticker) DO UPDATE SET price = EXCLUDED.price, last_updated = EXCLUDED.last_updated", (rate, today_str))
-        cursor.close(); conn.close()
-    except: pass
-    return {"rate": rate, "time": fetch_time}
-
-def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
-    ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d-v12") # キャッシュを更新するためバージョン変更
-    price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
-    
-    try:
-        conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("SELECT price, div_yield, last_updated FROM asset_cache WHERE ticker = %s", (ticker,))
-        row = cursor.fetchone()
-        if row and row["last_updated"] == today_str and row["price"] > 0:
-            cursor.close(); conn.close(); return row["price"], row["div_yield"]
-    except: pass
-        
-    if not is_fund:
-        try:
-            stock_ticker = ticker if not is_jpy else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
-            stock = yf.Ticker(stock_ticker); hist = stock.history(period="1d")
-            if not hist.empty and not math.isnan(hist['Close'].iloc[-1]): price = float(hist['Close'].iloc[-1])
-            info = stock.info
-            if info:
-                # 🌟 改良: 100倍バグの防止
-                if info.get("dividendYield") is not None:
-                    raw_y = float(info["dividendYield"])
-                    div_yield = raw_y if raw_y > 1.0 else raw_y * 100.0
-                elif info.get("dividendRate") and price > 0:
-                    div_yield = (float(info.get("dividendRate")) / price) * 100.0
-                    
-            if div_yield == 0.0:
-                recent_divs = stock.dividends[stock.dividends.index >= (datetime.now(stock.dividends.index.tzinfo) - timedelta(days=365))]
-                if float(recent_divs.sum()) > 0 and price > 0: div_yield = (float(recent_divs.sum()) / price) * 100.0
-        except: pass
-
-    # 🌟 改良: データ取得不可、または異常値(20%超え)の場合は「0.0」として計算から除外する
     if math.isnan(div_yield) or div_yield > 20.0: 
         div_yield = 0.0
 
