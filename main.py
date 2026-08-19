@@ -991,4 +991,4 @@ def delete_all_user_data(user_id: str):
         cursor.execute("DELETE FROM watchlist WHERE user_id = %s", (user_id,))
         cursor.close(); conn.close()
         return {"message": f"User {user_id} deleted"}
-    except Exception as e: raise HTTPException(status_code=500, detail="Database Error")
+    except Exception as e: raise HTTPException(status_code=500, detail="Database Error")s
