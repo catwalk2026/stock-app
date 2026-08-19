@@ -146,7 +146,6 @@ def init_db():
     if not DATABASE2_URL: return
     try:
         conn = get_db_connection(); cursor = conn.cursor()
-        # 🌟 sent_alerts テーブルを追加（アラートの1日1回スパム防止用）
         cursor.execute('''CREATE TABLE IF NOT EXISTS portfolio (user_id TEXT, ticker TEXT, name TEXT, quantity REAL, average_price REAL, manual_price REAL, PRIMARY KEY (user_id, ticker)); CREATE TABLE IF NOT EXISTS transactions (id SERIAL PRIMARY KEY, user_id TEXT, ticker TEXT, type TEXT, trade_date TEXT, quantity REAL, price REAL, reason TEXT); CREATE TABLE IF NOT EXISTS fund_rules (id SERIAL PRIMARY KEY, user_id TEXT, ticker TEXT, name TEXT, frequency TEXT, monthly_day INTEGER, amount REAL, start_date TEXT); CREATE TABLE IF NOT EXISTS watchlist (user_id TEXT, ticker TEXT, name TEXT, added_date TEXT, PRIMARY KEY (user_id, ticker)); CREATE TABLE IF NOT EXISTS line_users (line_user_id TEXT PRIMARY KEY, app_user_id TEXT, is_news_active BOOLEAN DEFAULT TRUE); CREATE TABLE IF NOT EXISTS sent_news (line_user_id TEXT, news_link TEXT, PRIMARY KEY (line_user_id, news_link)); CREATE TABLE IF NOT EXISTS asset_cache (ticker TEXT PRIMARY KEY, price REAL, div_yield REAL, last_updated TEXT); CREATE TABLE IF NOT EXISTS sent_alerts (line_user_id TEXT, ticker TEXT, alert_date TEXT, PRIMARY KEY (line_user_id, ticker, alert_date));''')
         try: cursor.execute("ALTER TABLE line_users ADD COLUMN IF NOT EXISTS is_news_active BOOLEAN DEFAULT TRUE")
         except: pass
@@ -233,6 +232,7 @@ def check_and_send_news():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        # 通知設定がONのユーザーを取得
         cursor.execute("SELECT * FROM line_users WHERE is_news_active = TRUE")
         users = cursor.fetchall()
         
@@ -241,34 +241,57 @@ def check_and_send_news():
             app_user_id = user["app_user_id"]
             if not app_user_id: continue
             
+            # そのユーザーの保有・お気に入り銘柄のニュースを取得
             news_data = get_jp_news(app_user_id)
             if not news_data: continue
             
+            # すでに送信済みのニュースURLを取得（スパム防止）
             cursor.execute("SELECT news_link FROM sent_news WHERE line_user_id = %s", (line_user_id,))
             sent_links = {row["news_link"] for row in cursor.fetchall()}
             
             new_articles = []
+            market_count = 0 # 市況ニュースのカウント
+            stock_count = 0  # 個別銘柄ニュースのカウント
+            
             for n in news_data:
                 if n["link"] not in sent_links:
-                    new_articles.append(n)
-                    if len(new_articles) >= 3:
+                    # 🌟 改良：市況と個別銘柄で枠を分ける！
+                    if n["stock_name"] == "主要市況":
+                        if market_count < 1: # 市況ニュースは1回につき最大1件まで
+                            new_articles.append(n)
+                            market_count += 1
+                    else:
+                        if stock_count < 2:  # 個別銘柄（保有・気になる）は1回につき最大2件まで
+                            new_articles.append(n)
+                            stock_count += 1
+                            
+                    if len(new_articles) >= 3: # 合計3件に達したらストップ
                         break
                         
             if new_articles:
-                msg = "🔔 【定期配信】保有銘柄・市況の最新ニュースが届きました！\n\n"
+                msg = "🔔 【定期配信】最新ニュースが届きました！\n\n"
                 for n in new_articles:
-                    msg += f"📰 【{n['stock_name']}】\n{n['title']}\n{n['link']}\n\n"
+                    # 市況と個別でアイコンを変えるプチ演出
+                    icon = "🌍" if n["stock_name"] == "主要市況" else "📰"
+                    msg += f"{icon} 【{n['stock_name']}】\n{n['title']}\n{n['link']}\n\n"
                 msg += f"👇 AI要約はダッシュボードから✨\nhttps://stock-app-xyif.onrender.com/{app_user_id}"
                 
                 try:
+                    # LINEにプッシュ通知
                     line_bot_api.push_message(line_user_id, TextSendMessage(text=msg))
+                    
+                    # 送信したニュースをDBに記録
                     for n in new_articles:
                         cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (%s, %s) ON CONFLICT DO NOTHING", (line_user_id, n["link"]))
-                except Exception as push_e: pass
-        cursor.close(); conn.close()
-    except: pass
+                except Exception as push_e:
+                    pass
+        
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print("check_and_send_news error:", e)
 
-# 🌟 追加：急騰・急落アラート（±5%変動時にLINE通知）
+# 急騰・急落アラート（±5%変動時にLINE通知）
 def check_and_send_price_alerts():
     try:
         today_str = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
@@ -370,6 +393,7 @@ def handle_message(event):
                 news_data = get_jp_news(user_id)
                 if news_data:
                     msg = "🚀 保有銘柄と市況の最新ニュースです！\n\n"
+                    # ここは手動リクエストなので、シンプルに最新3件を返す
                     for n in news_data[:3]:
                         msg += f"📰 【{n['stock_name']}】\n{n['title']}\n{n['link']}\n\n"
                     msg += f"👇 さらに詳しいニュースやAI要約はダッシュボードから✨\nhttps://stock-app-xyif.onrender.com/{user_id}"
