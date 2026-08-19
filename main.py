@@ -189,7 +189,7 @@ def get_usdjpy_rate():
 
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d-v11")
+    today_str = datetime.now().strftime("%Y-%m-%d-v12") # キャッシュを更新するためバージョン変更
     price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
     
     try:
@@ -206,18 +206,22 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
             stock = yf.Ticker(stock_ticker); hist = stock.history(period="1d")
             if not hist.empty and not math.isnan(hist['Close'].iloc[-1]): price = float(hist['Close'].iloc[-1])
             info = stock.info
-            if info and info.get("dividendYield"): div_yield = float(info["dividendYield"]) * 100.0
-            elif info and info.get("dividendRate") and price > 0: div_yield = (float(info.get("dividendRate")) / price) * 100.0
+            if info:
+                # 🌟 改良: 100倍バグの防止
+                if info.get("dividendYield") is not None:
+                    raw_y = float(info["dividendYield"])
+                    div_yield = raw_y if raw_y > 1.0 else raw_y * 100.0
+                elif info.get("dividendRate") and price > 0:
+                    div_yield = (float(info.get("dividendRate")) / price) * 100.0
+                    
             if div_yield == 0.0:
                 recent_divs = stock.dividends[stock.dividends.index >= (datetime.now(stock.dividends.index.tzinfo) - timedelta(days=365))]
                 if float(recent_divs.sum()) > 0 and price > 0: div_yield = (float(recent_divs.sum()) / price) * 100.0
         except: pass
 
-    if div_yield == 0.0 or math.isnan(div_yield): div_yield = 2.5 if is_jpy else (1.5 if not is_fund else 0.0)
-    
-    # 🌟 異常値（バグ）の防止リミッター
-    if div_yield > 20.0:
-        div_yield = 3.0  # 20%を超える異常な利回りはYahooのデータバグとみなし、標準の3%に強制補正
+    # 🌟 改良: データ取得不可、または異常値(20%超え)の場合は「0.0」として計算から除外する
+    if math.isnan(div_yield) or div_yield > 20.0: 
+        div_yield = 0.0
 
     if price == 0.0 and row: price = row["price"] 
 
@@ -467,7 +471,6 @@ def get_jp_news(user_id: str):
                             dt_utc = parsedate_to_datetime(item.find('pubDate').text)
                             dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9))) if dt_utc.tzinfo else dt_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=9)))
                             
-                            # 🌟 エラーになるGoogleニュースのリンクを修正
                             raw_link = item.find('link').text
                             clean_link = raw_link.replace("news.google.com/rss/articles/", "news.google.com/articles/")
                                 
