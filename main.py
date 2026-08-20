@@ -202,7 +202,7 @@ def get_usdjpy_rate():
 # ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d-v15") # キャッシュを強制更新
+    today_str = datetime.now().strftime("%Y-%m-%d-v15")
     price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
     
     try:
@@ -218,21 +218,18 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
             stock_ticker = ticker if not is_jpy else (f"{ticker}.T" if (len(ticker)==4 and ticker.isalnum()) else ticker)
             stock = yf.Ticker(stock_ticker)
             
-            # 株価取得（休日対応）
             hist = stock.history(period="5d")
             if not hist.empty:
                 last_valid_price = hist['Close'].dropna()
                 if not last_valid_price.empty:
                     price = float(last_valid_price.iloc[-1])
 
-            # 🌟【進化1】日本株は「みんかぶ」から直接スクレイピング（100%正確な会社予想）
             if is_jpy:
                 try:
                     code = ticker.replace(".T", "")
                     res_mk = requests.get(f"https://minkabu.jp/stock/{code}", headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
                     if res_mk.status_code == 200:
                         res_mk.encoding = res_mk.apparent_encoding
-                        # HTMLタグを排除して純粋なテキストから利回りを抽出
                         text_no_tags = re.sub(r'<[^>]+>', ' ', res_mk.text)
                         m = re.search(r'配当利回り\s*(\d+\.\d+)\s*%', text_no_tags)
                         if m:
@@ -241,28 +238,22 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
                                 div_yield = scraped_yield
                 except Exception: pass
 
-            # 🌟【進化2】米国株や、取得できなかった場合はyfinanceの「予想利回り」を最優先
             if div_yield == 0.0:
                 try:
                     info = stock.info
                     if info:
-                        # ① 予想配当利回り（Forward Yield）が最優先
                         if info.get("dividendYield") is not None:
                             raw_y = float(info["dividendYield"])
                             div_yield = raw_y * 100.0 if raw_y < 1.0 else raw_y
-                        # ② 予想配当額（Forward Rate）÷ 現在値
                         elif info.get("dividendRate") is not None and price > 0:
                             div_yield = (float(info["dividendRate"]) / price) * 100.0
-                        # ③ 過去12ヶ月の利回り（Trailing Yield）
                         elif info.get("trailingAnnualDividendYield") is not None:
                             raw_y = float(info["trailingAnnualDividendYield"])
                             div_yield = raw_y * 100.0 if raw_y < 1.0 else raw_y
-                        # ④ 過去12ヶ月の配当額（Trailing Rate）÷ 現在値
                         elif info.get("trailingAnnualDividendRate") is not None and price > 0:
                             div_yield = (float(info["trailingAnnualDividendRate"]) / price) * 100.0
                 except Exception: pass
 
-            # ⑤ 最終手段：過去1年の配当履歴から手動計算
             if div_yield == 0.0 and price > 0:
                 try:
                     divs = stock.dividends
@@ -276,7 +267,6 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
 
         except Exception: pass
 
-    # 異常値の除外（20%超えやNaNは0.0に戻す）
     if math.isnan(div_yield) or div_yield <= 0.0 or div_yield > 20.0: 
         div_yield = 0.0
 
@@ -290,6 +280,30 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
         except: pass
         
     return price, div_yield
+
+# ==========================================
+# 🌟 【新機能】経済指標データの取得（ブロック回避プロキシ付き）
+# ==========================================
+def fetch_economic_events():
+    # RenderのIPがブロックされた時用の迂回ルート（プロキシ）を3段構えで用意
+    urls_to_try = [
+        "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+        "https://api.allorigins.win/raw?url=https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+        "https://api.codetabs.com/v1/proxy?quest=https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    ]
+    # よりブラウザに近いフリをする
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
+    
+    for u in urls_to_try:
+        try:
+            res = requests.get(u, headers=headers, timeout=8)
+            if res.status_code == 200:
+                data = res.json()
+                if isinstance(data, list) and len(data) > 0:
+                    return data # 成功したら即座に返す
+        except Exception:
+            pass # 失敗したら次の迂回ルートを試す
+    return []
 
 # ==========================================
 # 定期実行タスク群（ニュース・価格アラート・指標前通知）
@@ -323,11 +337,11 @@ def check_and_send_news():
                             new_articles.append(n)
                             market_count += 1
                     else:
-                        if stock_count < 2:
+                        if stock_count < 4:
                             new_articles.append(n)
                             stock_count += 1
                             
-                    if len(new_articles) >= 3: break
+                    if len(new_articles) >= 5: break
                         
             if new_articles:
                 msg = "🔔 【定期配信】最新ニュースが届きました！\n\n"
@@ -405,15 +419,11 @@ def check_and_send_price_alerts():
         cursor.close(); conn.close()
     except Exception as e: print("Alerts error:", e)
 
-# 🌟 重要経済指標の事前通知（直前アラート）
 def check_and_send_economic_alerts():
     try:
-        url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code != 200: return
+        events = fetch_economic_events()
+        if not events: return
 
-        events = res.json()
         now_jst = datetime.now(timezone(timedelta(hours=9)))
         country_flags = {"USD": "🇺🇸 米国", "JPY": "🇯🇵 日本"}
 
@@ -424,15 +434,17 @@ def check_and_send_economic_alerts():
 
         for ev in events:
             if ev.get("country") not in ["USD", "JPY"]: continue
-            if ev.get("impact") != "High": continue # 重要度「高」のみ対象
+            if ev.get("impact") != "High": continue 
             
             date_str = ev.get("date", "")
             if not date_str: continue
             
-            dt_utc = datetime.fromisoformat(date_str)
-            dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9)))
+            try:
+                dt_utc = datetime.fromisoformat(date_str)
+                dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9)))
+            except: continue
 
-            # 直前判定：発表まで「10分前〜70分前」の範囲にある指標をピックアップ
+            # 発表まで「10分前〜70分前」の範囲にある指標をピックアップ
             diff_minutes = (dt_jst - now_jst).total_seconds() / 60
             if 10 <= diff_minutes <= 70:
                 event_id = f"{ev.get('country')}_{ev.get('title')}_{dt_jst.strftime('%Y%m%d%H%M')}"
@@ -459,11 +471,11 @@ def check_and_send_economic_alerts():
     except Exception as e:
         print("Economic alert error:", e)
 
-# スケジューラー登録（各タスクを1時間ごとに実行）
+# スケジューラー登録
 scheduler = BackgroundScheduler()
 scheduler.add_job(check_and_send_news, 'interval', minutes=60)
 scheduler.add_job(check_and_send_price_alerts, 'interval', minutes=60)
-scheduler.add_job(check_and_send_economic_alerts, 'interval', minutes=60) # 経済指標アラートを追加
+scheduler.add_job(check_and_send_economic_alerts, 'interval', minutes=60) 
 scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
 
@@ -493,8 +505,23 @@ def handle_message(event):
                 news_data = get_jp_news(user_id)
                 if news_data:
                     msg = "🚀 保有銘柄と市況の最新ニュースです！\n\n"
-                    for n in news_data[:3]:
-                        msg += f"📰 【{n['stock_name']}】\n{n['title']}\n{n['link']}\n\n"
+                    new_articles = []
+                    market_count = 0
+                    stock_count = 0
+                    for n in news_data:
+                        if n["stock_name"] == "主要市況":
+                            if market_count < 1:
+                                new_articles.append(n)
+                                market_count += 1
+                        else:
+                            if stock_count < 4:
+                                new_articles.append(n)
+                                stock_count += 1
+                        if len(new_articles) >= 5: break
+
+                    for n in new_articles:
+                        icon = "🌍" if n["stock_name"] == "主要市況" else "📰"
+                        msg += f"{icon} 【{n['stock_name']}】\n{n['title']}\n{n['link']}\n\n"
                     msg += f"👇 さらに詳しいニュースやAI要約はダッシュボードから✨\nhttps://stock-app-xyif.onrender.com/{user_id}"
                 else:
                     msg = f"現在、新しいニュースはありません。\n\n👇 ダッシュボードはこちら✨\nhttps://stock-app-xyif.onrender.com/{user_id}"
@@ -684,15 +711,7 @@ def get_economic_calendar():
     country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
 
     try:
-        url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-        headers = {"User-Agent": "Mozilla/5.0"}
-
-        raw_events = []
-        try:
-            res = requests.get(url, headers=headers, timeout=5)
-            if res.status_code == 200: raw_events = res.json()
-        except Exception: pass
-
+        raw_events = fetch_economic_events()
         if not raw_events: return _calendar_cache["data"] or []
 
         calendar_dict = {}
