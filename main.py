@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 import csv
 import time
+import random
 
 # --- LINE連携用ライブラリ ---
 from linebot import LineBotApi, WebhookHandler
@@ -101,8 +102,7 @@ def get_working_gemini_model():
                 _gemini_model_cache["name"] = candidates[0]
                 _gemini_model_cache["checked_at"] = now
                 return candidates[0]
-    except Exception as e:
-        print("Model list error:", e)
+    except Exception as e: pass
     return "gemini-3.7-flash"
 
 def get_ai_summary(title: str) -> str:
@@ -169,17 +169,23 @@ def get_usdjpy_rate():
     except: pass
     return {"rate": rate, "time": fetch_time}
 
+# ==========================================
+# 🌟 【絶対ゼロにさせない】配当金＆株価取得ロジック
+# ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d-v15")
+    today_str = datetime.now().strftime("%Y-%m-%d-v16")
     price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
+    old_div_yield = 0.0 # 🌟 取得失敗時のセーフティネット用
     
     try:
         conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute("SELECT price, div_yield, last_updated FROM asset_cache WHERE ticker = %s", (ticker,))
         row = cursor.fetchone()
-        if row and row["last_updated"] == today_str and row["price"] > 0:
-            cursor.close(); conn.close(); return row["price"], row["div_yield"]
+        if row:
+            old_div_yield = row["div_yield"] # 以前取得できた正しい利回りを記憶
+            if row["last_updated"] == today_str and row["price"] > 0:
+                cursor.close(); conn.close(); return row["price"], row["div_yield"]
     except: pass
         
     if not is_fund:
@@ -194,7 +200,8 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
             if is_jpy:
                 try:
                     code = ticker.replace(".T", "")
-                    res_mk = requests.get(f"https://minkabu.jp/stock/{code}", headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
+                    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                    res_mk = requests.get(f"https://minkabu.jp/stock/{code}", headers=headers, timeout=5)
                     if res_mk.status_code == 200:
                         res_mk.encoding = res_mk.apparent_encoding
                         text_no_tags = re.sub(r'<[^>]+>', ' ', res_mk.text)
@@ -219,7 +226,10 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
                 except: pass
         except: pass
 
-    if math.isnan(div_yield) or div_yield <= 0.0 or div_yield > 20.0: div_yield = 0.0
+    # 🌟 ブロックされて0.0になった場合、記憶していた前回の利回りを復活させる！
+    if math.isnan(div_yield) or div_yield <= 0.0 or div_yield > 20.0: 
+        div_yield = old_div_yield
+
     if price == 0.0 and row: price = row["price"] 
 
     if price > 0:
@@ -230,7 +240,6 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
         except: pass
     return price, div_yield
 
-# 🌟 新機能: 決算日の取得ロジック
 def get_earnings_date(ticker: str, is_jpy: bool):
     try:
         if is_jpy:
@@ -249,10 +258,12 @@ def get_earnings_date(ticker: str, is_jpy: bool):
     return None
 
 def fetch_economic_events():
+    # 🌟 迂回ルート（プロキシ）を増強
     urls_to_try = [
         "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
         "https://api.allorigins.win/raw?url=https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-        "https://api.codetabs.com/v1/proxy?quest=https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+        "https://api.codetabs.com/v1/proxy?quest=https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+        "https://thingproxy.freeboard.io/fetch/https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     ]
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     for u in urls_to_try:
@@ -390,7 +401,6 @@ def check_and_send_economic_alerts():
         cursor.close(); conn.close()
     except: pass
 
-# 🌟 新機能: 決算日アラート（3日前に通知）
 def check_and_send_earnings_alerts():
     try:
         now_jst = datetime.now(timezone(timedelta(hours=9)))
@@ -423,7 +433,6 @@ def check_and_send_earnings_alerts():
                     try:
                         e_date = datetime.strptime(e_date_str, "%Y/%m/%d").date()
                         diff_days = (e_date - today_date).days
-                        # 3日以内に迫っていたらアラート対象
                         if 0 <= diff_days <= 3:
                             cursor.execute("SELECT 1 FROM sent_earnings_alerts WHERE line_user_id = %s AND ticker = %s AND earnings_date = %s", (line_user_id, ticker, e_date_str))
                             if not cursor.fetchone():
@@ -446,7 +455,7 @@ scheduler = BackgroundScheduler()
 scheduler.add_job(check_and_send_news, 'interval', minutes=60)
 scheduler.add_job(check_and_send_price_alerts, 'interval', minutes=60)
 scheduler.add_job(check_and_send_economic_alerts, 'interval', minutes=60) 
-scheduler.add_job(check_and_send_earnings_alerts, 'cron', hour=8, minute=0) # 決算アラートは毎朝8時に1回だけチェック
+scheduler.add_job(check_and_send_earnings_alerts, 'cron', hour=8, minute=0)
 scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
 
@@ -516,6 +525,7 @@ def handle_message(event):
 @app.get("/api/ai_summary")
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
+# 🌟 ニュース取得のアクセス偽装を強化
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
     try:
@@ -528,14 +538,21 @@ def get_jp_news(user_id: str):
         
         target_items = {item["ticker"]: item["name"] for item in (p_items + w_items)}
         news_list = []
-        headers = {"User-Agent": "Mozilla/5.0"}
+        
+        # アクセスブロックをすり抜けるためのランダムブラウザ情報
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/121.0.0.0 Safari/537.36"
+        ]
 
         for ticker, name in target_items.items():
             if len(ticker) == 8 and ticker.isalnum(): continue
             search_term = urllib.parse.quote(f"{name} 株")
             url = f"https://news.google.com/rss/search?q={search_term}&hl=ja&gl=JP&ceid=JP:ja"
+            headers = {"User-Agent": random.choice(user_agents)}
             try:
-                res = requests.get(url, headers=headers, timeout=5)
+                res = requests.get(url, headers=headers, timeout=8)
                 if res.status_code == 200:
                     root = ET.fromstring(res.text)
                     for item in root.findall('.//item')[:3]:
@@ -550,7 +567,8 @@ def get_jp_news(user_id: str):
         market_term = urllib.parse.quote("日経平均")
         market_url = f"https://news.google.com/rss/search?q={market_term}&hl=ja&gl=JP&ceid=JP:ja"
         try:
-            res = requests.get(market_url, headers=headers, timeout=5)
+            headers = {"User-Agent": random.choice(user_agents)}
+            res = requests.get(market_url, headers=headers, timeout=8)
             if res.status_code == 200:
                 root = ET.fromstring(res.text)
                 for item in root.findall('.//item')[:5]:
@@ -601,7 +619,8 @@ def get_economic_calendar():
             try: dt_jst = datetime.fromisoformat(ev.get("date")).astimezone(timezone(timedelta(hours=9)))
             except: continue
 
-            if dt_jst.date() < (now_jst - timedelta(days=1)).date(): continue
+            # 土曜日でも過去1週間のイベントが表示されるように条件を緩和
+            if dt_jst.date() < (now_jst - timedelta(days=6)).date(): continue
 
             title = translate_title(ev.get("title", ""))
             d_key = dt_jst.strftime("%m/%d").lstrip("0").replace("/0", "/")
@@ -734,7 +753,6 @@ def get_portfolio(user_id: str):
 
     return {"total_assets": total_assets, "total_book": total_book, "usdjpy_rate": usdjpy_info["rate"], "usdjpy_time": usdjpy_info["time"], "category_totals": cat_totals, "portfolio": portfolio_data, "est_dividend_jpy": total_est_dividend_jpy}
 
-# 🌟 新機能: リバランス用 API (保存 & 読み込み)
 @app.get("/api/{user_id}/target_allocation")
 def get_target_allocation(user_id: str):
     try:
@@ -743,7 +761,7 @@ def get_target_allocation(user_id: str):
         row = cursor.fetchone(); cursor.close(); conn.close()
         if row: return {"jp_stock": row["jp_stock"], "us_stock": row["us_stock"], "fund": row["fund"]}
     except: pass
-    return {"jp_stock": 33.3, "us_stock": 33.3, "fund": 33.4} # 初期値
+    return {"jp_stock": 33.3, "us_stock": 33.3, "fund": 33.4} 
 
 @app.post("/api/{user_id}/target_allocation")
 def set_target_allocation(user_id: str, data: TargetAllocation):
