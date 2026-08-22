@@ -15,7 +15,6 @@ import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 import csv
 import time
-import random
 
 # --- LINE連携用ライブラリ ---
 from linebot import LineBotApi, WebhookHandler
@@ -79,9 +78,6 @@ def get_db_connection():
     conn.autocommit = True
     return conn
 
-# ==========================================
-# AI要約
-# ==========================================
 _gemini_model_cache = {"name": None, "checked_at": None}
 
 def get_working_gemini_model():
@@ -102,7 +98,7 @@ def get_working_gemini_model():
                 _gemini_model_cache["name"] = candidates[0]
                 _gemini_model_cache["checked_at"] = now
                 return candidates[0]
-    except Exception as e: pass
+    except: pass
     return "gemini-3.7-flash"
 
 def get_ai_summary(title: str) -> str:
@@ -170,20 +166,20 @@ def get_usdjpy_rate():
     return {"rate": rate, "time": fetch_time}
 
 # ==========================================
-# 🌟 【絶対ゼロにさせない】配当金＆株価取得ロジック
+# 🌟 修正1：配当金の強制リカバリー＆確実な取得
 # ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d-v16")
+    today_str = datetime.now().strftime("%Y-%m-%d-v18") # 強制リセット
     price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
-    old_div_yield = 0.0 # 🌟 取得失敗時のセーフティネット用
+    old_div_yield = 0.0 
     
     try:
         conn = get_db_connection(); cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute("SELECT price, div_yield, last_updated FROM asset_cache WHERE ticker = %s", (ticker,))
         row = cursor.fetchone()
         if row:
-            old_div_yield = row["div_yield"] # 以前取得できた正しい利回りを記憶
+            if row["div_yield"] > 0: old_div_yield = row["div_yield"] # 0より大きい時だけ記憶
             if row["last_updated"] == today_str and row["price"] > 0:
                 cursor.close(); conn.close(); return row["price"], row["div_yield"]
     except: pass
@@ -197,38 +193,36 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
                 last_valid_price = hist['Close'].dropna()
                 if not last_valid_price.empty: price = float(last_valid_price.iloc[-1])
 
-            if is_jpy:
+            # yfinanceの過去1年間の配当金合計から手動計算（これが一番確実）
+            if price > 0:
                 try:
-                    code = ticker.replace(".T", "")
-                    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-                    res_mk = requests.get(f"https://minkabu.jp/stock/{code}", headers=headers, timeout=5)
-                    if res_mk.status_code == 200:
-                        res_mk.encoding = res_mk.apparent_encoding
-                        text_no_tags = re.sub(r'<[^>]+>', ' ', res_mk.text)
-                        m = re.search(r'配当利回り\s*(\d+\.\d+)\s*%', text_no_tags)
-                        if m:
-                            scraped_yield = float(m.group(1))
-                            if 0.0 < scraped_yield < 20.0: div_yield = scraped_yield
+                    divs = stock.dividends
+                    if not divs.empty:
+                        divs.index = divs.index.tz_localize(None)
+                        recent_divs = divs[divs.index >= (datetime.now() - timedelta(days=365))]
+                        if not recent_divs.empty and float(recent_divs.sum()) > 0:
+                            div_yield = (float(recent_divs.sum()) / price) * 100.0
                 except: pass
 
-            if div_yield == 0.0:
+            # ダメなら info から取得
+            if div_yield <= 0.0:
                 try:
                     info = stock.info
                     if info:
                         if info.get("dividendYield") is not None:
                             raw_y = float(info["dividendYield"])
                             div_yield = raw_y * 100.0 if raw_y < 1.0 else raw_y
-                        elif info.get("dividendRate") is not None and price > 0:
-                            div_yield = (float(info["dividendRate"]) / price) * 100.0
                         elif info.get("trailingAnnualDividendYield") is not None:
                             raw_y = float(info["trailingAnnualDividendYield"])
                             div_yield = raw_y * 100.0 if raw_y < 1.0 else raw_y
                 except: pass
         except: pass
 
-    # 🌟 ブロックされて0.0になった場合、記憶していた前回の利回りを復活させる！
-    if math.isnan(div_yield) or div_yield <= 0.0 or div_yield > 20.0: 
+    # 万が一取れなければ、過去の「0より大きい正しい利回り」を復活
+    if (math.isnan(div_yield) or div_yield <= 0.0 or div_yield > 20.0) and old_div_yield > 0.0: 
         div_yield = old_div_yield
+    elif math.isnan(div_yield) or div_yield > 20.0:
+        div_yield = 0.0
 
     if price == 0.0 and row: price = row["price"] 
 
@@ -242,38 +236,43 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
 
 def get_earnings_date(ticker: str, is_jpy: bool):
     try:
-        if is_jpy:
-            code = ticker.replace(".T", "")
-            res = requests.get(f"https://minkabu.jp/stock/{code}", headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
-            if res.status_code == 200:
-                m = re.search(r'決算発表日\s*</th[^>]*>\s*<td[^>]*>\s*(\d{4}/\d{2}/\d{2})', res.text)
-                if m: return m.group(1)
-        else:
-            stock = yf.Ticker(ticker)
-            cal = stock.calendar
-            if cal and "Earnings Date" in cal and len(cal["Earnings Date"]) > 0:
-                e_date = cal["Earnings Date"][0]
-                if pd.notnull(e_date): return e_date.strftime("%Y/%m/%d")
+        stock = yf.Ticker(ticker if not is_jpy else f"{ticker.replace('.T', '')}.T")
+        cal = stock.calendar
+        if cal and "Earnings Date" in cal and len(cal["Earnings Date"]) > 0:
+            e_date = cal["Earnings Date"][0]
+            if e_date: return e_date.strftime("%Y/%m/%d")
     except: pass
     return None
 
+# ==========================================
+# 🌟 修正2：経済指標カレンダーの土日・ブロック対策
+# ==========================================
 def fetch_economic_events():
-    # 🌟 迂回ルート（プロキシ）を増強
-    urls_to_try = [
+    # 今週分と来週分を両方取得して、土日でも先の予定が見れるように結合する
+    target_urls = [
         "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-        "https://api.allorigins.win/raw?url=https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-        "https://api.codetabs.com/v1/proxy?quest=https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-        "https://thingproxy.freeboard.io/fetch/https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+        "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
     ]
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    for u in urls_to_try:
-        try:
-            res = requests.get(u, headers=headers, timeout=8)
-            if res.status_code == 200:
-                data = res.json()
-                if isinstance(data, list) and len(data) > 0: return data 
-        except: pass
-    return []
+    all_events = []
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    for u in target_urls:
+        # 直アクセスがダメなら、alloriginsという無料プロキシを経由して突破する
+        try_routes = [
+            u,
+            f"https://api.allorigins.win/raw?url={urllib.parse.quote(u)}"
+        ]
+        for route in try_routes:
+            try:
+                res = requests.get(route, headers=headers, timeout=5)
+                if res.status_code == 200:
+                    data = res.json()
+                    if isinstance(data, list):
+                        all_events.extend(data)
+                        break # 取得成功したら次の週のデータ取得へ
+            except: pass
+            
+    return all_events
 
 # ==========================================
 # 定期実行タスク群
@@ -525,7 +524,9 @@ def handle_message(event):
 @app.get("/api/ai_summary")
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
-# 🌟 ニュース取得のアクセス偽装を強化
+# ==========================================
+# 🌟 修正3：ニュース取得の最強迂回ルート
+# ==========================================
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
     try:
@@ -538,47 +539,49 @@ def get_jp_news(user_id: str):
         
         target_items = {item["ticker"]: item["name"] for item in (p_items + w_items)}
         news_list = []
-        
-        # アクセスブロックをすり抜けるためのランダムブラウザ情報
-        user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/121.0.0.0 Safari/537.36"
-        ]
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
         for ticker, name in target_items.items():
             if len(ticker) == 8 and ticker.isalnum(): continue
             search_term = urllib.parse.quote(f"{name} 株")
-            url = f"https://news.google.com/rss/search?q={search_term}&hl=ja&gl=JP&ceid=JP:ja"
-            headers = {"User-Agent": random.choice(user_agents)}
+            base_url = f"https://news.google.com/rss/search?q={search_term}&hl=ja&gl=JP&ceid=JP:ja"
+            
+            # 直アクセスがブロックされた場合は、プロキシ経由で突破する
+            try_urls = [base_url, f"https://api.allorigins.win/raw?url={urllib.parse.quote(base_url)}"]
+            
+            for u in try_urls:
+                try:
+                    res = requests.get(u, headers=headers, timeout=5)
+                    if res.status_code == 200 and "<?xml" in res.text:
+                        root = ET.fromstring(res.text)
+                        for item in root.findall('.//item')[:3]:
+                            try:
+                                dt_utc = parsedate_to_datetime(item.find('pubDate').text)
+                                dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9))) if dt_utc.tzinfo else dt_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=9)))
+                                clean_link = item.find('link').text.replace("news.google.com/rss/articles/", "news.google.com/articles/")
+                                news_list.append({"stock_name": name, "title": item.find('title').text, "link": clean_link, "pub_time": dt_jst.strftime("%Y/%m/%d %H:%M"), "timestamp": dt_jst.timestamp()})
+                            except: pass
+                        break # 成功したら次の銘柄へ
+                except: pass
+
+        market_term = urllib.parse.quote("日経平均")
+        market_url = f"https://news.google.com/rss/search?q={market_term}&hl=ja&gl=JP&ceid=JP:ja"
+        market_try_urls = [market_url, f"https://api.allorigins.win/raw?url={urllib.parse.quote(market_url)}"]
+        
+        for u in market_try_urls:
             try:
-                res = requests.get(url, headers=headers, timeout=8)
-                if res.status_code == 200:
+                res = requests.get(u, headers=headers, timeout=5)
+                if res.status_code == 200 and "<?xml" in res.text:
                     root = ET.fromstring(res.text)
-                    for item in root.findall('.//item')[:3]:
+                    for item in root.findall('.//item')[:5]:
                         try:
                             dt_utc = parsedate_to_datetime(item.find('pubDate').text)
                             dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9))) if dt_utc.tzinfo else dt_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=9)))
                             clean_link = item.find('link').text.replace("news.google.com/rss/articles/", "news.google.com/articles/")
-                            news_list.append({"stock_name": name, "title": item.find('title').text, "link": clean_link, "pub_time": dt_jst.strftime("%Y/%m/%d %H:%M"), "timestamp": dt_jst.timestamp()})
+                            news_list.append({"stock_name": "主要市況", "title": item.find('title').text, "link": clean_link, "pub_time": dt_jst.strftime("%Y/%m/%d %H:%M"), "timestamp": dt_jst.timestamp()})
                         except: pass
+                    break
             except: pass
-
-        market_term = urllib.parse.quote("日経平均")
-        market_url = f"https://news.google.com/rss/search?q={market_term}&hl=ja&gl=JP&ceid=JP:ja"
-        try:
-            headers = {"User-Agent": random.choice(user_agents)}
-            res = requests.get(market_url, headers=headers, timeout=8)
-            if res.status_code == 200:
-                root = ET.fromstring(res.text)
-                for item in root.findall('.//item')[:5]:
-                    try:
-                        dt_utc = parsedate_to_datetime(item.find('pubDate').text)
-                        dt_jst = dt_utc.astimezone(timezone(timedelta(hours=9))) if dt_utc.tzinfo else dt_utc.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=9)))
-                        clean_link = item.find('link').text.replace("news.google.com/rss/articles/", "news.google.com/articles/")
-                        news_list.append({"stock_name": "主要市況", "title": item.find('title').text, "link": clean_link, "pub_time": dt_jst.strftime("%Y/%m/%d %H:%M"), "timestamp": dt_jst.timestamp()})
-                    except: pass
-        except: pass
             
         news_list.sort(key=lambda x: x["timestamp"], reverse=True)
         return news_list[:30]
@@ -619,7 +622,6 @@ def get_economic_calendar():
             try: dt_jst = datetime.fromisoformat(ev.get("date")).astimezone(timezone(timedelta(hours=9)))
             except: continue
 
-            # 土曜日でも過去1週間のイベントが表示されるように条件を緩和
             if dt_jst.date() < (now_jst - timedelta(days=6)).date(): continue
 
             title = translate_title(ev.get("title", ""))
