@@ -26,7 +26,6 @@
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         
-        /* 目標プログレスバーのアニメーション */
         @keyframes progress-fill {
             from { width: 0%; }
         }
@@ -118,7 +117,7 @@
             </div>
         </div>
 
-        <!-- 🌟 追加＆改修：グラフエリア（円グラフ＋折れ線グラフ） -->
+        <!-- グラフエリア（円グラフ＋折れ線グラフ） -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <!-- ポートフォリオ比率（円グラフ） -->
             <div class="bg-white-card p-5 rounded-xl shadow-sm border border-light md:col-span-1 flex flex-col">
@@ -150,6 +149,67 @@
                 <div style="position: relative; height: 250px; width: 100%;">
                     <canvas id="asset-chart"></canvas>
                 </div>
+            </div>
+        </div>
+
+        <!-- 🌟 新機能：目標リバランス計算機 -->
+        <div class="bg-white-card p-6 rounded-xl shadow-sm border border-light mb-6">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-extrabold text-main"><i class="fas fa-balance-scale text-turquoise mr-2"></i>目標リバランス計算機</h3>
+                <button onclick="saveTargetAllocation()" class="bg-turquoise text-white text-xs font-bold px-4 py-2 rounded-lg hover:opacity-80 transition shadow-sm">目標を保存</button>
+            </div>
+            <p class="text-xs text-stone mb-4">理想の資産配分（合計100%）を設定すると、現在の資産からの「不足額（買うべき金額）」を自動計算します。</p>
+
+            <div class="grid grid-cols-3 gap-3 mb-4">
+                <div class="bg-[#F8F6ED] p-3 rounded-lg border border-light text-center">
+                    <label class="block text-xs font-bold text-stone mb-1 text-[#F77261]">日本株</label>
+                    <div class="flex items-center justify-center">
+                        <input type="number" id="target-jp" value="33.3" class="w-16 bg-transparent text-lg font-extrabold text-main text-center outline-none" oninput="calculateRebalance()"> <span class="text-sm font-bold text-stone">%</span>
+                    </div>
+                </div>
+                <div class="bg-[#F8F6ED] p-3 rounded-lg border border-light text-center">
+                    <label class="block text-xs font-bold text-stone mb-1 text-[#42B187]">米国株</label>
+                    <div class="flex items-center justify-center">
+                        <input type="number" id="target-us" value="33.3" class="w-16 bg-transparent text-lg font-extrabold text-main text-center outline-none" oninput="calculateRebalance()"> <span class="text-sm font-bold text-stone">%</span>
+                    </div>
+                </div>
+                <div class="bg-[#F8F6ED] p-3 rounded-lg border border-light text-center">
+                    <label class="block text-xs font-bold text-stone mb-1 text-[#60C7D5]">投資信託</label>
+                    <div class="flex items-center justify-center">
+                        <input type="number" id="target-fund" value="33.4" class="w-16 bg-transparent text-lg font-extrabold text-main text-center outline-none" oninput="calculateRebalance()"> <span class="text-sm font-bold text-stone">%</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="target-error" class="text-orange text-xs font-bold text-center mb-4 hidden">※ 合計が100%になるように設定してください（現在: <span id="target-sum">0</span>%）</div>
+
+            <div class="border border-light rounded-lg overflow-hidden">
+                <table class="w-full text-sm text-left">
+                    <thead class="bg-[#F8F6ED] text-stone font-bold text-[11px]">
+                        <tr>
+                            <th class="py-2.5 px-3">資産</th>
+                            <th class="py-2.5 px-3 text-right">現在比率</th>
+                            <th class="py-2.5 px-3 text-right">目標との差額 (目安)</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y border-light bg-white">
+                        <tr>
+                            <td class="py-3 px-3 font-bold text-main">🇯🇵 日本株</td>
+                            <td class="py-3 px-3 text-right text-stone font-medium" id="reb-current-jp">--%</td>
+                            <td class="py-3 px-3 text-right font-bold" id="reb-diff-jp">¥0</td>
+                        </tr>
+                        <tr>
+                            <td class="py-3 px-3 font-bold text-main">🇺🇸 米国株</td>
+                            <td class="py-3 px-3 text-right text-stone font-medium" id="reb-current-us">--%</td>
+                            <td class="py-3 px-3 text-right font-bold" id="reb-diff-us">¥0</td>
+                        </tr>
+                        <tr>
+                            <td class="py-3 px-3 font-bold text-main">📈 投資信託</td>
+                            <td class="py-3 px-3 text-right text-stone font-medium" id="reb-current-fund">--%</td>
+                            <td class="py-3 px-3 text-right font-bold" id="reb-diff-fund">¥0</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -338,9 +398,10 @@
     <script>
         let userId = '';
         let chartInstance = null;
-        let ratioChartInstance = null; // 🌟 円グラフ用インスタンス
+        let ratioChartInstance = null; 
         let fullChartData = []; 
         let globalTotalAssets = 0;
+        let globalCategoryTotals = null; // 🌟 リバランス計算用に追加
 
         window.onload = () => {
             const pathId = window.location.pathname.replace('/', '').toUpperCase();
@@ -360,6 +421,7 @@
                 
                 loadDashboard();
                 loadGraph();
+                loadTargetAllocation(); // 🌟 リバランス目標比率の読み込み
                 
                 setupSearch('trade-search', 'trade-suggest', 'trade-ticker', 'trade-name', 'trade-asset-type');
                 setupSearch('fund-search', 'fund-suggest', 'fund-ticker', 'fund-name', 'FUND', 'fund-price');
@@ -468,7 +530,6 @@
             if (tabName === 'news') loadNews();
         }
 
-        // 🌟 円グラフを描画する関数を追加
         function renderRatioChart(categoryTotals) {
             if (!categoryTotals) return;
             
@@ -479,7 +540,6 @@
                 categoryTotals['投資信託'].current || 0
             ];
             
-            // 全て0の場合はグラフを描画しない
             if(values.every(v => v === 0)) return;
 
             const ctx = document.getElementById('ratio-chart').getContext('2d');
@@ -520,12 +580,92 @@
             });
         }
 
+        // 🌟 新機能：APIから目標比率を取得する
+        async function loadTargetAllocation() {
+            try {
+                const res = await fetch(`/api/${userId}/target_allocation`);
+                if(res.ok) {
+                    const data = await res.json();
+                    document.getElementById('target-jp').value = data.jp_stock;
+                    document.getElementById('target-us').value = data.us_stock;
+                    document.getElementById('target-fund').value = data.fund;
+                }
+            } catch(e) {}
+            calculateRebalance();
+        }
+
+        // 🌟 新機能：目標比率を保存する
+        async function saveTargetAllocation() {
+            const jp = parseFloat(document.getElementById('target-jp').value) || 0;
+            const us = parseFloat(document.getElementById('target-us').value) || 0;
+            const fund = parseFloat(document.getElementById('target-fund').value) || 0;
+            
+            if(Math.abs(jp + us + fund - 100) > 0.1) {
+                alert("比率の合計を「100%」にしてください！\n（現在の合計: " + (jp + us + fund).toFixed(1) + "%）");
+                return;
+            }
+            try {
+                const res = await fetch(`/api/${userId}/target_allocation`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({jp_stock: jp, us_stock: us, fund: fund})
+                });
+                if(res.ok) alert("目標比率を保存しました！✨");
+                else alert("保存に失敗しました。");
+            } catch(e) { alert("通信エラーが発生しました。"); }
+        }
+
+        // 🌟 新機能：リバランスの差額を計算して画面に表示する
+        function calculateRebalance() {
+            const jpTarget = parseFloat(document.getElementById('target-jp').value) || 0;
+            const usTarget = parseFloat(document.getElementById('target-us').value) || 0;
+            const fundTarget = parseFloat(document.getElementById('target-fund').value) || 0;
+            const totalTarget = jpTarget + usTarget + fundTarget;
+
+            const errorEl = document.getElementById('target-error');
+            if (Math.abs(totalTarget - 100) > 0.1) {
+                errorEl.classList.remove('hidden');
+                document.getElementById('target-sum').textContent = totalTarget.toFixed(1);
+            } else {
+                errorEl.classList.add('hidden');
+            }
+
+            if (!globalCategoryTotals || globalTotalAssets === 0) return;
+
+            const jpCur = globalCategoryTotals['日本株'].current || 0;
+            const usCur = globalCategoryTotals['米国株'].current || 0;
+            const fundCur = globalCategoryTotals['投資信託'].current || 0;
+
+            const updateRow = (id, curAmt, targetPct) => {
+                const curPct = (curAmt / globalTotalAssets) * 100;
+                document.getElementById(`reb-current-${id}`).textContent = curPct.toFixed(1) + '%';
+                
+                const targetAmt = globalTotalAssets * (targetPct / 100);
+                const diff = targetAmt - curAmt;
+                
+                const diffEl = document.getElementById(`reb-diff-${id}`);
+                if (diff >= 0) {
+                    diffEl.textContent = `買付 +¥${Math.floor(diff).toLocaleString()}`;
+                    diffEl.className = "py-3 px-3 text-right font-bold text-mint bg-green-50/50";
+                } else {
+                    diffEl.textContent = `売却 -¥${Math.floor(Math.abs(diff)).toLocaleString()}`;
+                    diffEl.className = "py-3 px-3 text-right font-bold text-orange bg-red-50/50";
+                }
+            };
+
+            updateRow('jp', jpCur, jpTarget);
+            updateRow('us', usCur, usTarget);
+            updateRow('fund', fundCur, fundTarget);
+        }
+
         async function loadDashboard() {
             try {
                 const res = await fetch(`/api/${userId}/portfolio`);
                 const data = await res.json();
                 
                 globalTotalAssets = data.total_assets || 0;
+                globalCategoryTotals = data.category_totals; // 🌟 グローバル変数にセット
+                
                 document.getElementById('total-assets').textContent = `¥${Math.floor(globalTotalAssets).toLocaleString()}`;
                 updateTargetProgress();
                 
@@ -546,8 +686,8 @@
                 document.getElementById('monthly-dividend').textContent = monthlyDiv.toLocaleString();
                 document.getElementById('avg-yield').textContent = avgYield.toFixed(2);
 
-                // 🌟 ここで円グラフの描画を呼び出す
                 renderRatioChart(data.category_totals);
+                calculateRebalance(); // 🌟 リバランス計算を実行
 
                 const listEl = document.getElementById('portfolio-list');
                 listEl.innerHTML = '';
