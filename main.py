@@ -170,7 +170,7 @@ def get_usdjpy_rate():
 
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d-v18")
+    today_str = datetime.now().strftime("%Y-%m-%d-v19")
     price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
     old_div_yield = 0.0 
     
@@ -241,24 +241,34 @@ def get_earnings_date(ticker: str, is_jpy: bool):
     except: pass
     return None
 
+# ==========================================
+# 🌟 修正1：カレンダー取得の執念の迂回ルート
+# ==========================================
 def fetch_economic_events():
     target_urls = [
         "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
         "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
     ]
     all_events = []
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     
     for u in target_urls:
-        try_routes = [u, f"https://api.allorigins.win/raw?url={urllib.parse.quote(u)}"]
+        # プロキシを4種類に増強
+        try_routes = [
+            u,
+            f"https://api.allorigins.win/raw?url={urllib.parse.quote(u)}",
+            f"https://api.codetabs.com/v1/proxy?quest={urllib.parse.quote(u)}",
+            f"https://corsproxy.io/?{urllib.parse.quote(u)}"
+        ]
         for route in try_routes:
             try:
-                res = requests.get(route, headers=headers, timeout=5)
+                # 🌟 Renderのスリープ明けでも間に合うようにタイムアウトを15秒に延長
+                res = requests.get(route, headers=headers, timeout=15)
                 if res.status_code == 200:
                     data = res.json()
                     if isinstance(data, list):
                         all_events.extend(data)
-                        break 
+                        break # 成功したら残りのプロキシは試さずに次の週へ
             except: pass
     return all_events
 
@@ -576,13 +586,15 @@ def translate_title(title: str) -> str:
     for pattern, jp in SUFFIX_TRANS: title = re.sub(pattern, jp, title, flags=re.IGNORECASE)
     return title.strip()
 
-# 🌟 カレンダーキャッシュを復活
+# 🌟 カレンダーキャッシュを確実に保持する処理
 _calendar_cache = {"data": None, "checked_at": None}
 
 def get_economic_calendar():
     global _calendar_cache
     now = datetime.now()
-    if _calendar_cache["data"] is not None and _calendar_cache["checked_at"] and (now - _calendar_cache["checked_at"]).seconds < 3600:
+    
+    # キャッシュが有効な場合は即座に返す（APIへの負荷軽減）
+    if _calendar_cache["data"] is not None and _calendar_cache["checked_at"] and (now - _calendar_cache["checked_at"]).seconds < 10800:
         return _calendar_cache["data"]
 
     days_jp = ["月", "火", "水", "木", "金", "土", "日"]
@@ -590,6 +602,7 @@ def get_economic_calendar():
     
     try:
         raw_events = fetch_economic_events()
+        # 万が一プロキシでも全滅した場合は「過去のキャッシュ」を無理やり返す（ゼロにさせない）
         if not raw_events: 
             return _calendar_cache["data"] or []
 
