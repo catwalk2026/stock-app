@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 import csv
 import time
+import random
 
 # --- LINE連携用ライブラリ ---
 from linebot import LineBotApi, WebhookHandler
@@ -137,6 +138,9 @@ def init_db():
             CREATE TABLE IF NOT EXISTS sent_earnings_alerts (line_user_id TEXT, ticker TEXT, earnings_date TEXT, PRIMARY KEY (line_user_id, ticker, earnings_date));
             CREATE TABLE IF NOT EXISTS target_allocations (user_id TEXT PRIMARY KEY, jp_stock REAL, us_stock REAL, fund REAL);
         ''')
+        # 🌟 カレンダー用に決算日キャッシュの列を追加
+        try: cursor.execute("ALTER TABLE asset_cache ADD COLUMN IF NOT EXISTS earnings_date TEXT")
+        except: pass
         cursor.close(); conn.close()
     except: pass
 
@@ -165,12 +169,9 @@ def get_usdjpy_rate():
     except: pass
     return {"rate": rate, "time": fetch_time}
 
-# ==========================================
-# 🌟 修正1：配当金の強制リカバリー＆確実な取得
-# ==========================================
 def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
     ticker = ticker.strip().upper()
-    today_str = datetime.now().strftime("%Y-%m-%d-v18") # 強制リセット
+    today_str = datetime.now().strftime("%Y-%m-%d-v18")
     price = 0.0; div_yield = 0.0; row = None; conn = None; cursor = None
     old_div_yield = 0.0 
     
@@ -179,7 +180,7 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
         cursor.execute("SELECT price, div_yield, last_updated FROM asset_cache WHERE ticker = %s", (ticker,))
         row = cursor.fetchone()
         if row:
-            if row["div_yield"] > 0: old_div_yield = row["div_yield"] # 0より大きい時だけ記憶
+            if row["div_yield"] > 0: old_div_yield = row["div_yield"]
             if row["last_updated"] == today_str and row["price"] > 0:
                 cursor.close(); conn.close(); return row["price"], row["div_yield"]
     except: pass
@@ -193,7 +194,6 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
                 last_valid_price = hist['Close'].dropna()
                 if not last_valid_price.empty: price = float(last_valid_price.iloc[-1])
 
-            # yfinanceの過去1年間の配当金合計から手動計算（これが一番確実）
             if price > 0:
                 try:
                     divs = stock.dividends
@@ -204,7 +204,6 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
                             div_yield = (float(recent_divs.sum()) / price) * 100.0
                 except: pass
 
-            # ダメなら info から取得
             if div_yield <= 0.0:
                 try:
                     info = stock.info
@@ -218,7 +217,6 @@ def get_asset_data(ticker: str, is_jpy: bool, is_fund: bool):
                 except: pass
         except: pass
 
-    # 万が一取れなければ、過去の「0より大きい正しい利回り」を復活
     if (math.isnan(div_yield) or div_yield <= 0.0 or div_yield > 20.0) and old_div_yield > 0.0: 
         div_yield = old_div_yield
     elif math.isnan(div_yield) or div_yield > 20.0:
@@ -244,11 +242,7 @@ def get_earnings_date(ticker: str, is_jpy: bool):
     except: pass
     return None
 
-# ==========================================
-# 🌟 修正2：経済指標カレンダーの土日・ブロック対策
-# ==========================================
 def fetch_economic_events():
-    # 今週分と来週分を両方取得して、土日でも先の予定が見れるように結合する
     target_urls = [
         "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
         "https://nfs.faireconomy.media/ff_calendar_nextweek.json"
@@ -257,11 +251,7 @@ def fetch_economic_events():
     headers = {"User-Agent": "Mozilla/5.0"}
     
     for u in target_urls:
-        # 直アクセスがダメなら、alloriginsという無料プロキシを経由して突破する
-        try_routes = [
-            u,
-            f"https://api.allorigins.win/raw?url={urllib.parse.quote(u)}"
-        ]
+        try_routes = [u, f"https://api.allorigins.win/raw?url={urllib.parse.quote(u)}"]
         for route in try_routes:
             try:
                 res = requests.get(route, headers=headers, timeout=5)
@@ -269,9 +259,8 @@ def fetch_economic_events():
                     data = res.json()
                     if isinstance(data, list):
                         all_events.extend(data)
-                        break # 取得成功したら次の週のデータ取得へ
+                        break 
             except: pass
-            
     return all_events
 
 # ==========================================
@@ -284,18 +273,15 @@ def check_and_send_news():
         cursor.execute("SELECT * FROM line_users WHERE is_news_active = TRUE")
         users = cursor.fetchall()
         for user in users:
-            line_user_id = user["line_user_id"]
-            app_user_id = user["app_user_id"]
+            line_user_id = user["line_user_id"]; app_user_id = user["app_user_id"]
             if not app_user_id: continue
-            
             news_data = get_jp_news(app_user_id)
             if not news_data: continue
             
             cursor.execute("SELECT news_link FROM sent_news WHERE line_user_id = %s", (line_user_id,))
             sent_links = {row["news_link"] for row in cursor.fetchall()}
             
-            new_articles = []
-            market_count = 0; stock_count = 0
+            new_articles = []; market_count = 0; stock_count = 0
             for n in news_data:
                 if n["link"] not in sent_links:
                     if n["stock_name"] == "主要市況":
@@ -315,7 +301,7 @@ def check_and_send_news():
                     for n in new_articles: cursor.execute("INSERT INTO sent_news (line_user_id, news_link) VALUES (%s, %s) ON CONFLICT DO NOTHING", (line_user_id, n["link"]))
                 except: pass
         cursor.close(); conn.close()
-    except Exception as e: print("News error:", e)
+    except: pass
 
 def check_and_send_price_alerts():
     try:
@@ -524,9 +510,6 @@ def handle_message(event):
 @app.get("/api/ai_summary")
 def api_ai_summary(title: str): return {"summary": get_ai_summary(title)}
 
-# ==========================================
-# 🌟 修正3：ニュース取得の最強迂回ルート
-# ==========================================
 @app.get("/api/{user_id}/news")
 def get_jp_news(user_id: str):
     try:
@@ -546,7 +529,6 @@ def get_jp_news(user_id: str):
             search_term = urllib.parse.quote(f"{name} 株")
             base_url = f"https://news.google.com/rss/search?q={search_term}&hl=ja&gl=JP&ceid=JP:ja"
             
-            # 直アクセスがブロックされた場合は、プロキシ経由で突破する
             try_urls = [base_url, f"https://api.allorigins.win/raw?url={urllib.parse.quote(base_url)}"]
             
             for u in try_urls:
@@ -561,7 +543,7 @@ def get_jp_news(user_id: str):
                                 clean_link = item.find('link').text.replace("news.google.com/rss/articles/", "news.google.com/articles/")
                                 news_list.append({"stock_name": name, "title": item.find('title').text, "link": clean_link, "pub_time": dt_jst.strftime("%Y/%m/%d %H:%M"), "timestamp": dt_jst.timestamp()})
                             except: pass
-                        break # 成功したら次の銘柄へ
+                        break 
                 except: pass
 
         market_term = urllib.parse.quote("日経平均")
@@ -595,20 +577,12 @@ def translate_title(title: str) -> str:
     for pattern, jp in SUFFIX_TRANS: title = re.sub(pattern, jp, title, flags=re.IGNORECASE)
     return title.strip()
 
-_calendar_cache = {"data": None, "checked_at": None}
-
-@app.get("/api/economic_calendar")
 def get_economic_calendar():
-    global _calendar_cache
-    now = datetime.now()
-    if _calendar_cache["data"] is not None and _calendar_cache["checked_at"] and (now - _calendar_cache["checked_at"]).seconds < 3600: return _calendar_cache["data"]
-
     days_jp = ["月", "火", "水", "木", "金", "土", "日"]
     country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
-
     try:
         raw_events = fetch_economic_events()
-        if not raw_events: return _calendar_cache["data"] or []
+        if not raw_events: return []
 
         calendar_dict = {}
         now_jst = datetime.now(timezone(timedelta(hours=9)))
@@ -635,13 +609,74 @@ def get_economic_calendar():
                 elif dt_jst.weekday() == 6: bg_color, text_color = "bg-[#F77261]", "text-white"
                 calendar_dict[d_key] = {"date": d_key, "day": day_str, "bg": bg_color, "text": text_color, "events": [], "sort_key": sort_key}
 
-            calendar_dict[d_key]["events"].append({"flag": country_flags.get(country, "🌐"), "title": f"{title} ({dt_jst.strftime('%H:%M')})", "isRed": (impact == "High"), "isHtml": False})
+            calendar_dict[d_key]["events"].append({"flag": country_flags.get(country, "🌐"), "title": f"{title} ({dt_jst.strftime('%H:%M')})", "isRed": (impact == "High"), "isHtml": False, "isEarnings": False})
 
-        sorted_vals = sorted(calendar_dict.values(), key=lambda x: x["sort_key"])
-        _calendar_cache["data"] = sorted_vals[:7]
-        _calendar_cache["checked_at"] = now
-        return _calendar_cache["data"]
-    except: return _calendar_cache["data"] or []
+        return sorted(calendar_dict.values(), key=lambda x: x["sort_key"])
+    except: return []
+
+# 🌟 決算スケジュールと経済指標をマージする新API
+@app.get("/api/{user_id}/calendar")
+def get_user_calendar(user_id: str):
+    eco_data = get_economic_calendar()
+    
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute("SELECT ticker, name FROM portfolio WHERE user_id = %s", (user_id,))
+    p_items = cursor.fetchall()
+    cursor.execute("SELECT ticker, name FROM watchlist WHERE user_id = %s", (user_id,))
+    w_items = cursor.fetchall()
+    
+    target_items = {item["ticker"]: item["name"] for item in (p_items + w_items)}
+    earnings_events = []
+    now_jst = datetime.now(timezone(timedelta(hours=9)))
+    
+    for ticker, name in target_items.items():
+        is_fund = (len(ticker) == 8 and ticker.isalnum()) or "投信" in name
+        if is_fund: continue
+        is_jpy = ticker.endswith(".T") or (len(ticker)==4 and ticker.isalnum())
+        
+        try:
+            cursor.execute("SELECT earnings_date FROM asset_cache WHERE ticker = %s", (ticker,))
+            row = cursor.fetchone()
+            e_date_str = row["earnings_date"] if row and "earnings_date" in row else None
+        except: e_date_str = None
+            
+        if not e_date_str:
+            e_date_str = get_earnings_date(ticker, is_jpy)
+            if e_date_str:
+                try: cursor.execute("UPDATE asset_cache SET earnings_date = %s WHERE ticker = %s", (e_date_str, ticker))
+                except: pass
+        
+        if e_date_str:
+            try:
+                e_date = datetime.strptime(e_date_str, "%Y/%m/%d").date()
+                if (now_jst.date() - timedelta(days=6)) <= e_date <= (now_jst.date() + timedelta(days=30)):
+                    d_key = e_date.strftime("%m/%d").lstrip("0").replace("/0", "/")
+                    sort_key = e_date.strftime("%Y%m%d")
+                    earnings_events.append({
+                        "date_key": d_key, "sort_key": sort_key,
+                        "event": {"flag": "🏢", "title": f"【決算発表】{name}", "isRed": False, "isHtml": False, "isEarnings": True}
+                    })
+            except: pass
+    cursor.close(); conn.close()
+    
+    merged_dict = {d["sort_key"]: d for d in eco_data}
+    days_jp = ["月", "火", "水", "木", "金", "土", "日"]
+    
+    for ee in earnings_events:
+        s_key = ee["sort_key"]
+        if s_key not in merged_dict:
+            e_date = datetime.strptime(s_key, "%Y%m%d")
+            d_key = e_date.strftime("%m/%d").lstrip("0").replace("/0", "/")
+            day_str = days_jp[e_date.weekday()]
+            bg_color, text_color = "bg-[#F8F6ED]", "text-[#2F3842]"
+            if e_date.weekday() == 5: text_color = "text-[#4984BD]"
+            elif e_date.weekday() == 6: bg_color, text_color = "bg-[#F77261]", "text-white"
+            merged_dict[s_key] = {"date": d_key, "day": day_str, "bg": bg_color, "text": text_color, "events": [], "sort_key": s_key}
+            
+        merged_dict[s_key]["events"].insert(0, ee["event"])
+        
+    return sorted(merged_dict.values(), key=lambda x: x["sort_key"])
 
 @app.get("/")
 def read_root(): return FileResponse("index.html")
