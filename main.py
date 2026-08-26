@@ -132,13 +132,12 @@ def init_db():
             CREATE TABLE IF NOT EXISTS watchlist (user_id TEXT, ticker TEXT, name TEXT, added_date TEXT, PRIMARY KEY (user_id, ticker));
             CREATE TABLE IF NOT EXISTS line_users (line_user_id TEXT PRIMARY KEY, app_user_id TEXT, is_news_active BOOLEAN DEFAULT TRUE);
             CREATE TABLE IF NOT EXISTS sent_news (line_user_id TEXT, news_link TEXT, PRIMARY KEY (line_user_id, news_link));
-            CREATE TABLE IF NOT EXISTS asset_cache (ticker TEXT PRIMARY KEY, price REAL, div_yield REAL, last_updated TEXT);
+            CREATE TABLE IF NOT EXISTS asset_cache (ticker TEXT PRIMARY KEY, price REAL, div_yield REAL, last_updated TEXT, earnings_date TEXT);
             CREATE TABLE IF NOT EXISTS sent_alerts (line_user_id TEXT, ticker TEXT, alert_date TEXT, PRIMARY KEY (line_user_id, ticker, alert_date));
             CREATE TABLE IF NOT EXISTS sent_calendar_alerts (line_user_id TEXT, event_id TEXT, PRIMARY KEY (line_user_id, event_id));
             CREATE TABLE IF NOT EXISTS sent_earnings_alerts (line_user_id TEXT, ticker TEXT, earnings_date TEXT, PRIMARY KEY (line_user_id, ticker, earnings_date));
             CREATE TABLE IF NOT EXISTS target_allocations (user_id TEXT PRIMARY KEY, jp_stock REAL, us_stock REAL, fund REAL);
         ''')
-        # 🌟 カレンダー用に決算日キャッシュの列を追加
         try: cursor.execute("ALTER TABLE asset_cache ADD COLUMN IF NOT EXISTS earnings_date TEXT")
         except: pass
         cursor.close(); conn.close()
@@ -238,7 +237,7 @@ def get_earnings_date(ticker: str, is_jpy: bool):
         cal = stock.calendar
         if cal and "Earnings Date" in cal and len(cal["Earnings Date"]) > 0:
             e_date = cal["Earnings Date"][0]
-            if e_date: return e_date.strftime("%Y/%m/%d")
+            if pd.notnull(e_date): return e_date.strftime("%Y/%m/%d")
     except: pass
     return None
 
@@ -577,12 +576,22 @@ def translate_title(title: str) -> str:
     for pattern, jp in SUFFIX_TRANS: title = re.sub(pattern, jp, title, flags=re.IGNORECASE)
     return title.strip()
 
+# 🌟 カレンダーキャッシュを復活
+_calendar_cache = {"data": None, "checked_at": None}
+
 def get_economic_calendar():
+    global _calendar_cache
+    now = datetime.now()
+    if _calendar_cache["data"] is not None and _calendar_cache["checked_at"] and (now - _calendar_cache["checked_at"]).seconds < 3600:
+        return _calendar_cache["data"]
+
     days_jp = ["月", "火", "水", "木", "金", "土", "日"]
     country_flags = {"USD": "🇺🇸 米", "JPY": "🇯🇵 日"}
+    
     try:
         raw_events = fetch_economic_events()
-        if not raw_events: return []
+        if not raw_events: 
+            return _calendar_cache["data"] or []
 
         calendar_dict = {}
         now_jst = datetime.now(timezone(timedelta(hours=9)))
@@ -611,10 +620,13 @@ def get_economic_calendar():
 
             calendar_dict[d_key]["events"].append({"flag": country_flags.get(country, "🌐"), "title": f"{title} ({dt_jst.strftime('%H:%M')})", "isRed": (impact == "High"), "isHtml": False, "isEarnings": False})
 
-        return sorted(calendar_dict.values(), key=lambda x: x["sort_key"])
-    except: return []
+        sorted_vals = sorted(calendar_dict.values(), key=lambda x: x["sort_key"])
+        _calendar_cache["data"] = sorted_vals
+        _calendar_cache["checked_at"] = now
+        return _calendar_cache["data"]
+    except: 
+        return _calendar_cache["data"] or []
 
-# 🌟 決算スケジュールと経済指標をマージする新API
 @app.get("/api/{user_id}/calendar")
 def get_user_calendar(user_id: str):
     eco_data = get_economic_calendar()
